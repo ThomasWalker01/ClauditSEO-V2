@@ -1,0 +1,132 @@
+/* The Images part page's two budget blocks (brief v16c): the
+   bytes-for-pixels scatter, and the thumbnail wall beneath it.
+
+   A sheet of its own for the reason `schema_graph.css` and `crawl_depth.css`
+   give: this is one part's layout, and folding a chart's axes and a
+   thumbnail grid into `styles.css` puts them in front of every other screen.
+   `main.tsx` imports it, which is how `test_dashboard_a11y._stylesheets`
+   finds it.
+
+   Every colour is a token `styles.css` already declares. The mockup names
+   `--ok`, `--warn`, `--bad` and `--mute`; this repository's names for those
+   four meanings are `--good`, `--warn-strong`, `--danger` and `--edge`, and
+   inventing a second set is the thing item 140 exists to remove. */
+
+/* The card holding both blocks, in the part page's "now" position. */
+.ib-blocks { display: block; }
+.ib-block { margin: 18px 0 0; }
+/* The first block opens the card, so it takes the card's own padding
+   rather than adding to it; the second is separated from it by a rule, so
+   the two read as two answers and not as one long one. */
+.ib-block-scatter { margin-top: 0; }
+.ib-block-wall { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); }
+.ib-block h4 { margin: 0 0 4px; }
+.ib-lede { margin: 0 0 10px; }
+
+/* --- block 1, bytes for pixels ------------------------------------- */
+
+.ib-scatter { display: block; width: 100%; height: auto; overflow: visible; }
+.ib-axis { stroke: var(--border-strong); }
+.ib-tick { fill: var(--text-muted); font-size: 11.5px; }
+.ib-axis-name { fill: var(--text-muted); font-size: 12px; }
+.ib-band { fill: var(--good); fill-opacity: 0.09; }
+.ib-ceiling { fill: none; stroke: var(--good); stroke-dasharray: 5 4; }
+.ib-ceiling-name { fill: var(--good); font-size: 11.5px; }
+.ib-floor { stroke: var(--edge); stroke-dasharray: 3 5; }
+.ib-floor-name { fill: var(--text-muted); font-size: 11.5px; }
+
+.ib-dot { cursor: pointer; }
+.ib-dot:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ib-ok { fill: var(--good); }
+.ib-warn { fill: var(--warn-strong); }
+.ib-bad { fill: var(--danger); }
+/* Below the floor and not scored: smaller and quieter, because it is on the
+   chart to show the shape of the site and not to be acted on. Quieter by
+   token and not by opacity - a dot faded to 55% of --text-faint measures
+   2.1:1 against a card, and a graphic carrying meaning owes 3:1. --edge is
+   the product's own quiet-but-legible grey and the pair table already holds
+   it against this ground. */
+.ib-mute { fill: var(--edge); }
+
+.ib-legend { display: flex; flex-wrap: wrap; gap: 18px; margin: 10px 0 0;
+             font-size: 12.5px; color: var(--text-muted); }
+.ib-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+               margin-right: 6px; vertical-align: -1px; }
+.ib-key-ok { background: var(--good); }
+.ib-key-warn { background: var(--warn-strong); }
+.ib-key-bad { background: var(--danger); }
+.ib-key-mute { background: var(--edge); }
+/* Item 241: a weight read off the server's size header, drawn hollow. The
+   ring carries the state colour: with `fill: none` and no stroke of its own
+   the dot was not drawn at all - seven of the nine on twenty22's home page.
+   `pointer-events: all` keeps the whole disc hoverable, not the ring alone. */
+.ib-dot.ib-header { fill: var(--surface); stroke-width: 2; pointer-events: all; }
+.ib-header.ib-ok { stroke: var(--good); }
+.ib-header.ib-warn { stroke: var(--warn-strong); }
+.ib-header.ib-bad { stroke: var(--danger); }
+.ib-header.ib-mute { stroke: var(--edge); }
+.ib-key-header { display: inline-block; width: .6rem; height: .6rem; border-radius: 50%;
+  border: 1.5px solid var(--text-muted); background: none; }
+
+.ib-tip { position: fixed; z-index: 40; pointer-events: none; max-width: 340px;
+          background: var(--surface); border: 1px solid var(--border-strong);
+          border-radius: 6px; padding: 8px 10px; font-size: 12.5px;
+          color: var(--text); box-shadow: 0 2px 10px rgb(0 0 0 / 25%); }
+.ib-tip code { word-break: break-all; }
+.ib-tip-line { color: var(--text-muted); }
+.ib-tip-bad { color: var(--danger); }
+
+/* --- block 2, every image as the visitor sees it -------------------- */
+
+.ib-figures { display: flex; flex-wrap: wrap; gap: 26px; margin: 12px 0 0;
+              font-size: 13px; color: var(--text-muted); }
+.ib-figures b { display: block; line-height: 1.1; font-size: 18px; color: var(--text); }
+.ib-fig-bad b { color: var(--danger); }
+.ib-fig-warn b { color: var(--warn-strong); }
+
+.ib-wall { display: grid; grid-template-columns: repeat(8, 1fr); gap: 10px;
+           margin: 14px 0 0; padding: 0; list-style: none; }
+
+.ib-tile { position: relative; aspect-ratio: 4 / 3; overflow: hidden;
+           border-radius: 4px; background: var(--surface-sunken);
+           border: 2px solid transparent; }
+/* A red frame is a missing alt, an amber one is over budget, and both is
+   both - the frame and the inset, exactly as the mockup draws it. */
+.ib-tile-alt { border-color: var(--danger); }
+.ib-tile-big { border-color: var(--warn-strong); }
+.ib-tile-both { border-color: var(--danger); box-shadow: inset 0 0 0 2px var(--warn-strong); }
+/* `font-size: 0` so a file that does not load leaves a grey tile rather
+   than its own alt text sprawling across the frame and under the tag — seen
+   on Acme, where a third of the wall renders the words "image without alt
+   text" over the picture that is missing. The attribute is untouched, so the
+   tile keeps the accessible name; only the broken-image fallback rendering
+   is suppressed, and the caption below still says the size. */
+.ib-thumb { position: absolute; inset: 0; width: 100%; height: 100%;
+            object-fit: cover; background: var(--surface-sunken); font-size: 0; }
+/* Opaque, not the mockup's translucent black: a caption over a photograph
+   nobody has seen has no measurable contrast, and 1.4.3 is about the text
+   that actually renders. */
+.ib-cap { position: absolute; left: 0; right: 0; bottom: 0; padding: 2px 5px;
+          font-size: 10.5px; white-space: nowrap; overflow: hidden;
+          text-overflow: ellipsis; background: var(--surface); color: var(--text); }
+.ib-tag { position: absolute; top: 4px; left: 4px; padding: 0 5px;
+          border-radius: 8px; font-size: 10px; font-weight: 600; }
+.ib-tag-alt { background: var(--danger-bg); color: var(--danger); }
+.ib-tag-big { background: var(--warn-bg); color: var(--warn); }
+
+.ib-note { margin: 10px 0 0; }
+.ib-absent { margin: 6px 0 0; }
+
+/* Item 244: a pressed dot selects its image. The picked dot takes a ring,
+   the others step back, and the chip states the filter. */
+.ib-has-pick .ib-dot:not(.ib-picked) { opacity: .45; }
+.ib-dot.ib-picked { stroke: var(--accent); stroke-width: 3; opacity: 1; }
+.ib-tile-picked { outline: 3px solid var(--accent); outline-offset: 2px; }
+.ib-picked-chip { display: flex; align-items: flex-start; gap: .4rem; margin: 0 0 .6rem;
+  padding: .3rem .6rem; border: 1px solid var(--accent); border-radius: 6px;
+  background: var(--surface); font-size: .85rem; width: fit-content; max-width: 100%; }
+.ib-picked-chip summary { cursor: pointer; overflow-wrap: anywhere; }
+.ib-picked-clear { font-size: 1rem; line-height: 1; }
+.ib-picked-fixes { margin: .4rem 0; }
+.ib-pages { margin: .3rem 0; padding-left: 1.1rem; columns: 14rem auto; font-size: .85rem; }
+.ib-pages-all { font-size: .85rem; }

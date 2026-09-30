@@ -1,0 +1,12 @@
+-- Which engine produced each trend point.
+--
+-- Scores from different engine versions are not comparable — 0.5.0 alone
+-- changed how duplicate content is detected and stopped A11Y scoring — and
+-- quarterly client reporting is exactly where a chart implies they are. The
+-- version was stamped on the run from day one but never on the snapshot, so
+-- the trend could not tell.
+--
+-- Existing rows keep NULL, which reads as "unknown" rather than being
+-- back-filled with a guess: nothing in the database records which engine
+-- wrote a snapshot taken before this column existed.
+ALTER TABLE metric_snapshots ADD COLUMN engine_version TEXT;

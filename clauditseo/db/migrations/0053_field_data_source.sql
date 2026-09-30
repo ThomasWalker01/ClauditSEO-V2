@@ -1,0 +1,11 @@
+-- Item 141 (brief v19 step BC): the one Speed site-record field migration 0052
+-- left out, because at the foundation stage nothing read it.
+--
+--   field_data_source — where real-user Core Web Vitals come from for this
+--       site: a CrUX API key, or a Search Console connection. Empty today on
+--       every site, and the Speed part's field-distribution bar renders GREYED
+--       with what to connect rather than as zeros, because `good 0 · NI 0 ·
+--       poor 0` is a claim about the site and not about our data. TEXT like
+--       every other site-record scalar; NULL means every vital on the part is
+--       lab and says so.
+ALTER TABLE sites ADD COLUMN field_data_source TEXT;

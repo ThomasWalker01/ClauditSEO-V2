@@ -1,0 +1,43 @@
+# The vendored axe build is checked byte-for-byte against a hash recorded in
+# clauditseo/vendor/README.md. Line-ending normalisation would rewrite it on
+# checkout and fail that check on a fresh clone — on Windows especially,
+# which is where most of this is run.
+#
+# These paths said `auditdeck/` for ten audit rounds after the rename, so the
+# rule parsed, matched nothing and protected nothing. `git check-attr` is the
+# only thing that can tell the difference, which is what the test asserts.
+clauditseo/vendor/axe.min.js -text
+clauditseo/vendor/axe-core-LICENSE.txt -text
+
+# The prompts are installed verbatim from the operator's relay attachments, and
+# at least one is held to that byte for byte
+# (`tests/test_the_links_brief.py::test_the_prompt_is_the_one_the_operator_supplied`).
+# The reason differs from the vendored blob above: not a recorded hash, but an
+# attachment the operator asked to be installed unchanged. Normalisation rewrote
+# them to CRLF on checkout while the attachments hold LF, so the comparison
+# failed on the first newline in every fresh clone and every new worktree, and
+# passed for whoever still had the old file on disk (item 170).
+#
+# All of them, not only the compared one: the broad rule is simpler and leaves
+# no trap for the next prompt held to its attachment.
+clauditseo/prompts/*.md -text
+
+# --- what a public export leaves behind (item 187) -------------------------
+#
+# `PUBLIC_EXCLUDE.txt` is the manifest, with a reason beside every line. These
+# are the same paths expressed the way `git archive` understands, so the
+# packaging script - which builds from `git archive HEAD` precisely so that
+# git, not a glob in a shell script, decides what ships - leaves them out
+# without being told twice.
+#
+# `tests/test_no_client_data_ships.py` holds these two lists to each other, so
+# a path added to one and forgotten in the other fails rather than leaks.
+audits/ export-ignore
+OPERATOR_ACTIONS.md export-ignore
+QUESTIONS.md export-ignore
+NEXT_UP.md export-ignore
+BACKLOG.md export-ignore
+TIMINGS.md export-ignore
+benchmarks/reports/ export-ignore
+benchmarks/results.jsonl export-ignore
+.client-tokens export-ignore

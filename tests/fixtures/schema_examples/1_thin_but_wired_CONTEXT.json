@@ -1,0 +1,131 @@
+{
+  "source": "ClauditSEO sweep 2026-09-05, run be2d9283…, page https://www.13acme.com.au/",
+  "html_lang": "en-US",
+  "footer_profile_links": [
+    "https://maps.app.goo.gl/qocUDAGCJDa764sF8",
+    "https://www.facebook.com/13VOLTAIC/",
+    "https://www.youtube.com/@voltaicelectrical",
+    "https://www.linkedin.com/company/voltaic-electrical/",
+    "https://maps.app.goo.gl/AhBtZb5YaZEa37v39",
+    "https://maps.app.goo.gl/31ph497k3dzinVsa7",
+    "https://maps.app.goo.gl/gkxeUERkpDfATfhc9"
+  ],
+  "schema_inventory_flattened": [
+    {
+      "format": "json-ld",
+      "source": "plugin:yoast",
+      "parse_ok": true,
+      "type": "WebPage",
+      "id": "https://www.13acme.com.au/",
+      "in_graph": true,
+      "properties": {
+        "@type": "WebPage",
+        "@id": "https://www.13acme.com.au/",
+        "url": "https://www.13acme.com.au/",
+        "name": "Australia's Leading Solar Company - Voltaic Energy",
+        "isPartOf.@id": "https://www.13acme.com.au/#website",
+        "about.@id": "https://www.13acme.com.au/#organization",
+        "primaryImageOfPage.@id": "https://www.13acme.com.au/#primaryimage",
+        "image.@id": "https://www.13acme.com.au/#primaryimage",
+        "thumbnailUrl": "https://www.13acme.com.au/wp-content/uploads/2023/12/HomeBanner.png",
+        "datePublished": "2023-10-23T02:35:01+00:00",
+        "dateModified": "2026-02-19T22:55:56+00:00",
+        "description": "Discover Voltaic Energy, Australia leading solar company. Learn about our groundbreaking solar projects and energy efficiency solutions.",
+        "breadcrumb.@id": "https://www.13acme.com.au/#breadcrumb",
+        "inLanguage": "en-US",
+        "potentialAction.@type": "ReadAction",
+        "potentialAction.target": "https://www.13acme.com.au/"
+      },
+      "template": false,
+      "pages": 1
+    },
+    {
+      "format": "json-ld",
+      "source": "plugin:yoast",
+      "parse_ok": true,
+      "type": "ImageObject",
+      "id": "https://www.13acme.com.au/#primaryimage",
+      "in_graph": true,
+      "properties": {
+        "@type": "ImageObject",
+        "inLanguage": "en-US",
+        "@id": "https://www.13acme.com.au/#primaryimage",
+        "url": "https://www.13acme.com.au/wp-content/uploads/2023/12/HomeBanner.png",
+        "contentUrl": "https://www.13acme.com.au/wp-content/uploads/2023/12/HomeBanner.png",
+        "width": 1740,
+        "height": 683,
+        "caption": "We Build Renewable Energy Infrastructure"
+      },
+      "template": false,
+      "pages": 1
+    },
+    {
+      "format": "json-ld",
+      "source": "plugin:yoast",
+      "parse_ok": true,
+      "type": "BreadcrumbList",
+      "id": "https://www.13acme.com.au/#breadcrumb",
+      "in_graph": true,
+      "properties": {
+        "@type": "BreadcrumbList",
+        "@id": "https://www.13acme.com.au/#breadcrumb",
+        "itemListElement.@type": "ListItem",
+        "itemListElement.position": 1,
+        "itemListElement.name": "Home"
+      },
+      "template": false,
+      "pages": 1
+    },
+    {
+      "format": "json-ld",
+      "source": "plugin:yoast",
+      "parse_ok": true,
+      "type": "WebSite",
+      "id": "https://www.13acme.com.au/#website",
+      "in_graph": true,
+      "properties": {
+        "@type": "WebSite",
+        "@id": "https://www.13acme.com.au/#website",
+        "url": "https://www.13acme.com.au/",
+        "name": "Voltaic Energy: Commercial Solar and LED Lighting for your business",
+        "description": "",
+        "publisher.@id": "https://www.13acme.com.au/#organization",
+        "potentialAction.@type": "SearchAction",
+        "potentialAction.target.@type": "EntryPoint",
+        "potentialAction.target.urlTemplate": "https://www.13acme.com.au/?s={search_term_string}",
+        "potentialAction.query-input.@type": "PropertyValueSpecification",
+        "potentialAction.query-input.valueRequired": true,
+        "potentialAction.query-input.valueName": "search_term_string",
+        "inLanguage": "en-US"
+      },
+      "template": true,
+      "pages": 207
+    },
+    {
+      "format": "json-ld",
+      "source": "plugin:yoast",
+      "parse_ok": true,
+      "type": "Organization",
+      "id": "https://www.13acme.com.au/#organization",
+      "in_graph": true,
+      "properties": {
+        "@type": "Organization",
+        "@id": "https://www.13acme.com.au/#organization",
+        "name": "Voltaic Energy",
+        "url": "https://www.13acme.com.au/",
+        "logo.@type": "ImageObject",
+        "logo.inLanguage": "en-US",
+        "logo.@id": "https://www.13acme.com.au/#/schema/logo/image/",
+        "logo.url": "https://www.13acme.com.au/wp-content/uploads/2023/09/Logo-13Voltaic.webp",
+        "logo.contentUrl": "https://www.13acme.com.au/wp-content/uploads/2023/09/Logo-13Voltaic.webp",
+        "logo.width": 274,
+        "logo.height": 129,
+        "logo.caption": "Voltaic Energy",
+        "image.@id": "https://www.13acme.com.au/#/schema/logo/image/",
+        "sameAs": "https://www.facebook.com/13VOLTAIC/, https://x.com/voltaicElectrical, https://au.linkedin.com/company/voltaic-electrical"
+      },
+      "template": true,
+      "pages": 207
+    }
+  ]
+}

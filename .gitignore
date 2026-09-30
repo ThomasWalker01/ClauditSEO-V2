@@ -1,0 +1,40 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+data/
+dashboard/node_modules/
+dashboard/dist/
+*.egg-info/
+.env
+reports/out/
+
+# Provider keys the admin panel writes. data/ already covers the default
+# location; named explicitly so a store pointed elsewhere by
+# CLAUDITSEO_SECRETS_FILE cannot be committed by accident.
+secrets.json
+secrets.json.tmp
+
+# Build artefacts from scripts/package.sh|ps1. The name here must match what
+# those scripts actually write — it said `auditdeck-*` for fifteen rounds
+# after the rename, so the archive was neither ignored nor caught by any of
+# the three leak guards. tests/test_packaging.py derives the name instead.
+clauditseo-*.zip
+benchmarks.zip
+
+# setuptools build tree (created by `pip wheel .`)
+build/
+*.egg-info/
+
+# Claude Code local permissions, per-machine
+.claude/settings.local.json
+
+# Liveness marker for a running /audit-fix round, written by
+# scripts/round-marker.ps1. Ignored rather than tracked because preflight
+# refuses to start on a dirty tree, and a tracked marker would mean every
+# round begins by refusing itself. It describes this machine's session, not
+# the repository.
+.claude/run/
+
+# pytest litter — see the teardown fix in tests/
+.pytest_tmp/

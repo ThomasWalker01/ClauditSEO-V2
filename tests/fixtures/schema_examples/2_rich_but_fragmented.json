@@ -1,0 +1,636 @@
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": [
+        "RoofingContractor",
+        "LocalBusiness"
+      ],
+      "@id": "https://summit-roofing-fixture.com.au/#localbusiness",
+      "name": "Summit Roofing",
+      "legalName": "Summit Roofing (VIC) Pty Ltd",
+      "url": "https://summit-roofing-fixture.com.au/",
+      "logo": "https://summit-roofing-fixture.com.au/wp-content/uploads/2025/01/logo.svg",
+      "image": "https://summit-roofing-fixture.com.au/wp-content/uploads/2025/01/logo.svg",
+      "description": "Family-owned Melbourne roofing contractor established in 2009. Specialising in roof tiling, metal roofing (COLORBONDÂ® and ZINCALUMEÂ®), roof restorations, gutter services, leak detection, and emergency roof repairs across Melbourne and Victoria. 10,000+ projects completed, 150+ years combined team experience, 10-year workmanship warranty, after-hours emergency service.",
+      "telephone": "+61-3-5550-0142",
+      "email": "quotes@summit-roofing-fixture.com.au",
+      "address": {
+        "@type": "PostalAddress",
+        "streetAddress": "1 Fixture Lane",
+        "addressLocality": "Melbourne",
+        "addressRegion": "VIC",
+        "postalCode": "3000",
+        "addressCountry": "AU"
+      },
+      "geo": {
+        "@type": "GeoCoordinates",
+        "latitude": -37.81,
+        "longitude": 144.96
+      },
+      "hasMap": "https://www.google.com/maps?cid=1000000000000000001",
+      "openingHoursSpecification": [
+        {
+          "@type": "OpeningHoursSpecification",
+          "dayOfWeek": [
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday"
+          ],
+          "opens": "08:00",
+          "closes": "16:00"
+        }
+      ],
+      "areaServed": [
+        {
+          "@type": "City",
+          "name": "Bayswater"
+        },
+        {
+          "@type": "City",
+          "name": "Beaconsfield"
+        },
+        {
+          "@type": "City",
+          "name": "Bentleigh"
+        },
+        {
+          "@type": "City",
+          "name": "Berwick"
+        },
+        {
+          "@type": "City",
+          "name": "Brighton"
+        },
+        {
+          "@type": "City",
+          "name": "Carrum Downs"
+        },
+        {
+          "@type": "City",
+          "name": "Caulfield"
+        },
+        {
+          "@type": "City",
+          "name": "Chelsea"
+        },
+        {
+          "@type": "City",
+          "name": "Cheltenham"
+        },
+        {
+          "@type": "City",
+          "name": "Clyde North"
+        },
+        {
+          "@type": "City",
+          "name": "Cranbourne"
+        },
+        {
+          "@type": "City",
+          "name": "Croydon"
+        },
+        {
+          "@type": "City",
+          "name": "Dandenong"
+        },
+        {
+          "@type": "City",
+          "name": "Doncaster"
+        },
+        {
+          "@type": "City",
+          "name": "Frankston"
+        },
+        {
+          "@type": "City",
+          "name": "Hallam"
+        },
+        {
+          "@type": "City",
+          "name": "Hampton"
+        },
+        {
+          "@type": "City",
+          "name": "Lysterfield"
+        },
+        {
+          "@type": "City",
+          "name": "Mornington"
+        },
+        {
+          "@type": "City",
+          "name": "Mount Martha"
+        },
+        {
+          "@type": "City",
+          "name": "Narre Warren"
+        },
+        {
+          "@type": "City",
+          "name": "Officer"
+        },
+        {
+          "@type": "City",
+          "name": "Pakenham"
+        },
+        {
+          "@type": "City",
+          "name": "Ringwood"
+        },
+        {
+          "@type": "City",
+          "name": "Sandringham"
+        },
+        {
+          "@type": "City",
+          "name": "Seaford"
+        },
+        {
+          "@type": "City",
+          "name": "St Kilda"
+        },
+        {
+          "@type": "City",
+          "name": "Toorak"
+        },
+        {
+          "@type": "City",
+          "name": "Windsor"
+        }
+      ],
+      "serviceArea": {
+        "@type": "GeoCircle",
+        "geoMidpoint": {
+          "@type": "GeoCoordinates",
+          "latitude": -37.81,
+          "longitude": 144.96
+        },
+        "geoRadius": "60000"
+      },
+      "sameAs": [
+        "https://www.facebook.com/summit-roofing-fixture/",
+        "https://www.instagram.com/summit-roofing-fixture/",
+        "https://www.linkedin.com/company/summit-roofing-fixture/",
+        "https://www.tiktok.com/@summit_roofing_fixture",
+        "https://www.google.com/maps?cid=1000000000000000001"
+      ],
+      "parentOrganization": {
+        "@id": "https://summit-roofing-fixture.com.au/#organization"
+      },
+      "founder": {
+        "@id": "https://summit-roofing-fixture.com.au/#person-sam-fixture"
+      },
+      "foundingDate": "2009",
+      "aggregateRating": {
+        "@type": "AggregateRating",
+        "ratingValue": "4.8",
+        "reviewCount": 77,
+        "bestRating": "5",
+        "worstRating": "1"
+      },
+      "hasOfferCatalog": {
+        "@type": "OfferCatalog",
+        "name": "Roofing Services",
+        "itemListElement": [
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Roof Tiling",
+              "provider": {
+                "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+              }
+            }
+          },
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Metal Roofing (COLORBONDÂ® and ZINCALUMEÂ®)",
+              "provider": {
+                "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+              }
+            }
+          },
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Roof Restorations",
+              "provider": {
+                "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+              }
+            }
+          },
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Roof Inspections",
+              "provider": {
+                "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+              }
+            }
+          },
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Roof Leak Detection",
+              "provider": {
+                "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+              }
+            }
+          },
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "New Roofing Installations",
+              "provider": {
+                "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+              }
+            }
+          },
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Re-roofing",
+              "provider": {
+                "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+              }
+            }
+          },
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Roof Repairs (leaks, tiles, flashing, storm damage)",
+              "provider": {
+                "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+              }
+            }
+          },
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Extensions & Roof Replacements",
+              "provider": {
+                "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+              }
+            }
+          },
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Second Hand Tiles (matching existing style, colour, and profile)",
+              "provider": {
+                "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+              }
+            }
+          },
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Gutter Services",
+              "provider": {
+                "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+              }
+            }
+          },
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Emergency Roof Repairs (after hours available)",
+              "provider": {
+                "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+              }
+            }
+          },
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Free Consultation & Quotes",
+              "provider": {
+                "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+              }
+            }
+          },
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Insurance Work",
+              "provider": {
+                "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+              }
+            }
+          },
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Safety Scaffolds",
+              "provider": {
+                "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+              }
+            }
+          }
+        ]
+      },
+      "knowsAbout": [
+        "Roof Tiling",
+        "Metal Roofing",
+        "COLORBONDÂ® steel",
+        "ZINCALUMEÂ® steel",
+        "Roof Restoration",
+        "Roof Repairs",
+        "Gutter Services",
+        "Leak Detection",
+        "Heritage roof restoration",
+        "Emergency Roof Repairs"
+      ],
+      "slogan": "Reliable, high-quality roofing solutions with expert craftsmanship",
+      "review": [
+        {
+          "@type": "Review",
+          "reviewRating": {
+            "@type": "Rating",
+            "ratingValue": "5",
+            "bestRating": "5"
+          },
+          "author": {
+            "@type": "Person",
+            "name": "Verified Google review"
+          },
+          "datePublished": "2026-01-15",
+          "reviewBody": "Exceptional service from start to finish. Alex provided a detailed quote, the team arrived on time, and communication throughout the roof restoration was excellent. The repointed ridges look perfect and the final inspection caught small details we would have missed. Highly recommend.",
+          "itemReviewed": {
+            "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+          }
+        },
+        {
+          "@type": "Review",
+          "reviewRating": {
+            "@type": "Rating",
+            "ratingValue": "5",
+            "bestRating": "5"
+          },
+          "author": {
+            "@type": "Person",
+            "name": "Verified Google review"
+          },
+          "datePublished": "2026-02-22",
+          "reviewBody": "Summit Roofing installed our new COLORBONDÂ® roof and fascia gutter system. Always on time, proactive team, and the colour match with our existing cladding is spot-on. Great people to work with - will use again for any future roofing work.",
+          "itemReviewed": {
+            "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+          }
+        },
+        {
+          "@type": "Review",
+          "reviewRating": {
+            "@type": "Rating",
+            "ratingValue": "5",
+            "bestRating": "5"
+          },
+          "author": {
+            "@type": "Person",
+            "name": "Verified Google review"
+          },
+          "datePublished": "2026-03-08",
+          "reviewBody": "After a severe storm cracked several tiles on our heritage home, Chris and the team matched second-hand tiles perfectly - you can't tell where the repair starts. Saved us thousands on what another roofer quoted as a full replacement. 10-year workmanship warranty is reassuring.",
+          "itemReviewed": {
+            "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+          }
+        }
+      ],
+      "potentialAction": [
+        {
+          "@type": "ReserveAction",
+          "name": "Request a Free Quote",
+          "target": {
+            "@type": "EntryPoint",
+            "urlTemplate": "https://summit-roofing-fixture.com.au/contact-us/",
+            "inLanguage": "en-AU",
+            "actionPlatform": [
+              "http://schema.org/DesktopWebPlatform",
+              "http://schema.org/MobileWebPlatform"
+            ]
+          }
+        }
+      ],
+      "speakable": {
+        "@id": "https://summit-roofing-fixture.com.au/#speakable"
+      }
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://summit-roofing-fixture.com.au/#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Can you help with emergency roof repairs?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Summit Roofing offers after-hours emergency roof repairs across Melbourne. Our team is available outside standard business hours to handle urgent leaks, storm damage, and structural safety issues - call 03 5550 0142 to reach our emergency line."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What kind of roof materials do you use?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "We work with premium COLORBONDÂ® steel and ZINCALUMEÂ® steel for metal roofing, plus a wide range of high-quality roofing tiles (including second-hand tiles matched to existing roofs). All materials meet Australian building standards and come with a 10-year workmanship warranty on installation."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How often should my roof be inspected?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "We recommend a professional roof inspection every 12-24 months for most Melbourne homes, and annually for properties in coastal areas (Mornington, Frankston, St Kilda) or near mature gum trees. Regular inspections catch cracked tiles, rusted gutters, and ridge displacement before they cause expensive water damage. Book a free inspection by calling 03 5550 0142."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What areas do you service?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Summit Roofing services Melbourne and Victoria, including premium suburbs (Toorak, Brighton, Hampton, St Kilda, Caulfield, Mornington), growing areas (Berwick, Cranbourne, Pakenham, Frankston, Clyde North), and 28 additional suburbs across Melbourne's east and south-east. Contact us if your suburb isn't listed - we cover most of Greater Melbourne."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I request a custom roofing solution?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Every roofing project is unique, so we tailor solutions based on your property type, budget, and aesthetic preferences. Our process starts with a free on-site consultation where we assess your roof, discuss material options (COLORBONDÂ®, ZINCALUMEÂ®, tile), and provide an obligation-free quote. We handle everything from new roofs and extensions to heritage tile restorations."
+          }
+        }
+      ]
+    },
+    {
+      "@type": "ItemList",
+      "@id": "https://summit-roofing-fixture.com.au/#services-carousel",
+      "itemListOrder": "https://schema.org/ItemListOrderAscending",
+      "name": "Summit Roofing - Service Catalogue",
+      "numberOfItems": 22,
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Roof Restoration Melbourne",
+          "url": "https://summit-roofing-fixture.com.au/roof-restorations/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Roof Tiling Melbourne",
+          "url": "https://summit-roofing-fixture.com.au/roof-tiling/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Metal Roofing Melbourne",
+          "url": "https://summit-roofing-fixture.com.au/metal-roofing/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 4,
+          "name": "Colorbond Roofing Melbourne",
+          "url": "https://summit-roofing-fixture.com.au/colorbond-roofing/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 5,
+          "name": "Roof Repairs Melbourne",
+          "url": "https://summit-roofing-fixture.com.au/roof-repairs/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 6,
+          "name": "Roof Leak Detection Melbourne",
+          "url": "https://summit-roofing-fixture.com.au/roof-leak-detection-and-repair/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 7,
+          "name": "Roof Inspections Melbourne",
+          "url": "https://summit-roofing-fixture.com.au/roof-inspections/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 8,
+          "name": "Extensions & Roof Replacements",
+          "url": "https://summit-roofing-fixture.com.au/extensions-roof-replacements/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 9,
+          "name": "Roof Damage Repairs",
+          "url": "https://summit-roofing-fixture.com.au/roof-damage-repairs/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 10,
+          "name": "Roof Cleaning",
+          "url": "https://summit-roofing-fixture.com.au/roof-cleaning/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 11,
+          "name": "Roof Painting",
+          "url": "https://summit-roofing-fixture.com.au/roof-painting/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 12,
+          "name": "Klip-Lok Roofing",
+          "url": "https://summit-roofing-fixture.com.au/klip-lok-roofing/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 13,
+          "name": "Bedding & Repointing",
+          "url": "https://summit-roofing-fixture.com.au/rebedding-repointing/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 14,
+          "name": "Fascia & Gutter Services",
+          "url": "https://summit-roofing-fixture.com.au/fascia-gutter/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 15,
+          "name": "Gutter Replacement Melbourne",
+          "url": "https://summit-roofing-fixture.com.au/gutter-replacements/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 16,
+          "name": "Box Gutter Installation & Repair",
+          "url": "https://summit-roofing-fixture.com.au/box-gutters/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 17,
+          "name": "Downpipes",
+          "url": "https://summit-roofing-fixture.com.au/downpipes/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 18,
+          "name": "Custom-Made Flashing",
+          "url": "https://summit-roofing-fixture.com.au/custom-made-flashing/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 19,
+          "name": "COLORBONDÂ® Steel Cladding",
+          "url": "https://summit-roofing-fixture.com.au/colorbond-cladding/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 20,
+          "name": "Second Hand Tiles",
+          "url": "https://summit-roofing-fixture.com.au/second-hand-tiles/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 21,
+          "name": "New Roof Tiling",
+          "url": "https://summit-roofing-fixture.com.au/roof-tiling/new-roofing/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 22,
+          "name": "Re-Roofing Services",
+          "url": "https://summit-roofing-fixture.com.au/roof-tiling/re-roofing/"
+        }
+      ]
+    },
+    {
+      "@type": "SpeakableSpecification",
+      "@id": "https://summit-roofing-fixture.com.au/#speakable",
+      "cssSelector": [
+        ".entry-title",
+        ".entry-content > p:first-of-type",
+        ".googlereviewrating_div"
+      ],
+      "xpath": [
+        "/html/head/title",
+        "/html/head/meta[@name=\"description\"]/@content"
+      ]
+    }
+  ]
+}

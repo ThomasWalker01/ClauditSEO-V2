@@ -1,0 +1,447 @@
+# The gate suite (G0-G9) and 250+ tests are the strongest asset here and were
+# opt-in until now. Windows is in the matrix deliberately: the install path
+# and service scripts are Windows-first, so Windows is where regressions bite
+# operators.
+name: CI
+on:
+  push:
+    branches: [master, main]
+    # No paths-ignore. It was here, and CQ-109 (report 055) is what it cost:
+    # the block listed `audits/**`, `NEXT_UP.md`, `TIMINGS.md`,
+    # `OPERATOR_ACTIONS.md` and then `'**/*.md'`, which subsumes the rest —
+    # while the tests it switched off are precisely the ones that read
+    # markdown. `test_loop_instructions.py` runs four row-shape guards over
+    # five of those files, `test_release_metadata.py` reads `CHANGELOG.md`,
+    # `test_naming.py` reads `README.md` and `ARCHITECTURE.md`.
+    #
+    # Not hypothetical: run 32163328377 at `92cf295` failed both python legs
+    # on `test_every_table_row_matches_its_header_width[OPERATOR_ACTIONS.md]`
+    # and `[TIMINGS.md]` — the detector for KI-21, which is open, over files
+    # this block named. It had never yet skipped a run only because every
+    # push since `8de7beb` happened to carry code.
+    #
+    # Its rationale named `codedash/`, `receipts/` and `docs/`. None of those
+    # three directories exists in this repository, so it was not written
+    # against this tree.
+    #
+    # If CI minutes are the constraint, the control is `[skip ci]` in the
+    # commit message: GitHub honours it natively, needs no configuration
+    # here, and is a per-commit decision the author makes knowingly, not a
+    # standing rule about a file extension that nobody re-reads. Guarded by
+    # `tests/test_ci_triggers.py`, which asserts the property rather than the
+    # absence of the key: no push filter may hide a file the suite asserts on.
+  pull_request:
+permissions:
+  contents: read
+
+# Every job below carries a `timeout-minutes`. GitHub's default is 360, so a
+# job that stops making progress holds the run for six hours. That was survivable
+# while a hung run read as green; since `_relay/watch.ps1` (fed3356) began
+# reading an `in_progress` run as pending rather than green, rounds wait on CI
+# and one unbounded job parks the whole loop behind it.
+#
+# Observed 18 August on run 32095774919 (5f345a3): `rendered-a11y` sat 47m56s in
+# `playwright install-deps chromium` with nothing after it, and was cancelled by
+# hand. The identical job passed in 3m12s on the next commit from the same tree,
+# so this is one run that stopped progressing, not a suite that got slower.
+#
+# The numbers below are read from the 30 most recent CI runs (17-18 August),
+# per job, successful runs only:
+#
+#   job                        min     median      max
+#   python (ubuntu-latest)    1m34s     1m42s    2m13s
+#   python (windows-latest)   4m09s     5m10s   13m58s
+#   packaging                 0m04s     0m06s    0m09s
+#   dashboard                 0m24s     0m32s    0m38s
+#   rendered-a11y             2m32s     2m45s   10m32s
+#
+# A bound converts an unbounded hang into a red result in a known time. It is
+# not a performance target and not a budget: each one sits above the observed
+# maximum for its job, with the headroom argued at the job rather than picked
+# because it sounded generous.
+
+jobs:
+  python:
+    # 25: one bound covers both matrix legs, so it has to clear windows' 13m58s
+    # rather than ubuntu's 2m13s. Windows already swings 3.4x inside these 30
+    # runs — the pytest step alone ranged 3m34s to 12m51s — so a bound set
+    # close to the maximum would go red on ordinary variance, and a re-run costs
+    # more time than the tighter bound saved. 1.8x the observed max, and 14x
+    # shorter than the default it replaces.
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        # Full history, not a bound — the same reason the rendered-a11y job
+        # was given it at `aa5a11c`, and this job needs it more. It runs the
+        # *whole* suite, so it collects the pinned-blob lens in
+        # `test_a_score_band_meaning_is_reachable_without_a_mouse.py`, and at
+        # checkout's default depth of 1 that clause resolves nothing and
+        # skips. There is no skip gate here: the skip joins the count this
+        # job's own comment describes as never saying which tests it holds,
+        # so the lens gated nothing on the only job that runs the suite on
+        # Windows and nothing said so. CQ-209.
+        #
+        # Any finite fetch-depth expires — the pinned SHA only ever recedes,
+        # so a bounded number is this same outage on a delay.
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e .[dev]
+      # No extras: proves no optional import has leaked into a hard path.
+      #
+      # `-n auto --dist loadfile` runs the suite across the runner's cores:
+      # 223s to 52s measured locally, with 663 passed either way. Most of
+      # this suite is a fixture HTTP server being crawled, so it is waiting
+      # on sockets rather than competing for CPU.
+      #
+      # loadfile, not the default load: it keeps every test in a file on one
+      # worker, so module-scoped fixtures and within-file ordering behave
+      # exactly as they do serially. The speed comes from running files
+      # beside each other, never from reordering tests inside one.
+      #
+      # `-p no:randomly` is deliberately absent — nothing here randomises
+      # order, and if that changes the parallel run should feel it too.
+      #
+      # `-q` is deliberately absent too, and must not be added back:
+      # pyproject.toml already sets `addopts = "-q"`, so passing it here made
+      # it `-qq`, which suppressed the final `N passed` line. Verbosity is
+      # identical either way; the only difference was that the gate stopped
+      # reporting how many tests it ran, for fifteen rounds.
+      #
+      # `-ra` IS wanted, and is not the same case: addopts supplies `-q` and
+      # nothing else, so this adds something rather than doubling it. Every
+      # run of this job reports `44 skipped` and never says which 44. The
+      # rendered-a11y job below has used `-ra` for exactly this reason; this
+      # job needs it more, because it is the one carrying the invisible skips.
+      # `-n auto` resolves to **2 workers on both legs**, measured rather than
+      # inferred: relay 056 ran a probe on both runners three times and read
+      # `PYTEST_XDIST_WORKER_COUNT` alongside a count of the workers that
+      # actually wrote a file. `cpu_count` is 2 on ubuntu-latest and on
+      # windows-latest alike, and all six readings agreed. So none of the
+      # windows/ubuntu gap is arithmetic — both legs get the same parallelism.
+      # Relay 054 could not read this at all, because `addopts = "-q"`
+      # suppresses xdist's `N workers` header.
+      #
+      # **Why the windows leg is slower, settled.** Three measured runs put it
+      # at 6.03x, 5.32x and 3.94x ubuntu (829.65s / 606.98s / 449.83s against
+      # 137.48s / 114.13s / 114.18s). Ubuntu is steady inside 1%; windows
+      # swings 1.85x, which is the signature of contention rather than of
+      # compute. That is 256-376ms of excess per test over 1312 tests, and
+      # relay 056 measured where it does *not* come from:
+      #
+      #   pytest's per-test machinery   1.09-1.86x   0.1-0.9s over 1312 tests
+      #   importing every test module   1.00x        windows marginally faster
+      #   interpreter/process start     1.4-1.8x     ~20ms, paid twice a run
+      #   loopback HTTP round trip      1.7-3.3x     ~1.1ms extra per request
+      #   one temp dir + one SQLite db  43-79x       74-137ms extra, per unit
+      #
+      # The first three are the "runner overhead" reading, and between them
+      # they account for under 0.2% of the gap. The last one is the gap: the
+      # windows runner's filesystem is one to two orders of magnitude slower
+      # at creating a directory and committing a small database, and roughly
+      # three to five such units per test covers the whole 256-376ms. Nothing
+      # here is a slow test; it is the disk under the fixtures.
+      #
+      # Recorded here rather than in a report because this is the comment
+      # somebody reads before changing `-n auto`, and the answer to "should we
+      # oversubscribe" is now measurable: the workers are not the constraint.
+      - run: pytest -n auto --dist loadfile -ra
+        # UNDER MEASUREMENT — relay 057. KI-43 settled that the windows leg's
+        # cost is the runner's disk, and named one untried lever: python's
+        # `tempfile` follows TMP/TEMP, which on windows-latest point at the OS
+        # disk, while RUNNER_TEMP is on the runner's scratch volume. This
+        # points the suite's temp directories at the scratch volume. Set on
+        # BOTH legs deliberately: a conditional would make the two legs run
+        # different configurations, and ubuntu is the control this rests on.
+        # If the readings do not separate from the pre-change minimum, this
+        # block is reverted rather than left as a no-op somebody re-derives.
+        env:
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+
+  packaging:
+    # 5: a git archive and a grep, measured at 4s to 9s across all 30 runs. The
+    # headroom is not for the work, which cannot grow much while the tree is
+    # this size; it is for checkout. Anything past a minute here means the
+    # runner is wedged rather than busy.
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # git archive ships tracked files only, so .gitignore is the single
+      # source of truth. This guard fails the build if a heavyweight or
+      # client-named artefact ever becomes tracked.
+      # Actions runs bash with -eo pipefail, so `unzip -l | grep -q` would
+      # SIGPIPE the producer and report the pipeline as failed — which `if`
+      # reads as "clean". List first, then match.
+      - run: |
+          git archive --format=zip --prefix=clauditseo/ -o /tmp/ad.zip HEAD
+          # Header dropped for the same reason as scripts/package.sh: it
+          # names the archive, which is not an entry. This copy escaped the
+          # breakage only because it writes /tmp/ad.zip, whose name the
+          # pattern does not match — luck, not design.
+          listing=$(unzip -l /tmp/ad.zip | grep -v '^Archive:')
+          if leaks=$(printf '%s\n' "$listing" \
+                     | grep -E "\.venv|node_modules|reports/out|\.pytest_cache|benchmarks\.zip|clauditseo-.*\.zip"); then
+            echo "packaging leak detected:"; printf '%s\n' "$leaks"; exit 1
+          fi
+          echo "archive clean: $(du -h /tmp/ad.zip | cut -f1)"
+
+  dashboard:
+    # 10: 15x the observed 38s maximum, deliberately loose. Every one of the 30
+    # runs hit a warm npm cache, so a cold `npm ci` is outside the measured
+    # window and this headroom is for the case there is no number for. Being
+    # loose costs nothing here: this job is not the critical path — rendered-a11y
+    # is — so its bound never decides how long CI takes.
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 18
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - run: npm ci
+        working-directory: dashboard
+      # Left serial on purpose. Type check and build are independent and
+      # could overlap, but bare `wait` returns 0 whatever the jobs did, so
+      # `tsc & build & wait` reports a type error as a pass. Doing it safely
+      # means capturing both PIDs and waiting on each — and the prize is a
+      # few seconds on a job that is not the critical path, since
+      # rendered-a11y downloads a browser. Not worth a step that can go
+      # green while typing is broken.
+      - run: npx tsc --noEmit
+        working-directory: dashboard
+      - run: npm run build
+        working-directory: dashboard
+
+  # axe against the app's own rendered screens. Separate from `python` on
+  # purpose: it needs both a built dashboard and a browser, and the point of
+  # the bare `pytest` job above is that it needs neither.
+  #
+  # This is not belt-and-braces over the stylesheet tests — it covers what
+  # they structurally cannot. Every contrast defect this project has shipped
+  # (.tool-mark 2.15:1, .seg-count 3.29:1, .pill-cost 3.83:1) was green in
+  # static analysis and caught only here, because each was a property of what
+  # the browser drew rather than of what the CSS said.
+  rendered-a11y:
+    # 20: successful runs span 2m32s to 10m32s, and the whole of that spread is
+    # one step. `playwright install-deps chromium` — apt, reached on a browser
+    # cache hit -- measured 18s median across the 30 runs, 7m42s on run
+    # 32092749239, and 47m56s on 32095774919 before it was cancelled. The axe
+    # sweep it guards is steady at 1m28s to 1m56s, so the bound is sized against
+    # the package manager, not the tests. Two unmeasured cases share the
+    # headroom: a cold browser cache (all 30 runs hit it, so the ~150 MB
+    # download is not in the numbers above) and a slow apt day. 1.9x the
+    # observed max.
+    #
+    # 45 since 2026-09-26. The sweep is no longer 2 minutes: it grew to 602
+    # tests and took 17m06s on run 35939476538 (2026-09-24), and 626 took
+    # 17m39s on a local machine. Two runs on 2026-09-25 were cancelled at 20
+    # minutes inside the sweep, before pytest printed which tests failed, so
+    # the bound hid the one thing the job exists to report.
+    timeout-minutes: 45
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        # Full history, not a bound. The rendered a11y sweep reads a
+        # historical blob (`git show <pinned SHA>:dashboard/src/components.tsx`)
+        # as a regression lens over the pre-fix code, and checkout's default
+        # depth of 1 carries the tip commit and nothing else — so the test
+        # skipped, and the skip gate below turned that into a red run on
+        # 32630811647: 317 passed, nothing regressed, red on the skip.
+        # Any finite fetch-depth expires — the pinned SHA only ever recedes,
+        # so a bounded number is this same outage on a delay.
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 18
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: npm ci
+        working-directory: dashboard
+      - run: npm run build
+        working-directory: dashboard
+      - run: pip install -e .[dev,render]
+      # The browser is ~150 MB and identical between runs, so downloading it
+      # every time is the longest step in the longest job — the one that
+      # actually decides how long CI takes. Keyed on the playwright version,
+      # so an upgrade fetches a fresh browser rather than running a new
+      # client against an old binary.
+      #
+      # **The key must never be empty, and this step used to allow it.** It read
+      # the version as `playwright.__version__`, which the package no longer
+      # carries. Inside `echo "v=$(...)"` the failure was invisible: the
+      # subshell printed an AttributeError to the log and the step still
+      # succeeded, with `v=`. Every run then cached under
+      # `playwright-Linux-`, hit that one stale entry, skipped the install as a
+      # cache hit, and launched a client against a browser that was not there
+      # (`Executable doesn't exist at .../chromium_headless_shell-1243/...`).
+      # `rendered-a11y` was red from 2026-09-17, which is to say the whole axe
+      # sweep and every browser clause in this job reported nothing for two
+      # days. Exactly what the paragraph above was written to prevent, defeated
+      # by a blank.
+      #
+      # So: the distribution's own metadata, `set -o pipefail`, and the step
+      # fails loudly on an empty read rather than poisoning the key.
+      - id: pw-version
+        run: |
+          set -euo pipefail
+          v="$(python -c 'from importlib.metadata import version; print(version("playwright"))')"
+          test -n "$v"
+          echo "v=$v" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        id: pw-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw-version.outputs.v }}
+      # --with-deps also installs OS packages, which the cache does not hold.
+      # A miss is paying for the ~150 MB download regardless, so apt rides
+      # along with a step that had to run anyway. That is the rare path, and
+      # it is not the one that hangs.
+      - if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: playwright install --with-deps chromium
+      # No `install-deps` step on a cache hit — the common path — and the
+      # reason is read off the step's own output rather than off what the
+      # runner image is believed to contain. Relay 058 pulled the log from
+      # five successful runs (32302232963, 32300260485, 32296045201,
+      # 32289443817, 32272620577); all five report the same two things.
+      #
+      # Every shared library chromium links against is already present:
+      # libnss3, libnspr4, libgbm1, libdrm2, libatk1.0-0t64,
+      # libatk-bridge2.0-0t64, libatspi2.0-0t64, libcups2t64, libcairo2,
+      # libdbus-1-3, libglib2.0-0t64, libpango-1.0-0, libx11-6, libasound2t64
+      # — each one "is already the newest version". And then:
+      #
+      #   0 upgraded, 9 newly installed, 0 to remove
+      #
+      # where all nine are fonts: fonts-freefont-ttf, fonts-ipafont-gothic,
+      # fonts-tlwg-loma-otf, fonts-unifont, fonts-wqy-zenhei, xfonts-cyrillic,
+      # xfonts-encodings, xfonts-scalable, xfonts-utils. CJK, Thai and
+      # Cyrillic glyph coverage, for a dashboard that draws Latin text.
+      #
+      # So the step never installed the libraries that appeared to justify it,
+      # and reaching apt to establish that is the entire spread of this job:
+      # 18s median, 7m42s on 32092749239, 47m56s on 32095774919, and the
+      # cancellation of 32305048727 — a run whose every test job was green,
+      # rolled up to `cancelled` because this step alone consumed the bound.
+      #
+      # The skip guard below is what makes the removal honest rather than
+      # merely convenient. If chromium cannot launch without those packages
+      # the sweep does not quietly pass: it skips, and the grep turns a skip
+      # into a red job. The counts are read, not assumed.
+      #
+      # The tests skip themselves when the browser or the build is missing,
+      # which is right locally and useless here — a skipped gate is not a
+      # gate, and it would go green forever the day the install step breaks.
+      # `-ra` reports skip reasons, so the log says why if it ever happens.
+      #
+      # No `-q` here either, and this one is load-bearing rather than tidy:
+      # with `addopts = "-q"` it became `-qq`, which removes the `N skipped`
+      # summary line — the exact string the grep below looks for. `-ra` still
+      # printed `SKIPPED [1] …`, which does not match `[0-9]+ skipped`, so the
+      # guard could not fire and the sweep could have skipped silently.
+      # `test_real_data_scale.py` rides along for the same reason and one of
+      # its own: its static half reads source, and source cannot tell a filter
+      # that filters from a control that renders and narrows nothing. The two
+      # live clauses drive the built bundle and read the counts back out of
+      # the rendered page. Left out of this list they would skip here and pass
+      # vacuously in `python`, which is a guard the gate never runs — the
+      # unverified-coverage defect one layer out from the one it was added to
+      # close.
+      # `test_spend_mark.py` and `test_heading_fault.py` ride along because
+      # each has clauses that need a browser and this is the only job that has
+      # one. F-07's are "the outline scrolls to and marks the fault" and "a
+      # finding with no recorded position leaves it unopened" — the first is a
+      # measurement of a rendered box against the viewport, and neither can be
+      # read off the source. F-10's clause 4 — the
+      # marker still appears when no price is configured — cannot be read off
+      # the source, because the thing it asserts is that a component renders
+      # in a state where there is no figure to draw. In the `python` job it
+      # skips itself at collection; here both its conditions hold, so here is
+      # where it is a gate. The rest of that file is static and keeps running
+      # in `python`; it runs twice, which costs a few file reads.
+      #
+      # `test_section_refresh.py` joins them for the same reason. Five of its
+      # clauses are about a control on a screen — that the cost of the coarse
+      # refresh is legible *before* the click, that the opener carries no
+      # spend mark while the button inside it does, and that the request the
+      # control actually issues is scoped to the dimension it named. None can
+      # be read off the source: the first is rendered text, the second is
+      # F-10's own distinction between opening and committing, and the third
+      # is an intercepted POST body.
+      #
+      #
+      # `test_accessibility_headline.py` joins them with F-09's clause 3, the
+      # one its entry marked "not optional": a run whose accessibility sweep
+      # did not execute must render as *not assessed* and never as a zero,
+      # because 0.0 is a measurement meaning perfectly bad. What a component
+      # draws in a state is not readable from the source — a card that
+      # printed the stored 0.0 would look identical to one that refused to,
+      # in every static check that could be written — so it is driven at a
+      # real server with a real browser. Its arithmetic and hand-off clauses
+      # are static and keep gating in `python`.
+      #
+      # The skip check below is what makes that arrangement honest: the
+      # clause is allowed to skip in the job without a browser precisely
+      # because it is not allowed to skip in this one.
+      #
+      # `test_site_switch.py` joins them because it was in neither place —
+      # CQ-37. It skips itself without Chromium, so it reported green in
+      # `python` for want of a browser and was named in no job that has one:
+      # its two assertions, that no page filter and no open brief survives a
+      # change of client, had never executed in CI. Measured locally at
+      # `c94df06`: 2 passed in 20.76s, no skips. The list is no longer kept by
+      # hand — `tests/test_ci_browser_gate.py` derives it from the files that
+      # skip on `not axe.available()` and fails naming any that is missing.
+      # `test_every_count_carries_its_population.py` joins them with item
+      # 155's six rendered clauses. Every one of them reads a denominator off
+      # a drawn cell - which population a prevalence was taken over, whether a
+      # label correctly disappeared on a full-coverage run, whether a
+      # site-scoped count was dressed as a page ratio - and none of that is
+      # readable from source: the population is data on the payload and the
+      # rendering is a decision a component makes about it. Four of the six
+      # serve a doctored payload through route interception, which needs a
+      # browser to intercept in. Its eight contract clauses read the payload
+      # over HTTP and keep gating in `python`.
+      # `test_the_speed_part_page_visuals.py` joins them with item 141 step
+      # BC's accept, which names its six pictures one by one - four gauges on
+      # Google's bands, the greyed field bar, the sub-part bar summing to the
+      # LCP, the filmstrip, the waterfall and the third-party bars. Whether
+      # each is on screen is not readable from source: the gauges' band widths
+      # are computed from the registry at render time, and the clause serves a
+      # doctored payload through route interception because no fixture run
+      # takes a performance trace (it is a third throttled browser launch).
+      # Its sixteen payload clauses read the stored shape and keep gating in
+      # `python`.
+      # `test_the_header_states_three_numbers_with_denominators.py` joins them
+      # with 150 step BJ's render half. Its four rendered clauses read numbers
+      # off the client header - which figure leads, what each divides by,
+      # whether a percentage is drawn over a denominator nobody read - and none
+      # of that is in the source: the figures come from the payload and the
+      # rendering is a decision about it. Two of them serve a doctored headline
+      # through route interception, because the render fixture's own site size
+      # is `unknown` (it has no sitemap) and that is only one of the two cases.
+      # Its arithmetic clause reads the payload and keeps gating in `python`.
+      - name: axe over every screen
+        run: |
+          set -o pipefail
+          pytest tests/test_a11y_rendered.py tests/test_spend_mark.py tests/test_heading_fault.py tests/test_section_refresh.py tests/test_reflow.py tests/test_accessibility_headline.py tests/test_probes.py tests/test_site_switch.py tests/test_missing_composite_on_screen.py tests/test_measured_share_on_screen.py tests/test_fetch_state.py tests/test_site_level_tick.py tests/test_verify_page_cap.py tests/test_real_data_scale.py tests/test_deliverable_regenerate.py tests/test_reference_rate_states_a_rate.py tests/test_server_outage_is_named.py tests/test_unpriced_spend_is_named.py tests/test_the_spending_screen_frames_its_money.py tests/test_a11y_before_the_app.py tests/test_an_error_the_operator_must_notice_is_announced.py tests/test_a_refused_press_is_brought_to_the_operator.py tests/test_a_score_band_meaning_is_reachable_without_a_mouse.py tests/test_every_report_template_has_a_route_from_the_ui.py tests/test_the_branded_icon_loads_where_a_token_is_required.py tests/test_the_price_ledger_names_its_author_on_the_panel.py tests/test_the_sweep_forecast_states_the_population_it_priced.py tests/test_a_trend_point_recovers_the_dimension_set_it_recorded.py tests/test_a_fix_attempt_mark_can_be_withdrawn.py tests/test_a_page_refresh_is_offered_only_where_a_page_can_change_it.py tests/test_a_count_reaches_what_it_counted.py tests/test_the_standing_position_names_the_run_that_moved_it.py tests/test_a_section_refresh_starts_what_it_says.py tests/test_the_rendered_pass_keeps_what_it_saw.py tests/test_every_count_carries_its_population.py tests/test_the_speed_part_page_visuals.py tests/test_the_header_states_three_numbers_with_denominators.py tests/test_the_chrome_fits_the_width_it_is_drawn_at.py tests/test_the_audit_ranks_its_own_work.py tests/test_the_way_up_is_on_every_part.py tests/test_an_open_part_offers_the_way_to_another.py tests/test_a_part_recheck_asks_before_it_audits_the_site.py tests/test_the_legend_keys_what_is_on_the_screen.py tests/test_the_snippet_cut_marks_the_description.py tests/test_a_running_action_looks_different_from_a_held_one.py tests/test_every_count_on_the_landing_is_its_own_door.py tests/test_a_part_shows_only_its_own_replacement_copy.py tests/test_the_checks_table_counts_findings_over_every_page_they_name.py tests/test_a_record_chip_counts_what_its_press_shows.py tests/test_the_landing_board_is_the_landings.py tests/test_a_paid_content_card_is_not_a_free_check.py tests/test_a_checks_table_row_reads_its_own_findings.py tests/test_a_template_row_names_its_template.py tests/test_a_headings_card_diffs_against_the_page_at_site_scope.py tests/test_the_accessibility_part_draws_its_site_picture.py tests/test_the_crawl_part_says_which_size_it_counts.py tests/test_a_site_scoped_part_draws_its_checks_table.py tests/test_an_analysis_that_does_not_apply_is_held_with_its_reason.py tests/test_a_brief_only_finding_waits_for_the_operator.py tests/test_prioritise_and_report_is_not_a_part.py tests/test_the_structured_data_eligibility_is_the_pages_own.py tests/test_a_page_that_left_the_site_says_not_seen_since.py tests/test_a_content_region_is_drawn_on_its_page.py -ra 2>&1 | tee a11y.log
+          if grep -qE "[0-9]+ skipped" a11y.log; then
+            echo "::error::the rendered a11y sweep skipped — it gated nothing"
+            exit 1
+          fi

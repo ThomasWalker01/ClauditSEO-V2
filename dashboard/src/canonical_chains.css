@@ -1,0 +1,104 @@
+/* The Indexability & canonicals part's "now" block (brief v16g): one card
+   per canonical chain, drawn as dots and arrows.
+
+   A sheet of its own for the reason `crawl_depth.css`, `images_budget.css`
+   and `headings_outline.css` give: this is one part's layout, and folding a
+   chain card into `styles.css` puts it in front of every other screen.
+   `main.tsx` imports it, which is how `test_dashboard_a11y._stylesheets`
+   finds it.
+
+   Every colour is a token `styles.css` already declares — one per kind and
+   no more, which is item 140's rule. The mockup names `--ok`, `--warn`,
+   `--bad` and `--mute`; this repository's names for those meanings are
+   `--good`, `--warn-strong`, `--danger` and `--text-muted`, and inventing a
+   second set is the thing 140 exists to remove. */
+
+.cc-root { display: block; margin: 0 0 1rem; }
+
+.cc-head { margin: 0 0 4px; font-size: 0.95rem; }
+.cc-narrow { color: var(--text-muted); font-weight: 400; }
+.cc-blurb { margin: 0 0 10px; font-size: 0.8125rem; }
+.cc-blurb code { font-family: ui-monospace, Consolas, monospace;
+                 font-size: 0.78rem; }
+
+/* Two cards across, which is the mockup's grid, collapsing to one where a
+   520-wide drawing would otherwise be squeezed to illegibility. */
+.cc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 24px;
+           margin-top: 12px; }
+
+.cc-card { border: 1px solid var(--border); border-radius: 6px;
+           padding: 10px 14px 8px; min-width: 0; }
+
+.cc-title { margin: 0 0 6px; font-size: 0.8125rem; font-weight: 600;
+            overflow-wrap: anywhere; }
+.cc-sub { color: var(--text-muted); font-weight: 400; margin-left: 8px;
+          font-size: 0.78rem; }
+/* The check id is a control — it narrows the record — so it is a button and
+   it looks like the link it behaves as. */
+.cc-check { background: none; border: none; padding: 0; font: inherit;
+            color: var(--accent); text-decoration: underline; cursor: pointer; }
+
+.cc-svg { display: block; width: 100%; height: auto; overflow: visible; }
+
+/* The dots. One token per kind, taken from the card's own class so the
+   arrow, the dot and the legend swatch cannot take different answers. */
+.cc-dot { fill: var(--text-muted); }
+.cc-ok .cc-dot { fill: var(--good); }
+.cc-warn .cc-dot { fill: var(--warn-strong); }
+.cc-bad .cc-dot { fill: var(--danger); }
+.cc-mute .cc-dot { fill: var(--text-muted); }
+/* The node the chain dies on takes the bad token whatever the rest of the
+   chain is drawn in: that is the node the fix is about. */
+.cc-node-bad .cc-dot { fill: var(--danger); }
+
+.cc-arrow, .cc-loop { stroke-width: 2; fill: none; }
+.cc-ok .cc-arrow, .cc-ok .cc-loop { stroke: var(--good); }
+.cc-warn .cc-arrow, .cc-warn .cc-loop { stroke: var(--warn-strong); }
+.cc-bad .cc-arrow, .cc-bad .cc-loop { stroke: var(--danger); }
+.cc-mute .cc-arrow, .cc-mute .cc-loop { stroke: var(--text-muted); }
+.cc-ok .cc-head { fill: var(--good); }
+.cc-warn .cc-head { fill: var(--warn-strong); }
+.cc-bad .cc-head { fill: var(--danger); }
+.cc-mute .cc-head { fill: var(--text-muted); }
+
+/* The path under each node. Monospace, because a URL read for a difference
+   of one character is read character by character. `--text-muted` and not a
+   fainter grey, which owes 4.5:1 as body text on a card. */
+.cc-path { fill: var(--text-muted); font-size: 11px;
+           font-family: ui-monospace, Consolas, monospace; }
+.cc-itself { fill: var(--good); font-size: 11px; }
+
+/* The press target, which is bigger than the dot and invisible: WCAG 2.2's
+   2.5.8 asks for 24 CSS px and a 12-unit dot on a scaled drawing is about
+   eight. `fill: transparent` and not `fill: none` — the second is not
+   painted at all and so catches no pointer. */
+.cc-hit { fill: transparent; }
+
+/* A node that opens a page is a control and says so on hover and on focus.
+   The focus ring is drawn on the group, not on the circle, so it surrounds
+   the dot and its path together. */
+.cc-node[role="button"] { cursor: pointer; }
+.cc-node[role="button"]:hover .cc-dot { r: 8; }
+.cc-node[role="button"]:focus-visible { outline: 2px solid var(--accent);
+                                        outline-offset: 2px; }
+
+.cc-note { margin: 6px 0 0; color: var(--text-muted); font-size: 0.78rem; }
+
+.cc-clean { margin: 10px 0 0; color: var(--good); font-size: 0.875rem; }
+.cc-absent, .cc-none { margin: 10px 0 0; font-size: 0.8125rem; }
+.cc-more { margin: 10px 0 0; font-size: 0.8125rem; }
+.cc-morelink { background: none; border: none; padding: 0; font: inherit;
+               color: var(--accent); text-decoration: underline; cursor: pointer; }
+.cc-tally { margin: 4px 0 0; font-size: 0.78rem; }
+
+/* The legend: one swatch per kind, in the mockup's words. A bar rather than
+   a dot, for the reason the mockup gives — a 3px rule reads as a colour
+   sample at a glance where a 6px circle reads as another node. */
+.cc-legend { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 10px;
+             font-size: 0.75rem; color: var(--text-muted); }
+.cc-key i { display: inline-block; width: 14px; height: 3px; margin-right: 6px;
+            vertical-align: 3px; background: var(--text-muted); }
+.cc-key.cc-ok i { background: var(--good); }
+.cc-key.cc-warn i { background: var(--warn-strong); }
+.cc-key.cc-bad i { background: var(--danger); }
+.cc-key.cc-mute i { background: var(--text-muted); }

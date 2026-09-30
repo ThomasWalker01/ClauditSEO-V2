@@ -1,0 +1,933 @@
+import { ReactNode, useState } from "react";
+import { Finding, FindingState, RunStatus, Severity, TrendPoint,
+         hasScore, isSiteReading } from "./api";
+
+/** F-10. The one place the "this spends" decision is expressed, so it cannot
+ *  be made five different ways on five screens — which is what B-22 found.
+ *
+ *  It marks **intent to spend, never an amount**. A figure beside a control
+ *  is a prediction, and B-22's own history is a prediction read wrong; this
+ *  cannot be wrong, because it asserts nothing about a number. It is also
+ *  unconditional on a price being known: `admin.tsx`'s rule is that until a
+ *  price is entered every cost renders in tokens rather than a blank, and a
+ *  marker that vanished when the price was unknown would have quietly become
+ *  a price.
+ *
+ *  **It belongs only on a control that itself issues the paid call.** A
+ *  button that opens a confirmation dialog does not spend — the two buttons
+ *  inside the dialog do. Marking the opener was the defect that got the
+ *  first build of this feature reverted (`e979b1c`), and it is the same
+ *  "fires every time" failure clause 2 forbids: a mark on everything that
+ *  leads eventually to spending says nothing about which click commits.
+ */
+export function SpendMark() {
+  return (
+    <span className="spend-mark" title="This spends model tokens">
+      <span aria-hidden="true">$</span>
+      <span className="sr-only">spends model tokens: </span>
+    </span>
+  );
+}
+
+export function UrlLinks({ urls, max = 3 }: { urls: string[]; max?: number }) {
+  if (!urls?.length) return null;
+  const shown = urls.slice(0, max);
+  return (
+    <span className="url-links">
+      {shown.map((u) => {
+        let label = u;
+        try {
+          const parsed = new URL(u);
+          label = parsed.pathname + parsed.search || "/";
+        } catch { /* keep raw */ }
+        return (
+          <a key={u} href={u} target="_blank" rel="noopener noreferrer" title={u}>
+            {label.length > 60 ? label.slice(0, 57) + "…" : label}
+          </a>
+        );
+      })}
+      {urls.length > max && <span className="muted"> +{urls.length - max} more</span>}
+    </span>
+  );
+}
+
+/** Bands: 80+ good, 60-79 fair, below 60 poor.
+ *
+ *  Carried by three things, not one. Colour alone said whether 62 was good
+ *  or bad, which is nothing to roughly one man in twelve and nothing at all
+ *  to a screen reader (WCAG 1.4.1). The glyph gives it a shape and the
+ *  hidden text gives it a word, so the hue is now the fastest signal rather
+ *  than the only one.
+ */
+const SCORE_BANDS = [
+  { at: 80, cls: "good", mark: "●", word: "good" },
+  { at: 60, cls: "fair", mark: "◐", word: "fair" },
+  { at: -Infinity, cls: "poor", mark: "○", word: "poor" },
+];
+
+export function ScoreBadge({ score }: { score: number | null }) {
+  if (score === null || score === undefined)
+    return <span className="muted">—<span className="sr-only"> not scored</span></span>;
+  const band = SCORE_BANDS.find((b) => score >= b.at)!;
+  return (
+    <span className={`score ${band.cls}`} title={`${band.word} — ${band.cls === "good"
+      ? "80 or above" : band.cls === "fair" ? "60 to 79" : "below 60"}`}>
+      <span className="score-mark" aria-hidden="true">{band.mark}</span>
+      {score.toFixed(1)}
+      <span className="sr-only"> out of 100, {band.word}</span>
+    </span>
+  );
+}
+
+/** What a run's Score column shows — the score, or why there is none.
+ *
+ *  UX-42. Three tables across two screens wrote this branch out
+ *  independently, and all three said what "narrow run" means in a `title`
+ *  on a non-focusable `<span>`. That breaches the provenance invariant's
+ *  own words — "a stated limitation on a displayed value must appear in
+ *  rendered text, not only in a `title`" — and it shipped in the round
+ *  whose report already carried `title`-only explanation as an open defect
+ *  at UX-07, UX-15 and UI-08. `RunDetailView` got it right in the same
+ *  commit with a rendered Card, so the correct pattern and the incorrect
+ *  one landed together.
+ *
+ *  **Two gates, and the order is the argument.** A narrow run is `complete`
+ *  and has a real score, so asking `hasScore` first would print it. "not
+ *  scored" is also the wrong word for it — it WAS scored, over eight pages
+ *  of two hundred.
+ *
+ *  The three call sites carry the same three facts under six different
+ *  field names (`kind`/`run_kind`, `status`/`run_status`,
+ *  `composite_score`/`score`/`run_score`), which is most of why the branch
+ *  was re-derived rather than shared. Named parameters settle that here
+ *  once. */
+export function RunScore({ kind, status, score }: {
+  kind: string; status: RunStatus; score: number | null;
+}) {
+  if (!isSiteReading(kind)) return <span className="muted">narrow run</span>;
+  if (!hasScore(status)) return <span className="muted">not scored</span>;
+  return <ScoreBadge score={score} />;
+}
+
+/** The sentence `RunScore` used to hide in a `title`, in rendered text.
+ *
+ *  A `<caption>` rather than a footnote row: it is the element whose job is
+ *  to describe a table, it is announced with the table rather than after
+ *  it, and it needs no `colSpan` — so the three tables can share it despite
+ *  having four, seven and eight columns. The reader meets the term's
+ *  definition before meeting the term.
+ *
+ *  Rendered only where a narrow run is actually listed, and the test is on
+ *  the same list the rows come from. A caption defining a word the table
+ *  never uses is noise, and a caption that appears on one screen and not
+ *  the other is the disagreement this component exists to prevent. */
+export function NarrowRunNote({ runs }: { runs: { kind: string }[] }) {
+  if (!runs.some((r) => !isSiteReading(r.kind))) return null;
+  return (
+    <caption className="table-note">
+      <strong>narrow run</strong> — re-read a named handful of pages rather
+      than the site, so its composite is that run's own honest result and
+      not the site's score. Shown in place of a score.
+    </caption>
+  );
+}
+
+/** A run's status, as a chip rather than a raw database token.
+ *
+ *  `blocked` is the most consequential status the product has — "this site
+ *  refused to be crawled" — and the runs table printed it lowercase beside
+ *  `complete` with no colour and no explanation, while the same row showed
+ *  the composite that crawl produced from robots.txt alone. Colours reuse
+ *  the status tokens already in the contrast table, so this adds no pair
+ *  that has not been checked. */
+export function RunStatusChip({ status }: { status: RunStatus }) {
+  // `Record<RunStatus, …>`, not `Record<string, …>`: this was the one
+  // non-exhaustive pattern in the file that owns the status vocabulary, so a
+  // new member compiled here while `tsc` caught it in four other places, and
+  // the chip shipped with `title={undefined}` and no colour. The matching
+  // `.run-status-*` rule is enforced by test_dashboard_a11y.py.
+  const why: Record<RunStatus, string> = {
+    blocked: "the crawl was refused — findings are from robots.txt and the "
+             + "sitemap, and there is no page-derived score",
+    failed: "the run did not finish",
+    cancelled: "stopped before it finished",
+    complete: "a full audit with a score",
+    running: "in progress",
+    pending: "queued",
+  };
+  return (
+    <span className={`run-status run-status-${status}`} title={why[status]}>
+      {status}
+    </span>
+  );
+}
+
+export function SeverityTag({ severity }: { severity: Severity }) {
+  return <span className={`sev sev-${severity}`}>{severity}</span>;
+}
+
+const SEV_RANK_ALERT: Record<string, number> = {
+  critical: 0, high: 1, medium: 2, low: 3, info: 4,
+};
+
+/** One line for everything urgent, expandable.
+ *
+ *  These were two stacked banners costing about 290px before the tabs even
+ *  began — on a screen whose whole point was to stop being 45 screens tall.
+ *  The count and the subject are the alert; the detail is the follow-up, so
+ *  the follow-up folds.
+ *
+ *  Toned by the worst thing inside rather than by being an alert at all. A
+ *  regression of an `info` finding — "Core Web Vitals not assessed, no API
+ *  key" — was getting the same red as a robots.txt that stopped responding,
+ *  and an alert that cries wolf is one an operator learns to scroll past.
+ */
+export function Alerts({ regressions, watch }:
+    { regressions: FindingState[];
+      watch?: { what: string; before: unknown; after: unknown; severity: string;
+            /** Why the two numbers may not be comparable, or which file
+             *  actually moved. A bare "268 → 117" sends someone to diagnose a
+             *  site-wide deletion; the note says which sitemap it was. */
+            note?: string }[] }) {
+  const [open, setOpen] = useState(false);
+  const changes = watch ?? [];
+  if (!regressions.length && !changes.length) return null;
+
+  const worst = [...regressions.map((r) => r.severity),
+                 ...changes.map((c) => c.severity)]
+    .reduce((acc, s) => (SEV_RANK_ALERT[s] < SEV_RANK_ALERT[acc] ? s : acc), "info");
+  const bits: string[] = [];
+  if (regressions.length)
+    bits.push(`${regressions.length} regression${regressions.length === 1 ? "" : "s"}`);
+  if (changes.length)
+    bits.push(changes.map((c) => c.what.replace(/ HTTP status| declared entries/, ""))
+      .join(", ") + " changed");
+
+  return (
+    <div className={`alertline alert-${worst}`} role="alert">
+      <button type="button" className="alertline-head" aria-expanded={open}
+              onClick={() => setOpen(!open)}>
+        <span className={`sev sev-${worst}`}>{worst}</span>
+        <span className="alertline-text">{bits.join(" · ")}</span>
+        <span className="alertline-more">{open ? "hide" : "show"}</span>
+      </button>
+      {open && (
+        <div className="alertline-body">
+          {!!regressions.length && (
+            <ul>
+              {regressions.map((r) => (
+                <li key={r.fingerprint}>
+                  <span className={`sev sev-${r.severity}`}>{r.severity}</span>{" "}
+                  <code>{r.dimension}/{r.check_id}</code> — {r.summary}{" "}
+                  <UrlLinks urls={r.affected_urls} />
+                </li>
+              ))}
+            </ul>
+          )}
+          {!!changes.length && (
+            <ul>
+              {changes.map((c, i) => (
+                <li key={i}>
+                  <span className={`sev sev-${c.severity}`}>{c.severity}</span>{" "}
+                  {c.what}: <code>{String(c.before)}</code> →{" "}
+                  <code>{String(c.after)}</code>
+                  {c.note && <div className="muted rec">{c.note}</div>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const trendDay = (iso: string) => (iso || "").slice(0, 10);
+
+/** Which terms of the frame differ between two adjacent points.
+ *
+ *  Not a second comparability verdict - `comparable` already says *that*
+ *  two points cannot be read against each other, and it is the server's to
+ *  decide. This says *which* term moved, which is the part an operator
+ *  needs in order to act, and it is read off two rows rather than judged.
+ *  Where the server calls a boundary and no term here differs, the caller
+ *  says so plainly rather than printing an empty reason. */
+function frameMoved(prev: TrendPoint, p: TrendPoint): string[] {
+  const out: string[] = [];
+  const unknown = (v: string | null | undefined) => v || "unknown";
+  if (prev.tier !== p.tier)
+    out.push(`tier ${unknown(prev.tier)} → ${unknown(p.tier)}`);
+  if (prev.engine_version !== p.engine_version)
+    out.push(`engine ${unknown(prev.engine_version)} → ${unknown(p.engine_version)}`);
+  const before = prev.scope?.basis ?? null;
+  const after = p.scope?.basis ?? null;
+  if (before !== after)
+    out.push(`basis ${unknown(before)} → ${unknown(after)}`);
+  return out;
+}
+
+export function TrendChart({ points }: { points: TrendPoint[] }) {
+  if (points.length < 2)
+    return <p className="muted">Run at least two audits to see a trend.</p>;
+  const w = 560;
+  const h = 140;
+  const pad = 24;
+  const xs = points.map((_, i) => pad + (i * (w - 2 * pad)) / (points.length - 1));
+  const min = Math.min(...points.map((p) => p.value));
+  const max = Math.max(...points.map((p) => p.value));
+  const span = max - min || 1;
+  const ys = points.map((p) => h - pad - ((p.value - min) / span) * (h - 2 * pad));
+  // One path per run of comparable points, not one path over all of them.
+  // A single line asserts that every step along it is a like-for-like
+  // change, which is exactly the claim `comparable: false` denies - and the
+  // seeded history had a 20-point drop across a T2/T3 boundary drawn as an
+  // unbroken descent. A segment holding one point draws no stroke, which is
+  // correct: there is nothing to draw a line *to*. Its dot still renders.
+  const segments: string[][] = [];
+  xs.forEach((x, i) => {
+    if (i === 0 || !points[i].comparable) segments.push([]);
+    const seg = segments[segments.length - 1];
+    seg.push(`${seg.length === 0 ? "M" : "L"}${x},${ys[i]}`);
+  });
+  const breaks = points
+    .map((p, i) => ({ p, i }))
+    .filter(({ p, i }) => i > 0 && !p.comparable)
+    .map(({ p, i }) => {
+      const why = frameMoved(points[i - 1], p);
+      return `${trendDay(points[i - 1].captured_at)} → ${trendDay(p.captured_at)}: `
+        + (why.length ? why.join(", ") : "the frame changed");
+    });
+  return (
+    <>
+      {/* `aria-hidden`, because the table below is the same data in a form a
+          screen reader can actually read. This was an `<svg role="img">`
+          carrying one `aria-label` for the whole series - a label that names
+          the chart and conveys none of it. */}
+      <svg viewBox={`0 0 ${w} ${h}`} className="trend" aria-hidden="true"
+           focusable="false">
+        {segments.map((seg, i) => (
+          <path key={i} d={seg.join(" ")} fill="none" strokeWidth="2"
+                className="trend-line" />
+        ))}
+        {xs.map((x, i) => (
+          <g key={i}>
+            <circle cx={x} cy={ys[i]} r="3.5" className="trend-dot" />
+            <text x={x} y={ys[i] - 8} textAnchor="middle" className="trend-label">
+              {points[i].value.toFixed(0)}
+            </text>
+          </g>
+        ))}
+      </svg>
+      {/* Rendered text, not a `title`. A stated limitation reachable only by
+          hovering is the provenance breach, not the remedy for one. */}
+      <p className="trend-frame">
+        {breaks.length
+          ? `The line breaks where a comparison stops being one. ${breaks.join("; ")}.`
+          : `All ${points.length} points share one engine version, share basis `
+            + `and tier, so they read as one series.`}
+      </p>
+      <table className="trend-table findings">
+        <caption className="sr-only">
+          Every point on the score trend, with the frame it was measured in
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">Captured</th><th scope="col">Score</th>
+            <th scope="col">Tier</th><th scope="col">Engine</th>
+            <th scope="col">Share basis</th>
+            <th scope="col">Reads against the point before</th>
+          </tr>
+        </thead>
+        <tbody>
+          {points.map((p, i) => (
+            <tr key={i}>
+              <td>{trendDay(p.captured_at)}</td>
+              <td>{p.value.toFixed(1)}</td>
+              <td>{p.tier || "unknown"}</td>
+              <td>{p.engine_version || "unknown"}</td>
+              <td>{p.scope?.basis || "unknown"}</td>
+              <td>{i === 0 ? "— first point"
+                    : p.comparable ? "yes"
+                    : `no: ${(frameMoved(points[i - 1], p).join(", ")) || "the frame changed"}`}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </>
+  );
+}
+
+export function FindingsTable({ findings }: { findings: Finding[] }) {
+  const [dim, setDim] = useState("all");
+  const [sev, setSev] = useState("all");
+  const dims = [...new Set(findings.map((f) => f.dimension))].sort();
+  const sevs = ["critical", "high", "medium", "low", "info"];
+  const rows = findings.filter(
+    (f) => (dim === "all" || f.dimension === dim) && (sev === "all" || f.severity === sev),
+  );
+  return (
+    <div>
+      <div className="filters">
+        <select value={dim} onChange={(e) => setDim(e.target.value)} aria-label="dimension filter">
+          <option value="all">All dimensions</option>
+          {dims.map((d) => <option key={d} value={d}>{d}</option>)}
+        </select>
+        <select value={sev} onChange={(e) => setSev(e.target.value)} aria-label="severity filter">
+          <option value="all">All severities</option>
+          {sevs.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <span className="muted">{rows.length} of {findings.length}</span>
+      </div>
+      <table className="findings">
+        <thead>
+          <tr><th>Severity</th><th>Dimension</th><th>Check</th><th>Finding</th></tr>
+        </thead>
+        <tbody>
+          {rows.map((f) => (
+            <tr key={f.id}>
+              <td><SeverityTag severity={f.severity} /></td>
+              <td>{f.dimension}</td>
+              <td><code>{f.check_id}</code></td>
+              <td>
+                {f.summary} <UrlLinks urls={f.affected_urls} />
+                {f.recommendation && <div className="muted rec">{f.recommendation}</div>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+export function PriorityPlan({ findings }: { findings: Finding[] }) {
+  const plan = findings.filter((f) => f.check_id === "pri-j");
+  if (!plan.length) return null;
+  return (
+    <section className="priority-plan">
+      <h3>Do this first <span className="badge-model">analyst plan — not scored</span></h3>
+      <ol>
+        {plan.map((f) => (
+          <li key={f.id}>
+            {f.summary}
+            {f.recommendation && <div className="muted rec">{f.recommendation}</div>}
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+type Group = {
+  key: string;
+  dimension: string;
+  check_id: string;
+  severity: Severity;
+  count: number;
+  summary: string;
+  recommendation: string;
+  urls: string[];
+};
+
+const SEV_ORDER: Severity[] = ["critical", "high", "medium", "low", "info"];
+
+function groupFindings(findings: Finding[]): Group[] {
+  const map = new Map<string, Group>();
+  for (const f of findings) {
+    const key = `${f.dimension}/${f.check_id}`;
+    const existing = map.get(key);
+    if (existing) {
+      existing.count += 1;
+      for (const u of f.affected_urls) {
+        if (!existing.urls.includes(u)) existing.urls.push(u);
+      }
+      if (SEV_ORDER.indexOf(f.severity) < SEV_ORDER.indexOf(existing.severity)) {
+        existing.severity = f.severity;
+      }
+    } else {
+      map.set(key, {
+        key, dimension: f.dimension, check_id: f.check_id, severity: f.severity,
+        count: 1, summary: f.summary, recommendation: f.recommendation,
+        urls: [...f.affected_urls],
+      });
+    }
+  }
+  return [...map.values()].sort((a, b) =>
+    SEV_ORDER.indexOf(a.severity) - SEV_ORDER.indexOf(b.severity) || b.count - a.count);
+}
+
+export function GroupedFindings({ findings, onOpenPage }:
+    { findings: Finding[]; onOpenPage?: (url: string) => void }) {
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const [dim, setDim] = useState("all");
+  const groups = groupFindings(findings);
+  const dims = [...new Set(groups.map((g) => g.dimension))].sort();
+  const shown = groups.filter((g) => dim === "all" || g.dimension === dim);
+
+  const toggle = (key: string) => {
+    const next = new Set(open);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    setOpen(next);
+  };
+
+  return (
+    <div>
+      <div className="filters">
+        <select value={dim} onChange={(e) => setDim(e.target.value)}
+                aria-label="dimension filter">
+          <option value="all">All dimensions</option>
+          {dims.map((d) => <option key={d} value={d}>{d}</option>)}
+        </select>
+        <span className="muted">
+          {shown.length} issue type{shown.length === 1 ? "" : "s"} ·{" "}
+          {shown.reduce((n, g) => n + g.count, 0)} occurrence(s)
+        </span>
+      </div>
+      <ul className="group-list">
+        {shown.map((g) => (
+          <li key={g.key} className="group">
+            <button type="button" className="group-head" aria-expanded={open.has(g.key)}
+                    onClick={() => toggle(g.key)}>
+              <SeverityTag severity={g.severity} />
+              <code>{g.dimension}/{g.check_id}</code>
+              {/* count is findings; urls is distinct pages. A pair-wise check
+                  like title-duplicate raises one finding spanning two URLs,
+                  so calling the finding count "pages" was simply wrong. */}
+              <strong className="group-count">
+                {g.count === 1 ? "1 issue" : `${g.count} issues`}
+                {g.urls.length > 0 && g.urls.length !== g.count
+                  ? ` · ${g.urls.length} page${g.urls.length === 1 ? "" : "s"}`
+                  : ""}
+              </strong>
+              {g.count > 5 && <span className="muted"> · likely one shared cause</span>}
+              <span className="group-toggle">{open.has(g.key) ? "▾" : "▸"}</span>
+            </button>
+            <div className="muted group-summary">{g.summary}</div>
+            {g.recommendation && <div className="rec">{g.recommendation}</div>}
+            {open.has(g.key) && (
+              <ul className="group-pages">
+                {g.urls.map((u) => (
+                  <li key={u}>
+                    <a href={u} target="_blank" rel="noopener noreferrer">{pathOf(u)}</a>
+                    {onOpenPage && (
+                      <button className="pill-btn" onClick={() => onOpenPage(u)}>
+                        inspect page
+                      </button>
+                    )}
+                  </li>
+                ))}
+                {!g.urls.length && <li className="muted">site-level — no single page</li>}
+              </ul>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+export function pathOf(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return (parsed.pathname + parsed.search) || "/";
+  } catch {
+    return url;
+  }
+}
+
+/** Codes a brief uses when it is reporting on the audit rather than on the
+ *  site: it could not see something, or a check needs data nobody supplied.
+ *  CIPHER-SCAN-INCOMPLETE and COOKIE-FLAGS-UNVERIFIED are not defects in the
+ *  site; they are a list of what to configure before the next run. */
+const GAP_SUFFIX = ["-UNVERIFIED", "-UNCONFIRMED", "-GAP", "-ABSENT",
+                    "-INCOMPLETE", "-NOT-ASSESSED", "-UNKNOWN"];
+
+const isGap = (code: string) =>
+  GAP_SUFFIX.some((suffix) => code.toUpperCase().endsWith(suffix));
+
+function Insight({ f }: { f: Finding }) {
+  const cites = (f.evidence?.cites as string[] | undefined) ?? [];
+  return (
+    <li>
+      <strong>{f.check_id.toUpperCase()}</strong>
+      {/* Confidence only when the finding actually carries one. Expert briefs
+          are stored with a hard-coded "medium" because their index block has
+          no confidence column, so every one of them rendered "(medium
+          confidence)" — a signal that never varied and therefore said
+          nothing, while looking like the model's own judgement. */}
+      {f.confidence && f.evidence?.confidence_stated !== false
+        && ` (${f.confidence} confidence)`}
+      : {f.summary}
+      {f.recommendation && <div className="muted rec">{f.recommendation}</div>}
+      {/* Only when there is something to cite. An empty "cites:" under a
+          section promising that every insight cites its evidence is worse
+          than making no claim. */}
+      {cites.length > 0 && (
+        <div className="muted cites">cites: {cites.join(", ")}</div>
+      )}
+    </li>
+  );
+}
+
+export function AnalystBand({ findings }: { findings: Finding[] }) {
+  // PRI-J is promoted to the priority plan above; don't repeat it here.
+  const rest = findings.filter((f) => f.check_id !== "pri-j");
+  if (!rest.length) return null;
+
+  // Two different kinds of statement were interleaved: things observed about
+  // the site, and things the audit could not check. Roughly half of a
+  // 54-item list was the second kind, which buried the first.
+  const observed = rest.filter((f) => !isGap(f.check_id));
+  const gaps = rest.filter((f) => isGap(f.check_id));
+  const anyCited = rest.some((f) => ((f.evidence?.cites as string[]) ?? []).length);
+
+  return (
+    <section className="analyst-band">
+      <h3>
+        Analyst insights <span className="badge-model">model judgement — not scored</span>
+      </h3>
+      <p className="muted">
+        Commentary from {rest[0].model_id}. These never affect the
+        deterministic score.
+        {anyCited
+          ? " Where an insight rests on a specific evidence item, it cites it."
+          : " These come from expert briefs, whose index carries no citation"
+            + " column — the reasoning is in the brief's own report above."}
+      </p>
+
+      <h4 className="insight-head">
+        What it observed <span className="insight-n">{observed.length}</span>
+      </h4>
+      {observed.length
+        ? <ul>{observed.map((f) => <Insight key={f.id} f={f} />)}</ul>
+        : <p className="muted">Nothing beyond the deterministic findings.</p>}
+
+      {gaps.length > 0 && (
+        <>
+          <h4 className="insight-head">
+            What it could not check <span className="insight-n">{gaps.length}</span>
+          </h4>
+          <p className="muted">
+            Not defects in the site — statements about the audit. Each is
+            something to supply or configure before the next run.
+          </p>
+          <ul>{gaps.map((f) => <Insight key={f.id} f={f} />)}</ul>
+        </>
+      )}
+    </section>
+  );
+}
+
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // Async clipboard needs document focus; fall back to the legacy path.
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
+export function CopyCmd({ cmd, label = "copy" }: { cmd: string; label?: string }) {
+  const [state, setState] = useState<"idle" | "ok" | "fail">("idle");
+  return (
+    <button className="pill-btn" title={`Copy to clipboard: ${cmd}`}
+            onClick={async (e) => {
+              e.stopPropagation();
+              setState((await copyText(cmd)) ? "ok" : "fail");
+              setTimeout(() => setState("idle"), 1500);
+            }}>
+      {state === "ok" ? "copied ✓" : state === "fail" ? "copy failed" : label}
+    </button>
+  );
+}
+
+export function ProviderStatus({ providers }:
+    { providers: Record<string, { configured: boolean; detail: string; env: string }> }) {
+  const [copied, setCopied] = useState<string | null>(null);
+  return (
+    <div className="status-pills">
+      {Object.entries(providers).map(([name, p]) => (
+        <span key={name}
+              className={`pill ${p.configured ? "pill-on" : "pill-off clickable"}`}
+              title={p.configured ? p.detail
+                     : `${p.detail}. Set it in Admin -> Provider keys, which `
+                       + "takes effect immediately. Or click to copy: "
+                       + `setx ${p.env} "<value>" — run it, then refresh.`}
+              onClick={async () => {
+                if (p.configured) return;
+                const ok = await copyText(`setx ${p.env} "<value>"`);
+                setCopied(ok ? name : `!${name}`);
+                setTimeout(() => setCopied(null), 1500);
+              }}>
+          {copied === name ? "copied ✓"
+           : copied === `!${name}` ? "copy failed"
+           : <>{name} {p.configured ? "✓" : "—"}</>}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+export function Card({ children }: { children: ReactNode }) {
+  return <div className="card">{children}</div>;
+}
+
+export function Loading({ what = "" }: { what?: string } = {}) {
+  // role=status + aria-live: sighted users get "something is happening" from
+  // the text alone, and a screen reader previously got nothing at all — the
+  // paragraph simply appeared with no announcement.
+  return (
+    <p className="muted" role="status" aria-live="polite">
+      Loading{what ? ` ${what}` : ""}…
+    </p>
+  );
+}
+
+/** A failure, and where offered, the way out of it.
+ *
+ *  WF-13: a dropped request left the operator with a sentence and no next
+ *  step — the only recovery was a full reload and nothing on screen said so.
+ *  `onRetry` is `useFetch`'s `retry`, and `retrying` its `loading`, so the
+ *  control can say it is working rather than looking unpressed while a slow
+ *  request runs. Both optional: most of this component's forty-odd callers
+ *  report a failure of something other than a fetch — a launch, a mark, a
+ *  budget — and inventing a retry for those would be a control that does not
+ *  do what it says.
+ *
+ *  UX-82: `role="alert"`, stated here once. This paragraph is the dashboard's
+ *  answer to "something you asked for did not work", and it arrives after
+ *  paint at fifty-six call sites across ten modules — WCAG 2.2 AA 4.1.3
+ *  Status Messages, and axe has no rule for a status message nobody marked as
+ *  one, so the sweep was never going to find it. Assertive rather than
+ *  polite, on the same reasoning `App.tsx`'s server-down paragraph already
+ *  gives: the operator is not looking for this and has to be told rather than
+ *  left to notice.
+ *
+ *  It belongs on the component and not on the callers, because the callers
+ *  were the defect. Five of them hand-rolled an error paragraph and each
+ *  decided the marking again — `advice.tsx`, `anatomy.tsx` and `reports.tsx`
+ *  chose live regions for their own notes while every `ErrorNote` on those
+ *  same screens had none. `tests/test_an_error_the_operator_must_notice_is_announced.py`
+ *  enumerates the paragraphs from the tree so a sixth cannot be added
+ *  unmarked, and drives a forced 503 through the real bundle to read the
+ *  attribute off what was painted rather than off this line.
+ *
+ *  What it does not fix: where the message renders. The record screen paints
+ *  a refused verb above a table that pages at fifty, so a press on row 40
+ *  puts its only report off-screen. That is the other half of UX-82 and is
+ *  untouched here. */
+export function ErrorNote({ error, onRetry, retrying = false }:
+    { error: string; onRetry?: () => void; retrying?: boolean }) {
+  return (
+    <p className="error" role="alert">
+      {error}
+      {onRetry && (
+        <>
+          {" "}
+          <button type="button" className="retry" onClick={onRetry}
+                  disabled={retrying}>
+            {retrying ? "Trying…" : "Try again"}
+          </button>
+        </>
+      )}
+    </p>
+  );
+}
+
+/** A row of headline figures: the number first, its name under it, a rule
+ *  down the side. For the three-to-five numbers a screen is actually about —
+ *  below three it is a sentence, above five it is a table. */
+export function Stats({ children }: { children: ReactNode }) {
+  return <div className="stats-row">{children}</div>;
+}
+
+export function Stat({ value, label, tone = "plain", title, note }:
+    { value: ReactNode; label: string;
+      tone?: "plain" | "good" | "warn" | "bad" | "quiet"; title?: string;
+      /** A scope qualifier, shown inline. A row of stats where three respond
+       *  to a filter and one does not needs to say which is which — the odd
+       *  one out otherwise reads as a stale number.
+       *
+       *  `ReactNode` and not `string`: a qualifier that has its own owner —
+       *  `PricedFrame` — has to be passable as itself, or Home composes the
+       *  clause a second time to satisfy the type and UI-19 reopens on the
+       *  one screen that already had the muted weight. */
+      note?: ReactNode }) {
+  return (
+    <div className={`stat stat-${tone}`} title={title}>
+      <b>{value}</b>
+      <span>{label}{note && <em className="stat-note"> · {note}</em>}</span>
+    </div>
+  );
+}
+
+
+/** The frame on a dollar figure: how many of the entries under it carry a
+ *  price, so the number reads as a floor rather than as a total - UI-19.
+ *
+ *  Three screens composed this sentence themselves and each chose its own
+ *  weight. Tools set it inside `<strong>` within `p.error`, as loud as the
+ *  budget warning it qualifies; Home set it as a muted `Stat` note; Admin as
+ *  a muted parenthetical. The text agreed and the emphasis did not, so the
+ *  same caveat read as an alarm on one screen and a footnote on two others
+ *  and an operator moving between them could not tell whether it mattered.
+ *
+ *  Both halves are owned here: the wording, so a fourth screen cannot phrase
+ *  it differently, and the class, so there is one place the weight is
+ *  decided. `figure-frame` is declared in `styles.css` and
+ *  `test_the_priced_entries_frame_has_a_class_that_styles_css_declares`
+ *  reddens if the owner ever names a class the stylesheet does not carry.
+ *
+ *  `unpriced` rather than a total, because every call site has the two
+ *  counts and none of them has the sum - `usd_entries` and `usd_unpriced`
+ *  are what `_budget_status` puts on the wire. Adding them here is one
+ *  addition instead of three. */
+export function PricedFrame({ entries, unpriced }:
+    { entries: number; unpriced: number }) {
+  //: UX-80. `a floor` is the whole point of the sentence and it did not
+  //: survive UI-19's move. Before it, `tools.tsx` rendered
+  //: `- a floor: {n} of {m} entries priced`; collapsing the three screens
+  //: into this owner kept the counts and dropped the direction, and the
+  //: docstring above went on asserting it for two reports. Which entries are
+  //: priced is a fact about the population; that the total beneath it
+  //: *understates* is the thing an operator needs and cannot derive.
+  //:
+  //: Here rather than at the call sites, which is what UI-19 bought: one
+  //: edit reaches Tools, Home and Admin, and a fourth screen cannot phrase
+  //: the direction its own way.
+  return (
+    <span className="figure-frame">
+      a floor: {entries} of {entries + unpriced} entries priced
+    </span>
+  );
+}
+
+
+/** The frame on a *per-brief* price: which of the runs behind the median
+ *  carried a cost at all - UX-74.
+ *
+ *  `expert_estimates` counts `samples` over rows carrying tokens and takes the
+ *  median over rows carrying a non-NULL cost. Those are different populations
+ *  and only the first was ever reported: on the operator's own data
+ *  `indexability` is three of the first and one of the second, and across
+ *  `expert_reports` 12 of 38 stored briefs carry a cost at all. Three screens
+ *  draw that figure - the Brief panel, Tools and the Schedule modal - and none
+ *  of them said which population it came from, so a cadence chosen from these
+ *  numbers and a model asked to fit a recommendation inside them both
+ *  under-state spend by whatever the unpriced share is.
+ *
+ *  **Deliberately not `PricedFrame`, and this is the part worth arguing with.**
+ *  Reusing it would have been one line and would have shipped a false claim.
+ *  `PricedFrame` says *"a floor"*, and that direction is earned there: its
+ *  subject is a monthly **sum**, so an entry with no price can only be missing
+ *  from the total. This subject is a **median over the priced subset**, and an
+ *  unpriced sample does not push it in either direction - it might have been
+ *  dearer or cheaper than the ones that were costed. So the population is
+ *  stated and no direction is claimed, which is the most this figure supports.
+ *  UX-80 is the precedent for how much a dropped direction costs; this is the
+ *  same care applied to a direction that must not be added.
+ *
+ *  The class is shared with `PricedFrame` on purpose: the weight of a caveat
+ *  is one decision, and `test_the_priced_entries_frame_has_a_class_that_styles_css_declares`
+ *  already reddens if the owner names a class the stylesheet does not carry.
+ *
+ *  Rendered text and never a `title`. The provenance invariant's extended
+ *  clause is that a stated limitation on a displayed value appears in rendered
+ *  text, not only in a tooltip or an `sr-only` element - the three price
+ *  helpers all feed `title=` strings as well, and putting it only there would
+ *  have satisfied the finding's words while breaching the invariant behind it.
+ *
+ *  Nothing is rendered when every sample was priced: `costed === sampled` is a
+ *  figure with no caveat to make, and a frame that always appears is one
+ *  nobody reads. */
+export function BriefPriceFrame({ costed, sampled }:
+    { costed: number; sampled: number }) {
+  if (!sampled || costed >= sampled) return null;
+  return (
+    <span className="figure-frame">
+      from {costed} of {sampled} priced run{sampled === 1 ? "" : "s"}
+    </span>
+  );
+}
+
+
+/** The currency every cost in this product is recorded in.
+ *
+ *  Costs come from model pricing, which is published in US dollars, and the
+ *  16 August 2026 decision settled that client-facing figures state the
+ *  currency they were recorded in and are never converted. So the currency is
+ *  not a setting and cannot be inferred from one — it travels with the value,
+ *  which is what the provenance invariant's frame clause requires. */
+export const MONEY_CURRENCY = "USD";
+
+/** Every money figure in the app, formatted in one place.
+ *
+ *  Fifteen sites hard-coded a `$` and chose their own precision: two local
+ *  helpers disagreed on sub-dollar amounts (`12c` against `12.3c`) and the
+ *  inline sites disagreed on scale (`.toFixed(2)` on six screens against
+ *  `.toFixed(4)` on the run-detail cost log), so the same cost read
+ *  differently depending on which screen showed it. Carried eighteen rounds.
+ *
+ *  Precision is decided here rather than per call site, which is the whole
+ *  point of one owner. Sub-cent amounts keep four places because a per-call
+ *  cost of 0.0004 rounds to `0.00` at two and reads as free.
+ *
+ *  **The number half carries no currency and no symbol — CQ-168.** This
+ *  returned `$2.18` for eighteen rounds while `clauditseo/money.py`'s
+ *  `amount` returned `2.18`, and `money.py`'s own docstring said this file
+ *  "already decided the rule … spelled once for Python rather than a second
+ *  opinion about it". For `money` that was true; for `amount` it never was,
+ *  and the difference was invisible because each guard checked one language
+ *  and skipped "the owner" in it. The Admin Spend card printed one month's
+ *  spend as `USD 2.18` from the server and `$2.18 USD` from here, four lines
+ *  apart. The prefix spelling won because `$` is the ambiguous half of
+ *  `$2.18 USD` and `USD` the informative one — an en-AU operator reading a
+ *  bare `$` has nothing telling them which dollar it is.
+ *
+ *  **Thousands are grouped here too**, which they were not. `money.py:47-51`
+ *  recorded that divergence as deliberate, on the ground that the two sides
+ *  render different populations and only Python's include a budget cap set
+ *  "in hundreds or thousands" — but `admin.tsx` renders `cap_usd` through
+ *  *this* owner, so the population split was never real. Grouping is applied
+ *  to `toFixed`'s output rather than through `toLocaleString`, so the
+ *  rounding the two sides already agreed on is left exactly as it was. */
+function amount(n: number): string {
+  const places = n !== 0 && Math.abs(n) < 0.01 ? 4 : 2;
+  const fixed = n.toFixed(places);
+  const negative = fixed.startsWith("-");
+  const [whole, frac] = (negative ? fixed.slice(1) : fixed).split(".");
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return `${negative ? "-" : ""}${grouped}.${frac}`;
+}
+
+export function money(n: number): string {
+  return `${MONEY_CURRENCY} ${amount(n)}`;
+}
+
+/** A price pair — input/output per million tokens. One currency for the pair
+ *  rather than one each, which is the frame travelling without the repetition
+ *  reading as two different units.
+ *
+ *  Built from `money` rather than beside it. The two had different contracts:
+ *  this one took `number | string` and applied no rounding at all, so the same
+ *  cost printed `$0.0004 USD` through one and `$0.0004000000001 USD` through
+ *  the other, and a `string` argument bypassed rounding entirely while
+ *  type-checking cleanly. One owner decides precision or there are two owners.
+ *  The `string` arm is gone with it: a price that arrives as text has not been
+ *  parsed yet, and formatting it is how that goes unnoticed. */
+export function moneyPair(low: number, high: number): string {
+  return `${MONEY_CURRENCY} ${amount(low)}/${amount(high)}`;
+}

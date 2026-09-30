@@ -1,0 +1,33 @@
+-- Which deliverable a regenerated one replaced.
+--
+-- `QUESTIONS.md` Q-9, answered by the operator on 23 August 2026: **supersede**.
+-- Pressing `regenerate` on the Deliverables screen posts `POST /api/reports`,
+-- which writes a fresh row and a fresh file and leaves the pressed row exactly
+-- as it was. The pressed row keeps its `superseded` or `unknown` renderer, so
+-- the screen keeps offering the control on it for ever: audit 074 measured 14
+-- rows offering it, 11 on one site, 9 of them mutually indistinguishable on
+-- every column the table renders. Nine presses would produce nine new rows,
+-- all dated the same day, with nothing recording which replaced which
+-- (audit finding WF-91).
+--
+-- The two answers not taken, recorded because a later reader will meet the
+-- same three: *rewrite in place* destroys the record of what was actually
+-- sent, which is the one thing this register exists to hold; *add a delete
+-- route* makes removing a client-facing record a one-press action. Both were
+-- put to the operator with their costs and neither was chosen.
+--
+-- **Written on the new row, pointing back — not as `superseded_by` on the old
+-- one.** The register is append-only and this keeps it that way: a
+-- regeneration is one INSERT and never an UPDATE of a row describing a
+-- document a client may already hold. The screen needs the other direction,
+-- so `client_reports()` derives `superseded_by` from these values over the
+-- site's own rows; deriving costs nothing there because it already reads them
+-- all. This is also the shape report 074's remediation item 3 named --
+-- "mark the new row as superseding the old (a `supersedes` column on
+-- `reports`)".
+--
+-- NULL is the honest value for every existing row and for every ordinary
+-- generation: a document written from scratch replaces nothing, and the nine
+-- adopted orphans replaced nothing either. Only a press of `regenerate`
+-- fills it.
+ALTER TABLE reports ADD COLUMN supersedes TEXT REFERENCES reports(id);

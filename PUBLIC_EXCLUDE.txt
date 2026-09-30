@@ -1,0 +1,48 @@
+# What does not ship in the public tree.
+#
+# Item 187. One list, read by two things: the export that builds the public
+# tree, and `tests/test_no_client_data_ships.py`, which holds the rest of the
+# tree to "no client data". Two lists would drift, and the drift would be
+# silent in the direction that matters - a path excluded from the export but
+# still scanned is noise, a path skipped by the scan but still exported is a
+# leak.
+#
+# Nothing here is deleted from this repository. This is a manifest of what a
+# public export leaves behind, and every line says why.
+#
+# One glob per line. `dir/` matches the directory and everything under it.
+
+# --- the operator's private working record -------------------------------
+# Not product, and saturated with client detail: audit logs, the questions
+# put to the channel, the backlog and its timings. The operator's decision
+# (2026-09-20) is to exclude these entirely rather than scrub them, because
+# scrubbing 90 audit files leaves 90 chances to miss one, and none of it is
+# something a public reader of a product repo wants.
+audits/
+OPERATOR_ACTIONS.md
+QUESTIONS.md
+NEXT_UP.md
+BACKLOG.md
+TIMINGS.md
+
+# CHANGELOG.md is deliberately NOT here. A public repo wants one, so it is
+# scrubbed and shipped - the operator's decision on the same day.
+
+# --- the benchmark's raw output -------------------------------------------
+# 24 expert-brief reports and their measurements, produced against one real
+# client's audit. Nothing in the product or the tests reads them; CI names
+# `benchmarks` only in a packaging filter. Their conclusion is worth keeping
+# and ships in `BENCHMARK.md` and `FINDINGS.md`, scrubbed; the report bodies
+# are a client's audit content and are not regenerable without paying for 24
+# model calls against a site we would then have to choose.
+benchmarks/reports/
+benchmarks/results.jsonl
+
+# --- the scrub's own token list -------------------------------------------
+# The list of client names exists so the guard can search for them. Shipping
+# it would publish the client RELATIONSHIPS - not their data, but still
+# theirs to disclose - in a file whose whole purpose is to prevent exactly
+# that. So the list stays private and the guard skips, with a reason, when it
+# is not there: the scan matters in this repository, which is where a
+# regression would be introduced, not in the export it produces.
+.client-tokens

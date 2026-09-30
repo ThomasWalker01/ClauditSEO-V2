@@ -1,0 +1,98 @@
+/* Where the score has been — the Audit pane's Score trend block (brief v16f).
+
+   A sheet of its own for the reason `crawl_depth.css` and `images_budget.css`
+   give: one block's worth of chart geometry folded into the shared file would
+   put it in front of every other screen. Every selector is namespaced `.st-`,
+   and `test_the_score_trend_is_drawn.py` refuses one that is not.
+
+   THE GEOMETRY lives in the component, not here, and that is the opposite
+   split from `crawl_depth.css` on purpose. The bars there are CSS boxes
+   because a bar is a button; the marks here are SVG in a fixed `viewBox`, so
+   every position is a number the component computes from the payload and the
+   only thing this file can usefully own is tone, weight and dash.
+
+   TONE. `--good`, `--warn-strong` and `--danger` are the three score bands —
+   `SCORE_BANDS`' own, so the chart cannot call 62 fair while the badge beside
+   it calls it something else. `--warn-strong` again for the break rules,
+   because a break is a caution and not a failure; `--info` for the
+   current-basis band; `--text` for the joins. No new colour (item 140). */
+
+.st-root { margin: 0 0 1rem; }
+.st-head { font-size: .95rem; margin: 0 0 .15rem; }
+.st-note { margin: 0 0 .6rem; font-size: .85rem; max-width: 62rem; }
+.st-absent { margin: 0; font-size: .85rem; max-width: 62rem; }
+
+.st-chart { display: block; width: 100%; height: auto; }
+
+/* The stretch sharing the latest basis. Low opacity because it sits behind
+   every mark on the chart; a fill strong enough to read as a surface would
+   change the contrast of the dots and the rule labels drawn over it. */
+.st-band { fill: var(--info); fill-opacity: .13; }
+
+/* The two thresholds, dashed so they read as reference rather than as data.
+   Tinted rather than full strength for the same reason. */
+.st-rule { stroke-dasharray: 4 5; stroke-opacity: .45; }
+.st-rule-good { stroke: var(--good); }
+.st-rule-fair { stroke: var(--warn-strong); }
+.st-rule-name { font-size: 11px; }
+text.st-rule-good { fill: var(--good); }
+text.st-rule-fair { fill: var(--warn-strong); }
+
+.st-axis { stroke: var(--border-strong); }
+.st-tick { font-size: 11px; fill: var(--text-muted); }
+
+/* The join: a point to the one it reads against. `--text` at two units, so
+   it is the heaviest thing on the chart after the dots — it is the chart's
+   subject, and on a history like the operator's there is exactly one. */
+.st-join { fill: none; stroke: var(--text); stroke-width: 2; }
+
+/* A step where the basis key moved. Dashed and rotated, so eight of them
+   down a chart read as a comb rather than as eight sentences. */
+.st-break { stroke: var(--warn-strong); stroke-opacity: .7; stroke-dasharray: 3 4; }
+.st-break-name { font-size: 10.5px; fill: var(--warn-strong); }
+
+.st-dot { stroke: var(--surface); stroke-width: 1; }
+.st-good { fill: var(--good); }
+.st-fair { fill: var(--warn-strong); }
+.st-poor { fill: var(--danger); }
+
+/* The hollow ring: this point's dimension set was recovered rather than
+   recorded. An outline and not a second fill, because it is a statement
+   about the point's provenance and not about its score. */
+.st-ring { fill: none; stroke: var(--text-muted); stroke-width: 1.5;
+           stroke-dasharray: 2 2; }
+
+.st-score { font-size: 13px; font-weight: 600; fill: var(--text); }
+.st-when { font-size: 11px; fill: var(--text-muted); }
+.st-frame { font-size: 10.5px; fill: var(--text-muted); }
+
+.st-legend { display: flex; gap: 18px; margin: .5rem 0 0; flex-wrap: wrap;
+             font-size: .78rem; color: var(--text-muted); }
+.st-legend i { display: inline-block; width: 12px; height: 12px;
+               border-radius: 50%; margin-right: 6px; vertical-align: -2px; }
+.st-key-good { background: var(--good); }
+.st-key-fair { background: var(--warn-strong); }
+.st-key-poor { background: var(--danger); }
+.st-key-break { width: 2px; border-radius: 0; background: var(--warn-strong); }
+.st-key-band { width: 14px; border-radius: 2px; background: var(--info);
+               opacity: .35; }
+
+/* The generated sentence, at body weight rather than muted: it is the one
+   thing on this block an operator has to read, and on a history with no
+   repeated basis it is the only thing the chart can say. */
+.st-now { margin: .6rem 0 0; font-size: .87rem; color: var(--text-strong);
+          max-width: 62rem; }
+.st-recovered { margin: .3rem 0 0; font-size: .8rem; max-width: 62rem; }
+
+.st-tip { position: fixed; z-index: 40; pointer-events: none; max-width: 340px;
+          background: var(--surface); border: 1px solid var(--border-strong);
+          border-radius: 6px; padding: 8px 10px; font-size: 12.5px;
+          color: var(--text); box-shadow: 0 2px 10px rgb(0 0 0 / 25%); }
+.st-tip-line { color: var(--text-muted); }
+
+/* Narrow viewports: the per-point frame line is the first thing to collide,
+   and the legend wraps rather than scrolling. */
+@media (max-width: 1024px) {
+  .st-frame { font-size: 9.5px; }
+  .st-legend { gap: 12px; }
+}

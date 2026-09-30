@@ -1,0 +1,74 @@
+[project]
+name = "clauditseo"
+version = "0.14.0"
+description = "Self-hosted SEO auditing suite: staged audits, client history, evidence-first reporting."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+# xdist parallelises the suite. `--dist loadfile` keeps every test in a
+# file on one worker, so module-scoped fixtures and any within-file
+# ordering behave exactly as they do serially — the speed comes from
+# running files beside each other, not from reordering tests.
+dev = ["pytest>=8", "pytest-xdist>=3.6"]
+# Optional capability. Both are lazily imported and gated on an available()
+# check, so a bare install stays fully functional — these turn features on
+# rather than making anything work that was broken.
+render = ["playwright>=1.45"]   # + `playwright install chromium` afterwards
+# Brief v16 step AU7. The saving an image row states is measured by
+# re-encoding the file, never estimated from a ratio, so without this the
+# row reads "savings not measured" rather than carrying a guess. The AVIF
+# plugin is separate from Pillow and both are asked for: a Pillow without
+# it answers in WebP, and a caller told "AVIF" would be told wrong.
+image = ["pillow>=10.3", "pillow-avif-plugin>=1.4"]
+google = ["google-auth>=2.30"]  # Search Console / GA4 service-account auth
+# Item 143 step BD. SEC's DNS & mail checks (spf, dmarc, dkim, caa, dnssec,
+# dangling-cname) read public records through the operator's own resolver.
+# Lazily imported behind `crawler.dnsq.available()`; without it the six read
+# "not assessed - install clauditseo[dns]", never clean.
+dns = ["dnspython>=2.6"]
+all = ["clauditseo[render,google,image,dns]"]
+
+[project.scripts]
+clauditseo = "clauditseo.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["clauditseo*"]
+
+# Non-Python files that must travel with an install. Setuptools already
+# picks these up on its own — a wheel built without this section contains
+# exactly the same files, which was checked rather than assumed. It is stated
+# anyway because both are load-bearing at runtime and their absence surfaces
+# far from the cause: an empty tool list, or a renderer reporting itself
+# unavailable for no visible reason.
+[tool.setuptools.package-data]
+clauditseo = ["vendor/*.js", "vendor/*.txt", "vendor/*.md", "prompts/*.md", "glossary.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# `--durations=20` lives here rather than on the pinned command line because
+# `test_the_pinned_suite_command_is_stated_once` holds ci.yml and the three
+# instruction files to one string, and a reporting default is not a flag those
+# four sites need to agree about — `-q` is already here for the same reason.
+#
+# Relay 054 is why. The Windows leg is the tall pole and nothing had profiled
+# it: at `1d14afa` the identical 1312 tests took 137.48s on ubuntu-latest and
+# 829.65s on windows-latest, a 6.0x gap on the same work. The local Windows
+# profile does not transfer — its eight slowest entries are all browser setups
+# that skip on that leg for want of `clauditseo[render]` — so the profile has
+# to be read off the runner, and the runner prints nothing that could name it.
+#
+# `-q` does not suppress this section: measured locally, addopts `-q` with
+# `--durations=30` printed the table in full.
+addopts = "-q --durations=20"
+markers = [
+    "integrity_threshold: run with brief v23 step BL's client-report threshold live (see tests/conftest.py)",
+]

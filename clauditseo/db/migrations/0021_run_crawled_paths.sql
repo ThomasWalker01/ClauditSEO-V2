@@ -1,0 +1,25 @@
+-- Record what each run actually fetched, so a later question can be answered.
+--
+-- `complete_run` receives `result.crawled_paths`, hands it to `_apply_states`
+-- — which correctly refuses to clear a page-scoped finding from a crawl that
+-- never visited it — and then drops it. Nothing persists it. `crawl_evidence`
+-- carries a page list, but it is written by a separate `store_evidence` call
+-- that not every caller makes: `cli.py` completes a full audit without one.
+--
+-- The cost of not having it: `compare_runs` had to decide "did run B re-check
+-- this finding" with no record of what B looked at. Two substitutes were tried
+-- and both were wrong. A bare fingerprint set-difference read absence as proof
+-- of a fix and reported 352 resolutions where 5 had been re-checked, 347 of
+-- them on pages the run never fetched (round 022). Reading `finding_states`
+-- instead was wrong in both directions (round 023): it holds one row per site
+-- and fingerprint describing the state *now*, so a third, later audit rewrote
+-- what an earlier pair's comparison said, and a five-value vocabulary meant a
+-- negative filter admitted `accepted-risk` — a finding the operator decided
+-- explicitly not to fix — into the resolved bucket.
+--
+-- A plain ADD COLUMN: no CHECK constraint changes, so no table rebuild and
+-- none of the foreign-key hazards 0020 had to work around. Existing rows get
+-- NULL, which reads as "scope unknown" and resolves nothing — the conservative
+-- direction, and the honest one, since the whole defect was treating absence
+-- of evidence as evidence.
+ALTER TABLE audit_runs ADD COLUMN crawled_paths TEXT;  -- JSON list of paths

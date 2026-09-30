@@ -1,0 +1,87 @@
+[
+  {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    "name": "Acme",
+    "legalName": "Acme AU Pty Ltd",
+    "url": "https://www.acme.com.au",
+    "logo": "https://cdn.prod.website-files.com/6539fceb5fdf6b71748be127/6539feeaf0af99ac54be60cc_bizcaplogo.svg",
+    "description": "Australia's most open-minded lender, offering fast and flexible business loans from $5,000 to $7,500,000 with no upfront credit checks.",
+    "telephone": "+611300922223",
+    "email": "info@acme.com.au",
+    "address": {
+      "@type": "PostalAddress",
+      "streetAddress": "[505 Toorak Rd]",
+      "addressLocality": "Toorak",
+      "addressRegion": "VIC",
+      "postalCode": "[3142]",
+      "addressCountry": "AU"
+    },
+    "areaServed": "AU",
+    "foundingDate": "2019",
+    "sameAs": [
+      "https://www.facebook.com/bizcapau",
+      "https://www.linkedin.com/company/acme",
+      "https://www.instagram.com/acme_/",
+      "https://x.com/AuBizcap"
+    ]
+  },
+  {
+    "@context": "https://schema.org",
+    "@type": "FinancialProduct",
+    "name": "Acme Business Loans",
+    "description": "Fast and flexible business loans from $5,000 to $7,500,000. Approved in as little as 3 hours with no upfront credit checks. Products include Fast Business Loans, Secured Business Loans, Small Business Loans, Bridging Finance and Line of Credit.",
+    "url": "https://www.acme.com.au",
+    "provider": {
+      "@type": "Organization",
+      "name": "Acme",
+      "url": "https://www.acme.com.au"
+    }
+  },
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "What types of business loans does Acme offer?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Acme offers Fast Business Loans, Small Business Loans, Secured Business Loans, Bridging Finance and a Line of Credit. Loan sizes range from $5,000 to $7,500,000 and Lines of Credit are available up to $750,000."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "How quickly can I get funds from Acme?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Fast and Small Business Loan applications can be approved within 3 hours and funded the same day. Other solutions can be issued in as little as 24 hours. If you need funds sooner, our Loan Specialists can fast-track your application."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What do I need to qualify for a Acme business loan?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "To qualify for most Acme business loans you will need an active Australian Business Number (ABN or ACN), at least 4 months of trading history, and a minimum monthly revenue of $12,000."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Does Acme run a credit check?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Acme can make you a conditional offer without running a credit check, which means your credit score is not affected during the initial assessment. A credit report may be requested only after you accept a conditional offer and wish to proceed to an unconditional offer."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "How much can I borrow from Acme?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Acme offers business loans from $5,000 to $7,500,000 and Lines of Credit up to $750,000. The specific loan amount is determined by your business cash flow, trading history, assets, and loan purpose."
+        }
+      }
+    ]
+  }
+]
