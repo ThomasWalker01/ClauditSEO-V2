@@ -67,13 +67,14 @@ def test_one_finding_over_many_pages_counts_every_page_it_names(served):
 
 @needs_build
 def test_the_two_headings_of_a_section_carry_one_number(served):
-    """Checks with at least one finding, above the table and above Fixes."""
+    """The table counts checks; Fixes counts cards, and says only that (item
+    270, row 7). Item 208 had both carry the checks; a card folds checks
+    under another's id, so the two could not agree on a part like Structured
+    data, and a heading with two different numbers under one word is what
+    item 208 set out to stop."""
     _states, got = _part(served, "Crawl & sitemaps", "TEC/http-status-error")
-    num = lambda h: int(re.search(r"· (\d+)", h).group(1))
     for word in ("Free checks", "Analysis"):
-        table = [h for h in got["checks"] if h.startswith(word)]
         fixes = [h for h in got["fixes"] if h.startswith(word)]
-        if table and fixes:
-            assert num(table[0]) == num(fixes[0]), (
-                f"'{word}' carries two numbers on one page: {table[0]!r} / {fixes[0]!r}")
-            assert "card" in fixes[0], f"the card count is not said as cards: {fixes[0]!r}"
+        if fixes:
+            assert re.fullmatch(rf"{word} · \d+ cards?( · .*)?", fixes[0]), (
+                f"the Fixes heading carries more than its card count: {fixes[0]!r}")

@@ -43,7 +43,7 @@ GOOD = ("Costs Group plans and delivers corporate events and travel experiences 
         "Australian companies, from boutique businesses to the largest brands.")
 
 
-def _plant(db, site_id):
+def _plant(db, site_id, sev=None):
     """Two free findings and one that only a model could have raised.
 
     The two `meta-desc-*` rows are the sweep's: no brief is needed to know
@@ -51,7 +51,10 @@ def _plant(db, site_id):
     is the part's one `model` check, and it is planted open rather than as
     a candidate because that is what it becomes on the second run - the
     state this screen has to render, not the one it passes through.
+
+    All `medium` unless `sev` (check id to severity) says otherwise.
     """
+    sev = sev or {}
     conn = connect(db)
     run_id = runs.create_run(conn, site_id, ["ONP"], "T2")
     pages = [{"url": HOME, "status": 200, "title": "Costs Group - Events - Australia",
@@ -68,15 +71,17 @@ def _plant(db, site_id):
             conn.execute(
                 "INSERT INTO findings (id, run_id, dimension, check_id, severity, source,"
                 " summary, affected_urls, fingerprint, created_at) VALUES (?, ?, 'ONP', ?,"
-                " 'medium', ?, ?, ?, ?, ?)",
-                (create_id(), run_id, check, source, f"{check} on {url}",
+                " ?, ?, ?, ?, ?, ?)",
+                (create_id(), run_id, check, sev.get(check, "medium"), source,
+                 f"{check} on {url}",
                  json.dumps([url]), fp, now_iso()))
             conn.execute(
                 "INSERT INTO finding_states (site_id, fingerprint, state, changed_by_run,"
                 " updated_at) VALUES (?, ?, 'open', ?, ?)", (site_id, fp, run_id, now_iso()))
     rows = [{"check": "ONP/title-entity-alignment", "dimension": "ONP",
              "check_id": "title-entity-alignment", "page": HOME, "status": "FAIL",
-             "severity": "medium", "evidence": "the title names no entity",
+             "severity": sev.get("title-entity-alignment", "medium"),
+             "evidence": "the title names no entity",
              "replacement": GOOD, "note": ""}]
     runs.store_expert_report(conn, run_id, "title-desc", {
         "model": "claude-sonnet-5", "cost": 0.08,
@@ -177,8 +182,11 @@ def test_the_fixes_are_free_checks_then_analysis(browser, served):
         got = pg.evaluate(_JS)
     finally:
         pg.close()
+    # Item 266 (row 3): every card here is `medium`, a tie, so the usual
+    # order stands and no heading says it moved.
     assert [h.split("·")[0].strip() for h in got["fixHeads"]] \
         == ["Free checks", "Analysis"], got["fixHeads"]
+    assert not any("most severe" in h for h in got["fixHeads"]), got["fixHeads"]
     assert "2" in got["fixHeads"][0] and "1" in got["fixHeads"][1], got["fixHeads"]
     under = {c["check"]: c["head"] for c in got["cards"]}
     assert under.get("ONP/title-entity-alignment", "").startswith("Analysis"), under

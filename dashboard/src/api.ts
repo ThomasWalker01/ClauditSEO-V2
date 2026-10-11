@@ -212,6 +212,8 @@ export type Run = {
   /** The server's classification (brief v6 step V2): the effective scope
    *  - page | nav | site | full - and whether the run reads the site. */
   effective_scope?: string | null; site_reading?: boolean;
+  /** "Links only" on a part-only re-check (screen audits round 3). */
+  part_only?: string | null;
   /** page | nav | site | full, or null on a run from before the column. */
   scan_scope?: string | null;
   /** The paths the crawl fetched, as the JSON text the server stores - a
@@ -410,9 +412,12 @@ export type FindingState = {
    *  confirms it, and is dropped if not. It was missing from this union
    *  while the record's own filter offered it.
    *  "withdrawn" is the finding that was never true — the audit that
-   *  raised it could not see the site. */
+   *  raised it could not see the site.
+   *  "set-aside" is a page-level Links finding whose page now answers an
+   *  error: the question no longer applies there (channel ruling
+   *  20261011-0745). */
   state: "candidate" | "open" | "fixed" | "regressed" | "accepted-risk"
-       | "withdrawn";
+       | "withdrawn" | "set-aside";
   updated_at: string;
   changed_by_run: string | null;
   dimension: string;
@@ -420,6 +425,13 @@ export type FindingState = {
   severity: Severity;
   summary: string;
   affected_urls: string[];
+  /** What the module said to do, and the elements its evidence names - axe's
+   *  selectors, or the nameless links' hrefs (item 279, row 5). */
+  recommendation?: string | null;
+  targets?: string[];
+  /** What the check found before its own cap on `affected_urls` (item 276,
+   *  row 6); null where the row predates the column. */
+  affected_total?: number | null;
   /** Whether a crawl could look again at this finding — the verify route's
    *  own rule (`runs.names_a_page`), decided on the server. Not derivable
    *  from `affected_urls` here: the route keeps only entries starting `http`,
@@ -445,6 +457,15 @@ export type FindingState = {
   /** An analysis row the automatic checks have since cleared on every page
    *  it names: when (item 239 step 4). */
   superseded_on?: string | null;
+  /** The date and tier of the run that last measured this row, and - for an
+   *  analysis row - when the analysis was written (item 251). */
+  measured_at?: string | null; measured_tier?: string | null; analysed_at?: string | null;
+  /** A candidate that waits for the operator rather than for another audit
+   *  (items 237 and 250); the server's rule, `runs.awaiting_confirmation`. */
+  to_confirm?: boolean;
+  /** Since when the automatic checks have read this row's pages without
+   *  raising its check (item 249); null where they raised it or cannot. */
+  unseen_since?: string | null;
   /** A duplicate row's shared string, from either source (brief v11 step
    *  AH): the record's group line counts the groups. */
   group?: string | null;
@@ -457,6 +478,8 @@ export type FindingState = {
    *  page names each image failing it there. */
   images?: string[];
   also_resolves?: string[];
+  /** A length row's measured string and its overage in px (item 273). */
+  said?: string | null; over_px?: number | null;
   /** The URL template a per-template brief row is about (items 217, 222). */
   template?: string | null;
   /** Brief v20's three row fields (items 147, 148). `suppressed` is the
@@ -498,9 +521,9 @@ export type Rollout = {
 /** What a `candidate` tag means (brief v12 step AM): the corroboration
  *  rule's output, made visible where the row is shown. */
 export const CANDIDATE_NOTE =
-  "An analysis raised this and the automatic checks have not: it waits as a candidate until a "
-  + "second analysis run confirms it or an automatic check corroborates it. Shown so the "
-  + "proposed copy is not lost while it waits.";
+  "An analysis raised this and the automatic checks have not. It opens when an automatic "
+  + "check raises it too, or when you confirm it; a second analysis run does not confirm it. "
+  + "Shown so the proposed copy is not lost while it waits.";
 
 export const SOURCES_NOTE = "Raised both by the automatic checks and by an analysis. The checks count every instance it can match, mechanically. The analysis reports only what it judged worth acting on, and can see things a parser cannot. The numbers are not meant to agree.";
 
@@ -583,8 +606,9 @@ export function narrowPickNote(run: Pick<Run, "kind" | "scan_scope" | "crawled_p
 export const isCoverageNote = (s: { coverage_note?: boolean; severity: string;
                                     check_id: string }): boolean =>
   s.coverage_note ?? (s.severity === "info"
-    && (/-not-assessed$/.test(s.check_id) || /-coverage$/.test(s.check_id)
-        // `runs.ENGINE_RUN_NOTES` (item 238).
+    && (/-(not-assessed|coverage|reported)$/.test(s.check_id)
+        // `runs.SCOPE_NOTES` (items 278, 279) and `runs.ENGINE_RUN_NOTES` (item 238).
+        || s.check_id === "axe-sampled" || s.check_id === "ai-experience-unmeasured"
         || s.check_id === "adaptive-escalation" || s.check_id === "adaptive-no-escalation"));
 
 /** A scan of one page or of the navigation set: its score is over those
@@ -616,6 +640,9 @@ export const scoreExtent = (scope: string | null | undefined) =>
 export function latestSiteWideCrawl(runs: Run[] | undefined): Run | null {
   for (const r of runs ?? []) {
     if (r.kind !== "audit" || !hasResults(r.status) || !r.crawled_paths) continue;
+    // The server's answer where the row carries it (item 253): a site-wide
+    // label on a crawl under the page floor is not a reading of the site.
+    if (r.site_reading !== undefined) { if (r.site_reading) return r; continue; }
     const scope = scopeOf(r);
     if (scope === "site" || scope === "full") return r;
   }

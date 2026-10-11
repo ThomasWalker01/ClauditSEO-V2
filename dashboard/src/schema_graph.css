@@ -54,12 +54,20 @@
    file carries no breakpoint of its own - it used to carry `1024px`, a
    number nobody had measured, applied to the viewport rather than to the
    column the graph is actually inside. */
+/* `overflow-anchor: none`: the browser's scroll anchoring would otherwise
+   adjust the page by the canvas's change of size when the strip engages,
+   which is the movement the hold below it exists to remove. */
+.sg-canvas, .sg-canvas-hold { overflow-anchor: none; }
 .sg-canvas { position: relative; --sg-sticky: 220px; }
 /* Top padding is deeper than the rest on purpose: the block label is
    translated up out of its box so it sits on the border, and `.4rem` all
    round clipped it against the canvas edge - measured at a label top of
    640 against a canvas top of 646. */
+/* `scrollbar-gutter: stable` (operator report, 11 October): in the sticky
+   strip the scrollbar appeared, narrowed the grid, the nodes rewrapped, the
+   edges were re-measured - and the edges drew across the boxes mid-flip. */
 .sg-graph { position: relative; overflow: auto; padding: 1.05rem .4rem .4rem;
+  scrollbar-gutter: stable;
   background: var(--surface-deep); border: 1px solid var(--border);
   border-radius: .35rem; }
 .sg-grid { display: grid; gap: .4rem; position: relative; z-index: 1;
@@ -273,6 +281,7 @@
   padding: .15rem .2rem; font-size: .76rem; }
 .sg-crow:hover { background: var(--surface-sunken); }
 .sg-cname { flex: 1 1 auto; }
+.sg-state { flex: none; font-size: .72rem; }
 .sg-sev { font-size: .66rem; color: var(--text-muted); }
 .sg-prov { font-size: .62rem; }
 /* RENDER_RULES 12's provenance mark: a green dot for free, a violet

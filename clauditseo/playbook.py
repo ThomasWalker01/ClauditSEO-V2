@@ -189,7 +189,8 @@ PLAYBOOK: list[dict] = [
                         "sitemap-coverage", "sitemap-regression",
                         "unreachable", "render-only", "head-divergent",
                         "mobile-parity", "mobile-parity-size",
-                        "bot-parity"]},
+                        "bot-parity", "scripts-blocked-by-csp",
+                        "page-script-error", "script-failed-to-load"]},
             {"id": "indexability", "name": "Indexability directives",
              "status": READY, "kind": SWEEP, "dims": ["TEC"],
              "spec": "Indexability Directives Expert analysis — noindex, "
@@ -342,7 +343,7 @@ PLAYBOOK: list[dict] = [
                      "writes corrected markup for every failure, one change "
                      "per image even where it closes several checks.",
              "checks": ["img-alt-missing", "img-alt-decorative-nonempty",
-                        "img-filename-generic", "img-lcp-lazy",
+                        "img-filename-generic", "img-alt-filename", "img-lcp-lazy",
                         "img-dimensions-missing", "img-no-srcset",
                         "img-legacy-format", "img-duplicate-links"]},
             # Brief v10 step AG: the first brief named for the part it writes

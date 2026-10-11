@@ -76,6 +76,9 @@ SAYS = re.compile(
 #: not assumed: these are the files that PASSED with `dashboard/dist` moved
 #: aside, while the signals said they would not.
 NOT_RENDERED = {
+    "test_a_link_in_a_sentence_is_not_a_tap_target.py":
+        "it runs the tap-target harness's own function on a page it writes with "
+        "`set_content`; nothing it reads comes from the bundle.",
     "test_a_section_reads_its_reference_crawl.py":
         "item 239 step 2: it serves the app for its JSON routes only and "
         "drives no browser; nothing it asserts is drawn by the bundle.",

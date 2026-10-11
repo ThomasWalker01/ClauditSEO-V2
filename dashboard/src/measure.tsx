@@ -34,11 +34,11 @@ export const MEASURE_WORD: Record<Measure, string> = {
 export function measureOf({ checks, unmeasured, gate = null, noCheckWhy }: {
   checks: string[];
   unmeasured: Map<string, string>;
-  gate?: { state: string; reason: string } | null;
+  gate?: { state: string; reason: string; why?: string | null } | null;
   /** Why no automatic check covers the part, where none does. */
   noCheckWhy?: string;
 }): { state: Measure; why: string } {
-  if (gate?.state === "na") return { state: "cannot", why: gate.reason };
+  if (gate?.state === "na") return { state: "cannot", why: gate.why || gate.reason };
   if (!checks.length) {
     return { state: "not-measured",
              why: noCheckWhy ?? "no automatic check covers this part, and no analysis has read it" };

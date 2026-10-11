@@ -66,6 +66,15 @@ def crawl_start_url(domain: str) -> str:
     return d if d.lower().startswith(("http://", "https://")) else f"https://{d}/"
 
 
+def is_edge_path(url: str) -> bool:
+    """A path the CDN in front of the site serves, not the site (item 275,
+    row 10): Cloudflare's `/cdn-cgi/` - `/cdn-cgi/l/email-protection` is the
+    href it rewrites a mailto into, which a script decodes in a browser and a
+    crawler fetches as a 404. Not a page of the site, and not a link to one."""
+    from urllib.parse import urlsplit as _us
+    return (_us(url).path or "/").startswith("/cdn-cgi/")
+
+
 def site_host(domain: str) -> str:
     """The one place a stored `sites.domain` becomes the host it names.
 
@@ -680,6 +689,9 @@ def crawl(
                     continue
                 # Verification follows nothing: the named pages are the job.
                 if only_urls is not None:
+                    continue
+                # The CDN's own paths are not the site's pages (item 275, row 10).
+                if is_edge_path(link_url):
                     continue
                 queued.add(link_url)
                 heapq.heappush(queue, (REGION_RANK.get(region, 9), seq, link_url,

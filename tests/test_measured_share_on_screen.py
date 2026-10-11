@@ -134,6 +134,11 @@ def _completed(tmp_path, *, evidence=None, kind="audit"):
     result = _run(_Hub())
     run_id = runs.create_run(conn, site_id, DIMS, "T2", kind=kind)
     if evidence is not None:
+        # The pages the evidence says were fetched (item 253: the page floor
+        # is asked of what the run read).
+        fetched = (evidence.get("stats") or {}).get("eligible")
+        if fetched:
+            result.crawled_paths = {f"/p{n}" for n in range(fetched)}
         runs.store_evidence(conn, run_id, evidence)
     runs.complete_run(conn, run_id, result)
     return conn, site_id, run_id
@@ -408,6 +413,9 @@ def narrow_audit():
                           json={"domain": "narrow.fixture"}, timeout=30).json()
 
         result = _run(_Hub())
+        # The six pages the evidence below says were fetched (item 253: the
+        # page floor is asked of what the run read).
+        result.crawled_paths = {f"/p{n}" for n in range(6)}
         conn = connect(db)
         run_id = runs.create_run(conn, site["id"], DIMS, "T2")
         runs.store_evidence(conn, run_id, {

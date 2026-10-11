@@ -59,15 +59,16 @@ browser pass; analysis rows are this analysis's:
   PRF/inp-long-tasks    (free) main-thread tasks > 50 ms during load, by
                         script; INP lab proxy (TBT) reported as such
   PRF/ttfb-slow         (free) server response > {{TTFB_GOOD}} ms (800)
-  PRF/render-blocking   (free) CSS/JS in <head> without async/defer/media,
-                        with bytes and ms blocked
+  PRF/render-blocking   (free) CSS/JS in <head> without async/defer/media
+                        holding the first paint 100 ms or more, with ms
+                        blocked and bytes where the trace read them
   PRF/unused-css-js     (free) coverage: bytes shipped vs used, per file
   PRF/uncompressed      (free) text responses without br/gzip
   PRF/no-cache-headers  (free) static assets without cache-control/immutable
   PRF/unminified        (free) JS/CSS whitespace ratio above threshold
   PRF/third-party-weight (free) bytes and main-thread ms by third-party host
-  PRF/font-blocking     (free) web fonts without font-display or preload;
-                        FOIT observed
+  PRF/font-blocking     (free) web fonts that declare font-display: auto
+                        or block; a missing preload is not this check
   PRF/page-weight       (free) total transfer > {{PAGE_WEIGHT_BUDGET}} KB;
                         image share from the Images part, not recounted
   PRF/cwv-not-assessed  (free) no field data connected — one row for the

@@ -1,17 +1,17 @@
 import { PrimaryButton, SecondaryButton } from "./buttons";
 import { GlossaryView } from "./glossary";
 import { FormEvent, Fragment, useCallback, useEffect, useState } from "react";
-import { ApiError, api, classify, describe, getToken, setToken } from "./api";
+import { ApiError, RunStatus, api, classify, describe, getToken, hasResults, setToken,
+         useFetch } from "./api";
 import { applyBrandFavicon } from "./favicon";
 import {
-  ChatView, CompareView, LauncherView,
-  PageDetailView, ReportView, RunDetailView, SiteDetailView, paneLabel,
+  CompareView, LauncherView,
+  RunDetailView, SiteDetailView, paneLabel,
 } from "./views";
-import { WorkbenchView } from "./workbench";
 import { ReportsView } from "./reports";
 import { DeliverableView } from "./deliverable";
 import { AdminView } from "./admin";
-import { goto } from "./nav";
+import { goto, historyHref } from "./nav";
 import { PageDossierView } from "./dossier";
 import { SelectionProvider, SiteSearch } from "./selection";
 import { HomeView } from "./home";
@@ -62,9 +62,7 @@ export function screenName(hash: string): { screen: string; site: boolean; ownHe
     const sub = parts[2];
     if (sub === "reports") return { screen: "Reports", site: true, ownHeading: false };
     if (sub === "launch") return { screen: "Run an audit", site: true, ownHeading: false };
-    if (sub === "workbench") return { screen: "Workbench", site: true, ownHeading: false };
     if (sub === "dossier") return { screen: "Page", site: true, ownHeading: false };
-    if (sub === "chat") return { screen: "Chat", site: true, ownHeading: false };
     const tab = q.get("tab") ?? "landing";
     const part = q.get("part");
     // The client screen draws its own h1 (StandingHeader): the headline on the
@@ -126,28 +124,42 @@ function Router() {
   if (parts[0] === "buttons") return <ButtonsView />;
   if (parts[0] === "sites" && parts[1] && parts[2] === "launch")
     return <LauncherView siteId={parts[1]} />;
+  // The history chat is retired (channel ruling 20261011-0747): deterministic,
+  // it answered any question it did not recognise with the latest run's score,
+  // drawn as a cited answer, and nothing linked to it. A stored address lands
+  // on the site.
   if (parts[0] === "sites" && parts[1] && parts[2] === "chat")
-    return <ChatView siteId={parts[1]} />;
+    return <Redirect to={`#/sites/${parts[1]}`} />;
+  // Item 264: the site Workbench is retired, the way item 188 retired Tools.
+  // Its own second paragraph said it was "not what has run here. For that,
+  // and to run one, use the Analyses tab" - and then drew run controls under
+  // it. Nothing live linked to it. A stored address lands on that tab with
+  // the site it named.
   if (parts[0] === "sites" && parts[1] && parts[2] === "workbench")
-    return <WorkbenchView siteId={parts[1]} />;
-  // Site-scoped, so it cannot collide with `#/reports/<run>` — the single
-  // client deliverable for one audit, which is a different thing entirely.
+    return <Redirect to={`#/sites/${parts[1]}?tab=findings`} />;
+  // The one screen that produces a client document (item 256). The per-run
+  // `#/reports/<run>` is retired below and lands here.
   if (parts[0] === "sites" && parts[1] && parts[2] === "reports")
     return <ReportsView siteId={parts[1]} />;
   if (parts[0] === "sites" && parts[1] && parts[2] === "dossier" && parts[3])
     return <PageDossierView siteId={parts[1]} url={decodeURIComponent(parts[3])} />;
   if (parts[0] === "sites" && parts[1]) return <SiteDetailView siteId={parts[1]} />;
   if (parts[0] === "runs" && parts[1] && parts[2] === "page" && parts[3])
-    return <PageDetailView runId={parts[1]} url={decodeURIComponent(parts[3])} />;
-  if (parts[0] === "runs" && parts[1]) return <RunDetailView runId={parts[1]} />;
+    return <RunRoute runId={parts[1]} page={decodeURIComponent(parts[3])} />;
+  if (parts[0] === "runs" && parts[1]) return <RunRoute runId={parts[1]} />;
   if (parts[0] === "compare" && parts[1] && parts[2])
     return <CompareView a={parts[1]} b={parts[2]} />;
-  // A stored deliverable, distinct from `#/reports/<run>` which GENERATES
-  // one. Reading what was delivered and producing something new are
-  // different acts and must not share a route.
+  // A stored deliverable. Reading what was delivered and producing something
+  // new are different acts and do not share a route: producing is the site's
+  // Reports tab.
   if (parts[0] === "client-reports" && parts[1])
     return <DeliverableView reportId={parts[1]} />;
-  if (parts[0] === "reports" && parts[1]) return <ReportView runId={parts[1]} />;
+  // `#/reports/<run>` is retired (item 251), and its screen deleted (item
+  // 256): it generated a document for whatever run id was typed, with no
+  // hold, no spend mark and no list of what had been delivered - a second,
+  // unguarded door onto the Reports tab. A stored link lands on that tab for
+  // the run's site.
+  if (parts[0] === "reports" && parts[1]) return <RunRoute runId={parts[1]} reports />;
   // Item 188: Tools is retired. Its batch runner is superseded by the
   // per-site surfaces on the client page - the Analyses catalogue's own
   // "Run all", a part page's "Run analysis", the Audit pane and Triage - and
@@ -170,6 +182,29 @@ function Router() {
   // working on", which only the selection knows.
   if (parts[0] === "reports") return <ToSelectedSite tail="/reports" />;
   return <HomeView />;
+}
+
+/** Where a run's address lands (item 251).
+ *
+ *  A finished run's own record is the history view: one audit as it saw the
+ *  site, under a banner that names it and offers the way back to the current
+ *  view (item 239 step 5). `#/runs/<id>` rendered the same record with no
+ *  banner, so a stored link showed a past audit as though it were the site.
+ *  It redirects there now, and keeps only what the history view has no place
+ *  for: a run that is in flight, failed or cancelled.
+ *
+ *  `#/runs/<id>/page/<url>` was one page as one run saw it. A page's record
+ *  is the dossier, which reads the Latest View and the page's whole history,
+ *  so that address lands there. */
+function RunRoute({ runId, page, reports }: { runId: string; page?: string; reports?: boolean }) {
+  const { data, error } = useFetch<{ site_id: string; status: RunStatus }>(`/api/runs/${runId}`);
+  // An unknown or unreadable run is the run page's to explain.
+  if (error) return <RunDetailView runId={runId} />;
+  if (!data) return <p className="muted">Loading…</p>;
+  if (reports) return <Redirect to={`#/sites/${data.site_id}/reports`} />;
+  if (page) return <Redirect to={`#/sites/${data.site_id}/dossier/${encodeURIComponent(page)}`} />;
+  if (hasResults(data.status)) return <Redirect to={historyHref(data.site_id, runId)} />;
+  return <RunDetailView runId={runId} />;
 }
 
 function ToHome() {

@@ -107,7 +107,7 @@ _JS = """() => ({
   })),
   // One per section since brief v17 step AV3; joined, for the reason
   // the other two clauses reading this line record.
-  clean: [...document.querySelectorAll('.anat-pane .cause-clean-line')]
+  clean: [...document.querySelectorAll('.anat-pane .cause-clean-line, .anat-pane .cause-unreturned-line')]
     .map((p) => p.textContent.trim()).join(' '),
   cards: document.querySelectorAll('.anat-pane .fix-card').length,
   chip: (document.querySelector('.legend-strip .legend-narrow')?.textContent || '').trim(),
@@ -189,7 +189,9 @@ def test_candidates_are_shown_and_tagged_in_both_tables_and_the_narrow_reaches_e
     by = {c["check"]: c for c in whole["causes"]}
     tl, md = by["ONP/title-length"], by["ONP/meta-desc-missing"]
     assert tl["tags"] == ["brief 1"] and tl["pages"] == "1", tl
-    assert tl["state"] == "candidate", tl
+    # "seen once": a candidate the automatic checks may still confirm, in
+    # the registry's word (item 250), never the engine's `candidate`.
+    assert tl["state"] == "seen once", tl
     assert md["tags"] == ["sweep 1", "brief 1"] and md["pages"] == "1" and md["state"] == "open", md
     # Four free and one analysis since brief v17 step AV3: the sections
     # count apart, because a reader asking "what did the free pass find"
@@ -198,7 +200,9 @@ def test_candidates_are_shown_and_tagged_in_both_tables_and_the_narrow_reaches_e
     # every page THIS RUN FETCHED, not over a record that includes pages
     # nobody looked at.
     assert whole["clean"].startswith("4 checks clean on every page this audit fetched"), whole["clean"]
-    assert "1 check clean on every page this audit fetched" in whole["clean"], whole["clean"]
+    # Items 274, 276: the analysis section's check with no row is said as
+    # that, not as clean - the briefs report faults and omit passes.
+    assert "1 check the analysis returned no row for" in whole["clean"], whole["clean"]
     assert "title-entity-alignment" in whole["clean"], whole["clean"]
     assert sorted((r["page"], r["candidate"]) for r in whole["reps"]) == [("/", True), ("/about", False)]
     # The sidebar head's "counts for /..." went with the sidebar (brief v24
@@ -209,7 +213,10 @@ def test_candidates_are_shown_and_tagged_in_both_tables_and_the_narrow_reaches_e
     assert narrowed["reps"] == [{"page": "/", "candidate": True}], narrowed["reps"]
     # Narrowed, the checks table gives way to the page's own card.
     assert narrowed["causes"] == [] and narrowed["cards"] == 1, narrowed
-    assert narrowed["clean"].startswith("6 checks pass on this page: "), narrowed["clean"]
+    # Five free passes; the analysis check with no row on this page is said
+    # apart, not as a pass (items 274, 276).
+    assert narrowed["clean"].startswith("5 checks pass on this page: "), narrowed["clean"]
+    assert "1 check the analysis returned no row for on this page" in narrowed["clean"], narrowed["clean"]
     assert narrowed["chip"].startswith("narrowed to /"), narrowed["chip"]
     for tab, (n, text) in chips.items():
         assert n == 1 and " ".join(text.split()).startswith("narrowed to /"), (tab, n, text)

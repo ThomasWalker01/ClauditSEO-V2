@@ -36,11 +36,18 @@ function PublishedLine({ a }: { a: AnatomyScreen }) {
   const added = compare?.diff.full.known ? compare.diff.full.added.length : 0;
   const gone = compare?.diff.full.known ? compare.diff.full.removed.length : 0;
   const published = precheck.sitemap_urls ?? precheck.page_urls.length;
-  const auditedN = data?.current?.last_audit ? data.pages.length : null;
+  // What the current reading audited, not the record's page list (every
+  // page any stored finding names): that read "68 audited" on a site whose
+  // audit read 45 (screen audits round 3, launch IP-02).
+  const auditedN = precheck.audited ?? null;
   const navMissing = precheck.not_in_sitemap.length;
   // Joined with " · " so the line never opens on a separator.
   const pieces: React.ReactNode[] = [];
-  if (compare?.prior.kind) {
+  if (compare?.prior.kind === "crawl") {
+    // Against a crawl nothing arrived or went (item 254): the sitemap
+    // declares pages the last audit did not read.
+    if (added) pieces.push(<>{added} declared, not in the last audit</>);
+  } else if (compare?.prior.kind) {
     // Both directions when both moved (brief v12 step AN): `+2 · −2` says two
     // pages arrived and two went, which `±0 · 2 gone` did not.
     pieces.push(added && gone

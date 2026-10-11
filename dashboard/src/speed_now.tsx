@@ -28,7 +28,7 @@
 import { SecondaryButton } from "./buttons";
 import { useState } from "react";
 
-import { Card } from "./components";
+import { Card, pathOf } from "./components";
 import { entry } from "./glossary";
 import { Pill } from "./pill";
 import { useObjectUrl } from "./api";
@@ -557,9 +557,13 @@ function ThirdParties({ t, pops }: { t: SpeedTemplate; pops: Populations | null 
  *  slow" are two readings of one block rather than two screens. The part opens
  *  on the largest template, which the server sorts first: the one most of the
  *  site is built from is the one worth reading. */
-export function SpeedNowBlock({ part, pops = null, onPart, picked, onTemplate }: {
+export function SpeedNowBlock({ part, pops = null, onPart, picked, onTemplate, page = "" }: {
   part: { speed_now?: SpeedNow | null };
   pops?: Populations | null;
+  /** A page in scope (item 265): the block draws that page's own trace - the
+   *  template it was traced for - with no picker, or says it was not traced.
+   *  Page mode drew fix cards only, though `/` is one of the traced pages. */
+  page?: string;
   /** The template narrow in hand and its setter (brief v25 step BP). With a
    *  setter the picker is the narrow: pressing a template narrows the fixes
    *  below the picture to its pages, and the pictures follow it. */
@@ -593,7 +597,24 @@ export function SpeedNowBlock({ part, pops = null, onPart, picked, onTemplate }:
       </Card>
     );
   }
-  const t = now.templates.find((x) => x.pattern === pick) ?? now.templates[0];
+  // In page mode, the template this page was traced for; none if it was not.
+  // By the whole path: `path()` is a resource's short label (its last
+  // segment), and two templates' pages can share one.
+  const onPage = page ? now.templates.find((x) => pathOf(x.page) === pathOf(page)) ?? null : null;
+  if (page && !onPage) {
+    return (
+      <Card className="now-card sp-card">
+        <h4>What this page has now</h4>
+        <p className="muted sp-untraced" role="note">
+          Not traced this audit: the trace reads one page per template, and{" "}
+          <code>{pathOf(page)}</code> was not the one read for its template. Re-check
+          this part with this page in scope to trace it.
+        </p>
+        <p className="muted sp-profile">{now.device_profile}</p>
+      </Card>
+    );
+  }
+  const t = onPage ?? now.templates.find((x) => x.pattern === pick) ?? now.templates[0];
   // A gauge's `over` count is "how many of THIS TEMPLATE's traced pages gave
   // a figure", so the scope it renders against is the template and not the
   // site (item 155's rule, applied where the reader is looking - the same
@@ -605,7 +626,13 @@ export function SpeedNowBlock({ part, pops = null, onPart, picked, onTemplate }:
     : null;
   return (
     <Card className="now-card sp-card">
-      <h4>What the templates have now</h4>
+      <h4>{onPage ? "What this page has now" : "What the templates have now"}</h4>
+      {onPage && (
+        <p className="muted sp-this-page">
+          This page is the one traced for its template, <code>{t.pattern}</code>,
+          so everything below is this page's own trace.
+        </p>
+      )}
       {/* The device profile on every run, per the brief - and it states the
           throttling METHOD, because we APPLY the throttle where
           Lighthouse/PageSpeed simulate it. Ours reads lower by design, and a
@@ -616,7 +643,7 @@ export function SpeedNowBlock({ part, pops = null, onPart, picked, onTemplate }:
         <Counted count={now.traced} pops={pops} unit="pages" />
       </p>
 
-      {(now.templates.length > 1 || onTemplate) && (
+      {!onPage && (now.templates.length > 1 || onTemplate) && (
         <div className="sp-picker" role="group" aria-label="template">
           {now.templates.map((x) => (
             <button key={x.pattern} type="button"

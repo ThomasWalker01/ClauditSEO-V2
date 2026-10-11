@@ -22,6 +22,7 @@
  *  filling node cards from a per-`@type` palette; the first instinct on
  *  reading this file will be to reach for one, and `tests/` refuses it.
  */
+import { candidateWord } from "./to_confirm";
 import { SecondaryButton } from "./buttons";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Pill } from "./pill";
@@ -336,8 +337,28 @@ function useEdges(model: SchemaGraphModel, selected: string | null,
         kind: e.kind, label: trunc(e.label, EDGE_LABEL_CAP), mx, my, dim,
       });
     });
+    // Item 270 (row 14): a label off the cards and off the labels before it.
+    // Its box is the one drawn below (6.2 px a character, 15 high); one that
+    // lands on a card or an earlier label steps up a line, at most four
+    // times, so it reads beside the edge rather than over a card's type.
+    const placed: Box[] = [];
+    const hits = (b: Box) => [...all, ...placed].some((r) =>
+      b.x < r.x + r.w && r.x < b.x + b.w && b.y < r.y + r.h && r.y < b.y + b.h);
+    for (const g of out) {
+      if (!g.label) continue;
+      const w = g.label.length * 6.2 + 6;
+      let box = { x: g.mx - w / 2, y: g.my - 8, w, h: 15, cx: g.mx, cy: g.my };
+      for (let step = 0; step < 4 && hits(box); step++) {
+        g.my -= 16;
+        box = { ...box, y: g.my - 8, cy: g.my };
+      }
+      placed.push(box);
+    }
     setEdges(out);
-    setSize({ w: el.scrollWidth, h: el.scrollHeight });
+    // Only on a change: the overlay is sized from the scroll extent it sits
+    // in, so an unconditional set re-rendered on every observation.
+    setSize((s) => (s.w === el.scrollWidth && s.h === el.scrollHeight
+      ? s : { w: el.scrollWidth, h: el.scrollHeight }));
   }, [model, selected, ref]);
 
   useLayoutEffect(() => { measure(); }, [measure]);
@@ -547,6 +568,9 @@ function DrillPanel({ model, drill, findings, collections, onSelect, onFix }: {
               }}>
         <i className={`sg-bd sg-bd-${f.sev_class}`}>{f.n}</i>
         <span className="sg-cname">{f.name}</span>
+        {f.state === "candidate" && (
+          <span className="sg-state tone-state-candidate">{candidateWord(f.to_confirm)}</span>
+        )}
         <span className={`sg-sev sg-sev-${f.sev_class}`}>{f.sev}</span>
         <span className={`sg-prov sg-prov-${f.src}`}>{f.src}</span>
       </button>
@@ -823,6 +847,30 @@ function Refs({ node, byKey, onSelect }: {
 export function SchemaGraphView({ part, glow, onFix }: {
   part: Category; glow: string | null; onFix: (n: number) => void;
 }) {
+  // The canvas's open height, measured while it is not the sticky strip, for
+  // the hold below it.
+  // Both heights are measured after layout, open and as the strip, so the
+  // hold is right on the first frame the strip draws.
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const [openHeight, setOpenHeight] = useState(0);
+  const [stripHeight, setStripHeight] = useState(0);
+  useLayoutEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const set = glow ? setStripHeight : setOpenHeight;
+    // Fractional, not `offsetHeight`: a hold a pixel short let the page move
+    // a pixel, which moved the first card across the viewport's edge and
+    // flipped the strip back - measured at scrollY 1327/1328, every 17 ms.
+    const read = () => {
+      const now = el.getBoundingClientRect().height;
+      set((h) => (h === now ? h : now));
+    };
+    read();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(read);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [glow]);
   const model = part.graph ?? null;
   const [selected, setSelected] = useState<string | null>(null);
   const [narrow, setNarrow] = useState(
@@ -892,20 +940,30 @@ export function SchemaGraphView({ part, glow, onFix }: {
   // id checks compare it with the other pages'. Where one of them is raised
   // on this page, "CONSOLIDATED" beside "@id #organization is declared by 2
   // entities" is two answers, and the screen says so rather than settling it.
-  const disputed = (model.findings ?? []).some((f) => f.checks.some(
+  // Item 270 (row 12): which check disagrees, and its checklist number.
+  const dispute = (model.findings ?? []).find((f) => f.checks.some(
     (c) => /(^|\/)schema-(duplicate-id|orphan-instance)$/.test(c)));
+  const disputed = Boolean(dispute);
 
   return (
     <div className="sg-root">
       {/* The two verdicts above the picture (§8's legend line sits under
           it): neither is a finding about a page, and putting them among the
           cards would make them read as one. */}
+      {/* Item 270 (row 12): the site's verdict beside the page's, so a page
+          that is CONSOLIDATED on a FRAGMENTED site says both. */}
       <p className="sg-verdict">
         <b>Entity: {model.verdict.entity}</b>
         {" "}<span className="muted">(this page&rsquo;s markup)</span>
+        {part.brief_entity?.verdict ? <> · site: <b>{part.brief_entity.verdict}</b></> : ""}
         {model.verdict.why ? ` — ${model.verdict.why}` : ""}
-        {disputed && (
-          <span className="sg-disputed"> · automatic checks disagree on this page</span>
+        {disputed && dispute && (
+          <span className="sg-disputed">
+            {" "}· automatic checks disagree on this page:{" "}
+            <button type="button" className="btn-link" onClick={() => onFix(dispute.n)}>
+              {dispute.checks[0].split("/").pop()} (#{dispute.n})
+            </button>
+          </span>
         )}
       </p>
       {eligibility.length > 0 && (
@@ -921,16 +979,31 @@ export function SchemaGraphView({ part, glow, onFix }: {
           ))}
         </ul>
       )}
-      <div className={`sg-canvas${glow ? " sg-hasglow" : ""}`}
+      <div className={`sg-canvas${glow ? " sg-hasglow" : ""}`} ref={canvasRef}
            data-glow={glow ?? ""}>
         <Level0 model={model} findings={findings} collections={collections}
                 selected={glow ?? selected} onSelect={setSel} compact={narrow} />
       </div>
+      {/* The height the canvas gave up to the sticky strip, held, so the page
+          below it does not move (operator report, 11 October). Collapsing
+          from the graph's full height to 220 px pulled every fix card up by
+          the difference; the card nearest the top changed, a card with no
+          node to glow dropped the strip, the graph re-expanded, the cards
+          moved back - and the page flickered between the two. */}
+      {glow && openHeight > 0 && (
+        <div className="sg-canvas-hold" aria-hidden="true"
+             style={{ height: Math.max(0, openHeight - stripHeight) }} />
+      )}
+      {/* Item 270 (row 14): the marks the picture draws, and only those. */}
       <p className="sg-legend">
-        <span className="sg-lg sg-lg-ok">resolved reference</span>
-        <span className="sg-lg sg-lg-dangling">referenced, not defined</span>
-        <span className="sg-lg sg-lg-expected">expected, absent</span>
-        <span className="sg-lg sg-lg-island">island</span>
+        {model.edges.some((e) => e.kind === "ok")
+          && <span className="sg-lg sg-lg-ok">resolved reference</span>}
+        {model.edges.some((e) => e.kind === "dangling")
+          && <span className="sg-lg sg-lg-dangling">referenced, not defined</span>}
+        {model.edges.some((e) => e.kind === "expected")
+          && <span className="sg-lg sg-lg-expected">expected, absent</span>}
+        {model.nodes.some((n) => n.island)
+          && <span className="sg-lg sg-lg-island">island</span>}
       </p>
       <DrillPanel model={model} drill={drill} findings={findings}
                   collections={collections} onSelect={setSel} onFix={onFix} />

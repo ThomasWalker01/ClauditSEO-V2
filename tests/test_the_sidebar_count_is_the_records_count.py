@@ -16,7 +16,17 @@ from __future__ import annotations
 import pytest
 
 from clauditseo.anatomy import categorise
-from clauditseo.persistence.runs import is_coverage_note
+from clauditseo.persistence.runs import _card_key, is_coverage_note
+
+
+def _cards(rows: list[dict]) -> int:
+    """Item 276: a part counts one row per card, and an analysis row the
+    automatic checks corroborate shares the sweep row's card (item 278, row
+    10, opened such a row on this fixture's Images part). The record lists
+    both; the part counts the card once."""
+    return len({_card_key({"check_id": s["check_id"], "urls": s["affected_urls"],
+                           "fingerprint": s["fingerprint"], "source": s["source"]})
+                for s in rows})
 from tests.test_a11y_rendered import DIST, served  # noqa: F401  (reused fixture)
 
 NEEDS_BROWSER = pytest.mark.skipif(
@@ -59,7 +69,7 @@ def test_the_wire_carries_the_rule_and_the_part_totals_leave_the_notes_out(serve
         # `["value"]`: the count carries its population since item 156, and
         # the RULE this clause is about - the badge counts the record, notes
         # excluded - is unchanged by the count carrying where it came from.
-        assert c["total"]["value"] == len(mine), (c["key"], c["total"], len(mine))
+        assert c["total"]["value"] == _cards(mine), (c["key"], c["total"], len(mine))
         # Counted off the record, not off `findings`. That list is capped
         # at fifty by the payload and `notes` is a total over all of them,
         # so on a part with more than fifty rows the two are different
@@ -85,7 +95,17 @@ def browser():
 
 
 def test_every_badge_equals_the_records_filtered_count(browser, served):
+    import httpx
     base, ids = served
+    # The rows the record lists beyond the part's cards: corroborated pairs.
+    states = httpx.get(f"{base}/api/sites/{ids['site']}", timeout=30).json()["states"]
+    anatomy = httpx.get(f"{base}/api/sites/{ids['site']}/anatomy", timeout=30).json()
+    outstanding = [s for s in states if s["state"] in ("open", "regressed") and not s["coverage_note"]]
+    shared = {}
+    for c in anatomy["categories"]:
+        checks = {f["check_id"] for f in c["findings"]}
+        mine = [s for s in outstanding if s["check_id"] in checks]
+        shared[c["label"]] = len(mine) - _cards(mine)
     pg = browser.new_page(viewport={"width": 1400, "height": 900})
     try:
         # The part's count stands on the shop's header since the sidebar's
@@ -95,7 +115,10 @@ def test_every_badge_equals_the_records_filtered_count(browser, served):
         pg.wait_for_selector(".catalogue-shop .crow-part-open", timeout=30_000)
         badges = pg.evaluate("""() => [...document.querySelectorAll('.catalogue-shop .crow-part')].map((b) => ({
           part: b.querySelector('.crow-part-link')?.textContent.trim(),
-          n: parseInt((b.querySelector('.crow-part-open')?.textContent || '').replace(/[^0-9]/g, '') || '-1', 10) }))""")
+          // The leading figure, which is the open count. Stripping every
+          // non-digit read "2 open · 1 seen once" as 21 (item 250 put a
+          // seen-once row on this fixture's Crawl part).
+          n: parseInt(((b.querySelector('.crow-part-open')?.textContent || '').match(/[0-9]+/) || ['-1'])[0], 10) }))""")
         pg.goto(f"{base}/#/sites/{ids['site']}?tab=all&state=outstanding", wait_until="load", timeout=30_000)
         pg.wait_for_selector(".part-select", timeout=30_000)
         keys = {o["label"]: o["value"] for o in pg.evaluate(
@@ -116,4 +139,5 @@ def test_every_badge_equals_the_records_filtered_count(browser, served):
     assert seen, "no part carries a count"
     for b in badges:
         if b["n"] > 0:
-            assert seen[b["part"]] == b["n"], (b["part"], seen[b["part"]], b["n"])
+            assert seen[b["part"]] == b["n"] + shared.get(b["part"], 0), (
+                b["part"], seen[b["part"]], b["n"], shared.get(b["part"], 0))

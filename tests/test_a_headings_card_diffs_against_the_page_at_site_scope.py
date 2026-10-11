@@ -14,6 +14,8 @@ clients" is relevelled to h3 and nothing else moves.
 
 from __future__ import annotations
 
+import re
+
 import httpx
 import pytest
 
@@ -44,6 +46,8 @@ def test_the_site_view_carries_the_outline_of_each_page_a_row_names(served):
     outlines = part.get("page_outlines") or {}
     assert set(outlines) == {HOME, POST}, sorted(outlines)
     assert [h[1] for h in outlines[HOME]["outline"]][-1] == "Our clients", outlines[HOME]
+    # Item 268 (row 4): and when the crawl read it.
+    assert outlines[HOME]["captured_at"], outlines[HOME]
 
 
 @needs_build
@@ -65,6 +69,7 @@ def test_the_card_marks_only_what_moves(served):
               if (!card) return null;
               return {
                 was: card.querySelectorAll('.outline-was li').length,
+                now: (card.querySelector('.fix-now')?.textContent || '').replace(/\\s+/g, ' ').trim(),
                 marks: [...card.querySelectorAll('.out-mark')].map((m) => m.textContent.trim()),
               };
             }""")
@@ -73,3 +78,44 @@ def test_the_card_marks_only_what_moves(served):
     assert got, "no heading-skip card for / at site scope"
     assert got["marks"] == ["relevelled h4 → h3"], got
     assert got["was"] > 0, got
+    # Item 268 (row 4): "Now" says which crawl it is.
+    assert re.fullmatch(r"Now · crawl of \d{4}-\d{2}-\d{2}", got["now"]), got["now"]
+
+
+@needs_build
+def test_now_is_the_page_in_document_order_with_the_skip_marked(served):
+    """Item 268: "Now" was the corrected outline's matched lines in its own
+    order, then the cut lines after them, so an H1 could read below the H2
+    it heads, and the heading that skipped a level was not marked."""
+    from playwright.sync_api import sync_playwright
+    base, site_id = served
+    view = httpx.get(f"{base}/api/sites/{site_id}/anatomy", timeout=30).json()
+    part = next(c for c in view["categories"] if c["key"] == "headings")
+    page = [f"H{h[0]} {h[1]}" for h in part["page_outlines"][HOME]["outline"]]
+    with sync_playwright() as p:
+        b = p.chromium.launch(headless=True)
+        try:
+            pg = b.new_page(viewport={"width": 1568, "height": 1080})
+            pg.goto(f"{base}/#/sites/{site_id}?tab=findings&part=headings",
+                    wait_until="load", timeout=30_000)
+            pg.wait_for_selector(ANATOMY_READY, timeout=30_000)
+            pg.wait_for_selector(".part-fixes .fix-card", timeout=15_000)
+            got = pg.evaluate("""() => {
+              const card = [...document.querySelectorAll('.part-fixes .fix-card')]
+                .find((c) => c.querySelector('[data-fix-check="heading-skip"]')
+                             && (c.querySelector('.fix-page')?.textContent || '').trim() === '/');
+              if (!card) return null;
+              return [...card.querySelectorAll('.outline-was li')].map((l) => ({
+                line: `${l.querySelector('.out-lvl').textContent} ${l.querySelector('.out-text').textContent}`,
+                skipped: (l.querySelector('.out-skipped')?.textContent || '').trim(),
+              }));
+            }""")
+        finally:
+            b.close()
+    assert got, "no heading-skip card for / at site scope"
+    lines = [g["line"] for g in got]
+    # In the page's own order: each line stands after the one above it.
+    at = [page.index(line) for line in lines]
+    assert at == sorted(at), (lines, page)
+    assert [g["line"] for g in got if g["skipped"]] == ["H4 Our clients"], got
+    assert {g["skipped"] for g in got if g["skipped"]} == {"skipped a level"}, got

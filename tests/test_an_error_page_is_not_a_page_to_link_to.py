@@ -38,3 +38,16 @@ def test_a_deep_404_is_not_deep():
     deep = {u for f in _by_check(_run(*chain)).get("depth-deep", []) for u in f.affected_urls}
     assert BASE + "/d" in deep, deep
     assert BASE + "/e" not in deep, deep
+
+
+def test_a_link_on_an_error_page_counts_for_nothing():
+    """Item 271, change 1. Item 227 took error pages out of the population
+    but the link graph was still built from every HTML page, so a 404's own
+    navigation was an inlink: a page only a 404 links to read as linked."""
+    home = _page("/", '<a href="/linked">Linked</a>')
+    got = _by_check(_run(home, _page("/linked", "<p>x</p>"),
+                         _page("/only-from-404", "<p>y</p>"),
+                         _page("/gone", '<p><a href="/only-from-404">a link</a></p>', status=404)))
+    urls = {u for f in got.get("orphan", []) for u in f.affected_urls}
+    assert BASE + "/only-from-404" in urls, urls
+    assert BASE + "/linked" not in urls, urls

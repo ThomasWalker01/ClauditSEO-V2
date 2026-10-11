@@ -193,3 +193,21 @@ def test_the_block_draws_the_parity_probe_and_says_when_it_did_not_run():
     css = _src("styles.css")
     for cls in (".cn-parity-statement", ".cn-parity-raised"):
         assert cls in css, f"{cls} is used but not declared"
+
+
+def test_the_render_only_tile_says_what_it_counted(seeded):
+    """Item 275: `render-only` is read only on the pages the rendered pass
+    visited, and its tile sat beside the crawl's own counts as a bare 0."""
+    conn, site_id = seeded
+    run_id = _run_with_evidence(conn, site_id, {"pages": [_page("/"), _page("/a")]})
+    assert runs.crawl_now_payload(conn, run_id)["render_read"] is None
+    conn.execute(
+        "INSERT INTO findings (id, run_id, dimension, check_id, severity, source, summary,"
+        " affected_urls, fingerprint, created_at, evidence) VALUES ('f1', ?, 'A11Y',"
+        " 'axe-sampled', 'info', 'deterministic', 'sampled', '[]', 'fp1', '2026-10-03', ?)",
+        (run_id, json.dumps({"text_blocks": {"https://x.test/": [], "https://x.test/a": []}})))
+    p = runs.crawl_now_payload(conn, run_id)
+    assert p["render_read"] == 2 and p["render_only"] == 0, p
+    cn = _src("crawl_now.tsx")
+    assert "the rendered pass visited" in cn
+    assert '`${MEASURE_WORD["not-measured"]}: the rendered pass visited no page' in cn

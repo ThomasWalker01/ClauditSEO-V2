@@ -48,7 +48,11 @@ def test_page_mode_narrows_the_record_to_the_page(served):
     from playwright.sync_api import sync_playwright
     base, ids = served
     site = httpx.get(f"{base}/api/sites/{ids['site']}", timeout=30).json()
-    open_rows = [s for s in site["states"] if s["state"] in ("open", "regressed")
+    # What the record's default filter shows: open, regressed, and the rows
+    # that wait for the operator (item 237) - the fixture holds one since
+    # channel ruling 20261011-1050 (option 4).
+    open_rows = [s for s in site["states"]
+                 if (s["state"] in ("open", "regressed") or s.get("to_confirm"))
                  and not s.get("coverage_note") and not re.search(r"-(not-assessed|coverage)$", s["check_id"])]
     # Not the home page: the address drops a page scope naming the start URL,
     # which reads as the whole site.

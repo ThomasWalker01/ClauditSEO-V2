@@ -272,7 +272,8 @@ def test_the_hold_opens_the_record_at_its_own_severities():
     hold = (UI / "report_hold.tsx").read_text(encoding="utf-8")
     body = hold[hold.index("export function heldRecordHref"):]
     body = body[:body.index("\n}")]
-    assert "state=open&sev=critical,high" in body and "raised=" not in body, body
+    # Item 252: open AND regressed, the two states `open_severe` counts.
+    assert "state=open,regressed&sev=critical,high" in body and "raised=" not in body, body
     # The channel (20260924-0220-202): `run=` is the header's picked audit,
     # and the narrowing must not read it.
     nav = (UI / "nav.ts").read_text(encoding="utf-8")

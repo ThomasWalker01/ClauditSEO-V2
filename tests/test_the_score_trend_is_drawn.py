@@ -319,7 +319,9 @@ def test_the_runs_table_names_the_partner_and_links_to_it(browser, served):
     # The newest row is the latest point, and it names its partner rather than
     # answering "yes" or "no".
     newest = " ".join(got["reads"][0].split())
-    assert "2026-09-02 02:22" in newest, (
+    # 02:22 UTC, printed as the reader's local time (item 248).
+    from tests import localtime
+    assert localtime.stamp("2026-09-02T02:22:15+00:00") in newest, (
         f"the newest run's row does not name the run it reads against: {newest!r}")
     assert "nearest same basis" in newest, (
         f"the row does not say the partner is not the row above it: {newest!r}")

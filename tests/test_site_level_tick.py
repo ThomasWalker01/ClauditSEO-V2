@@ -158,7 +158,11 @@ CANDIDATE = "ONP/canonical-missing"
 #: Adding a state here is a product decision and should carry its own line.
 #: The guard below is what makes that cost visible: a new state arriving with
 #: no verb and no entry here reddens rather than passing quietly.
-VERBLESS_BY_DESIGN = frozenset({"candidate"})
+#:
+#: Painted as "seen once" since item 250: the engine's `candidate`, drawn in
+#: the registry's word. A candidate that waits for the OPERATOR is "to
+#: confirm" and is not verbless - it carries Confirm, Accept and Withdraw.
+VERBLESS_BY_DESIGN = frozenset({"seen once"})
 
 
 def _seeded(tmp_path):
@@ -702,8 +706,10 @@ def test_the_record_can_reach_every_state_a_run_cannot(ticked):
         finally:
             browser.close()
 
-    missing = [s for s in runs.MODEL_BLIND_STATES
-               if s not in reached.values()]
+    # The operator-owned states: model-blind bar `set-aside`, which a run
+    # derives (channel ruling 20261011-0745).
+    missing = [s for s in runs.OPERATOR_SETTABLE_STATES
+               if s != "open" and s not in reached.values()]
     assert not missing, (
         f"no control on the record puts a finding into {missing!r}. Pressing "
         f"every button the cell offers reached {reached!r}, and those states "

@@ -13,6 +13,7 @@ import { CadenceGrid } from "./cadence";
 import { SaveRule } from "./save_rule";
 import { Card, ErrorNote, Loading, MONEY_CURRENCY, PricedFrame, money,
          moneyPair } from "./components";
+import { day } from "./dates";
 
 type Provider = { configured: boolean; detail: string; env: string;
                   //: Whether "Provider keys" above can set this one. The
@@ -221,7 +222,7 @@ function Money() {
         {/* UX-66. The caption no longer swaps to a busy word. A button's
             label is its accessible name, so a name that changes mid-press is
             announced as a different control appearing — the convention
-            `reports.tsx:270-289` set for UX-64 and `views.tsx`'s `ReportView` took for
+            `reports.tsx`'s Deliverables regenerate control set for UX-64 and `reports.tsx`'s `GenerateCard` took for
             the report generate control. `aria-busy` carries the state the
             caption used to; the region below says it in words. */}
         <SecondaryButton disabled={!!busy}
@@ -258,10 +259,9 @@ function Money() {
 
             The date travels with each rate for the reason the old line
             already knew: a rate without its date is a number that silently
-            becomes wrong. Formatted through `toLocaleDateString` rather than
-            sliced off the ISO string, so it reads in the operator's locale
-            — the en-AU contract UX-45 is open about elsewhere, not a fresh
-            instance of it.
+            becomes wrong. Formatted through `day()` like every other date on
+            screen (item 248): the operator's local day, and never sliced off
+            the ISO string.
 
             Round 075: `data.stored` is no longer every row of `fx_rates`.
             The first press of the button beside this line brought the
@@ -279,7 +279,7 @@ function Money() {
               + data.stored.map((x) =>
                   `1 ${MONEY_CURRENCY} = ${x.rate} ${x.currency}`
                   + ` (${x.source}, `
-                  + `${new Date(x.fetched_at).toLocaleDateString()})`)
+                  + `${day(x.fetched_at)})`)
                 .join(" · ")
             : "No reference rate stored yet."}
         </span>
@@ -368,7 +368,7 @@ function Money() {
                   {" · "}
                   {p.entered_by ?? "no author recorded"}
                 </td>
-                <td className="muted">{p.entered_at.slice(0, 10)}</td>
+                <td className="muted">{day(p.entered_at)}</td>
                 <td>
                   <DangerButton label={`remove the price for ${p.model}`}
                                 confirm={{ title: `Remove the price for ${p.model}?`,
@@ -582,7 +582,7 @@ function TierModels() {
         </tbody>
       </table>
       <div className="money-row">
-        {/* UX-66, the convention `views.tsx`'s `ReportView` states in full. */}
+        {/* UX-66, the convention `reports.tsx`'s `GenerateCard` states in full. */}
         {/* Item 178: a setting, not a spend - nothing is charged on the press. */}
         <SecondaryButton disabled={busy}
                 aria-busy={busy} onClick={recommend}>
@@ -829,7 +829,7 @@ function ProviderStatus({ providers }: { providers: Record<string, Provider> }) 
         a database backup carries no credentials.
       </p>
       <div className="money-row">
-        {/* UX-66, the convention `views.tsx`'s `ReportView` states in full. */}
+        {/* UX-66, the convention `reports.tsx`'s `GenerateCard` states in full. */}
         {/* Item 178 (10-14): real calls, one of which bills, so it is priced
             in words and confirmed with the providers it will ask. */}
         <SpendButton price={null} busy={busy} onSpend={check}
@@ -1227,6 +1227,21 @@ type SiteRecord = {
   reputation_source?: string | null;
   plugin_directory_feed?: string | null;
   third_party_map?: Record<string, string> | null;
+  /** Item 277 (row 4): the Indexability brief's three inputs. */
+  intended_noindex?: string[] | null;
+  migration_map?: Record<string, string> | null;
+  parameter_rules?: string[] | null;
+  /** The Content briefs' inputs (brief v17 step AX), settable here since
+   *  screen audits round 3 (Admin AC-01): the record accepted them and no
+   *  screen could set them, so every Benchmark row stayed held. */
+  word_floors?: Record<string, number> | null;
+  mandatory_formats?: Record<string, string[]> | null;
+  authors?: { name: string; credentials?: string }[] | null;
+  proof_assets?: { name: string; detail?: string }[] | null;
+  competitors?: string[] | null;
+  keyword_data?: Record<string, string> | null;
+  top10_corpus?: Record<string, string> | null;
+  publish_history?: Record<string, string> | null;
   /** Item 167. The Google listing the operator confirmed, by Places id, and
    *  the latest lookup's candidates it was picked from. Written through
    *  `PUT /api/sites/{id}/gbp-listing`, never the site patch. */
@@ -1272,7 +1287,7 @@ function GbpListingControl({ site, onSaved }: { site: SiteRecord; onSaved: () =>
       ) : (
         <>
           <p className="muted">
-            Latest lookup {lookup.looked_up_at.slice(0, 10)}: {lookup.candidates.length} candidate
+            Latest lookup {day(lookup.looked_up_at)}: {lookup.candidates.length} candidate
             {lookup.candidates.length === 1 ? "" : "s"}.
             {lookup.confirmed_place_id_not_returned
               ? " The confirmed listing was not among them — it may have moved or closed."
@@ -1377,7 +1392,7 @@ function EntitySuggestionsPanel({ site, onUse }: {
         <>
           <p className="muted">
             {got.entity_type ? `${got.entity_type} node on ` : "No business entity node on "}
-            <code>{got.home}</code>, crawled {(got.measured_at ?? "").slice(0, 10)}.
+            <code>{got.home}</code>, crawled {day(got.measured_at)}.
             {" "}Nothing here is on the record until you use it and save: a field
             copied from the markup it is compared against can only agree with itself.
           </p>
@@ -1453,6 +1468,18 @@ function SiteRecordForm({ site, onSaved }: { site: SiteRecord; onSaved: () => vo
     plugin_directory_feed: site.plugin_directory_feed ?? "",
     cdn_or_waf: site.cdn_or_waf ?? "",
     third_party_map: Object.entries(site.third_party_map ?? {}).map(([h, p]) => `${h} | ${p}`).join("\n"),
+    intended_noindex: (site.intended_noindex ?? []).join("\n"),
+    migration_map: Object.entries(site.migration_map ?? {}).map(([o, n]) => `${o} | ${n}`).join("\n"),
+    parameter_rules: (site.parameter_rules ?? []).join("\n"),
+    word_floors: Object.entries(site.word_floors ?? {}).map(([t, n]) => `${t} | ${n}`).join("\n"),
+    mandatory_formats: Object.entries(site.mandatory_formats ?? {})
+      .map(([t, fs]) => `${t} | ${fs.join(", ")}`).join("\n"),
+    authors: (site.authors ?? []).map((a) => `${a.name} | ${a.credentials ?? ""}`).join("\n"),
+    proof_assets: (site.proof_assets ?? []).map((a) => `${a.name} | ${a.detail ?? ""}`).join("\n"),
+    competitors: (site.competitors ?? []).join("\n"),
+    keyword_data: Object.entries(site.keyword_data ?? {}).map(([k, v]) => `${k} | ${v}`).join("\n"),
+    top10_corpus: Object.entries(site.top10_corpus ?? {}).map(([k, v]) => `${k} | ${v}`).join("\n"),
+    publish_history: Object.entries(site.publish_history ?? {}).map(([k, v]) => `${k} | ${v}`).join("\n"),
   });
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1499,6 +1526,25 @@ function SiteRecordForm({ site, onSaved }: { site: SiteRecord; onSaved: () => vo
         cdn_or_waf: f.cdn_or_waf.trim(),
         third_party_map: Object.fromEntries(pairsOf(f.third_party_map, "host", "purpose")
           .filter((p) => p.host).map((p) => [p.host.toLowerCase(), p.purpose])),
+        intended_noindex: linesOf(f.intended_noindex),
+        migration_map: Object.fromEntries(pairsOf(f.migration_map, "from", "to")
+          .filter((p) => p.from && p.to).map((p) => [p.from, p.to])),
+        parameter_rules: linesOf(f.parameter_rules),
+        word_floors: Object.fromEntries(pairsOf(f.word_floors, "type", "words")
+          .map((p) => [p.type, Number(p.words)])
+          .filter(([t, n]) => t && Number.isFinite(n) && (n as number) > 0)),
+        mandatory_formats: Object.fromEntries(pairsOf(f.mandatory_formats, "type", "formats")
+          .filter((p) => p.type)
+          .map((p) => [p.type, p.formats.split(",").map((s) => s.trim()).filter(Boolean)])),
+        authors: pairsOf(f.authors, "name", "credentials").filter((a) => a.name),
+        proof_assets: pairsOf(f.proof_assets, "name", "detail").filter((a) => a.name),
+        competitors: linesOf(f.competitors),
+        keyword_data: Object.fromEntries(pairsOf(f.keyword_data, "k", "v")
+          .filter((p) => p.k).map((p) => [p.k, p.v])),
+        top10_corpus: Object.fromEntries(pairsOf(f.top10_corpus, "k", "v")
+          .filter((p) => p.k).map((p) => [p.k, p.v])),
+        publish_history: Object.fromEntries(pairsOf(f.publish_history, "k", "v")
+          .filter((p) => p.k).map((p) => [p.k, p.v])),
       });
       setNote("saved");
       onSaved();
@@ -1639,6 +1685,36 @@ function SiteRecordForm({ site, onSaved }: { site: SiteRecord; onSaved: () => vo
         {field("Third-party map", "third_party_map",
                "host | what it is for — one per line; a host named here is not reported as unexplained",
                true)}
+        {/* Item 277 (row 4): what the Indexability analysis holds three
+            checks for. Each is a line per entry, as the map above is. */}
+        {field("Intended noindex", "intended_noindex",
+               "paths or patterns noindexed on purpose, one per line, e.g. /webdesign/*/ — "
+               + "noindex-intent is held until this is set", true)}
+        {field("Migration map", "migration_map",
+               "old path | new path, one per line — redirect-map-correctness is held without it",
+               true)}
+        {field("Parameter rules", "parameter_rules",
+               "one rule per line, e.g. utm_* strip, page keep — parameter-policy proposes one until set",
+               true)}
+        {/* The Content briefs' inputs (screen audits round 3, Admin AC-01):
+            the content pages name them as what is needed, and the engine
+            sends the operator to "authors". */}
+        {field("Word floors", "word_floors",
+               "page type | words, one per line, e.g. service | 400 — the engine's floors apply otherwise", true)}
+        {field("Mandatory formats", "mandatory_formats",
+               "page type | formats, e.g. service | FAQ, pricing table", true)}
+        {field("Authors", "authors",
+               "name | credentials, one per line — what a replacement may cite", true)}
+        {field("Proof assets", "proof_assets",
+               "name | detail, one per line — case studies, awards, certifications", true)}
+        {field("Competitors", "competitors",
+               "one domain per line — Benchmark is held until set", true)}
+        {field("Keyword data", "keyword_data",
+               "keyword | volume or note, one per line — Benchmark is held until set", true)}
+        {field("Top 10 corpus", "top10_corpus",
+               "query | ranking URLs, one per line — Benchmark is held until set", true)}
+        {field("Publish history", "publish_history",
+               "period | what was published, one per line — Benchmark is held until set", true)}
         <label className="site-field">
           <span className="sel-lbl">Active probing authorised</span>
           {/* Brief v20 step BD: recorded only. Saying so beside the control
@@ -2000,7 +2076,7 @@ export function AdminView() {
             models it re-prices. */}
         <h4>Maintenance</h4>
         <p>
-          {/* UX-66, the convention `views.tsx`'s `ReportView` states in full. */}
+          {/* UX-66, the convention `reports.tsx`'s `GenerateCard` states in full. */}
           <DangerButton busy={busy === "cache"} why={busy !== null && busy !== "cache" ? "another task is running" : null}
                         confirm={{ title: "Clear every cached analyst and expert result?",
                                    body: <p>Nothing is lost that cannot be recomputed, but re-running
@@ -2019,7 +2095,7 @@ export function AdminView() {
           </span>
         </p>
         <p>
-          {/* UX-66, the convention `views.tsx`'s `ReportView` states in full. */}
+          {/* UX-66, the convention `reports.tsx`'s `GenerateCard` states in full. */}
           <SecondaryButton onClick={backup} disabled={busy !== null}
                   aria-busy={busy === "backup"}>
             Back up database now

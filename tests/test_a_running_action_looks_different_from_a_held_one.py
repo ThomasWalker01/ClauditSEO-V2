@@ -117,9 +117,12 @@ def test_every_busy_sentence_is_drawn_as_working():
         "these status regions say an action is in flight in the muted ink of "
         "the provenance line beside them, which is the look item 204 retired: "
         f"wrap the busy words in <Working>. {bare}")
-    assert len(wrapped) >= 38, (
+    # 37 since item 256 deleted `views.tsx`'s `ReportView`, the per-run report
+    # screen, whose "Generating the report…" region was the sweep's 38th;
+    # 36 since item 264 deleted the site Workbench and its launching region.
+    assert len(wrapped) >= 36, (
         f"only {len(wrapped)} busy regions were found at all, against the "
-        f"sweep's 38; the scanner has stopped matching: {wrapped}")
+        f"sweep's 36; the scanner has stopped matching: {wrapped}")
 
 
 def test_the_ring_is_for_buttons_and_the_mark_is_for_words():

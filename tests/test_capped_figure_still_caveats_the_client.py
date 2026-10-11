@@ -80,6 +80,11 @@ LAST_KEPT = 700000 + FIGURES_TO_VERIFY_CAP
 _REAL_CHECKS = sorted(c.split("/")[-1] for c in check_costs())
 
 
+
+#: Item 278 (row 11): these clauses moved to `migration-redirects`, which
+#: refuses to run without the one input the crawl cannot produce.
+MIGRATION_MAP = {"REDIRECT_MAP": "/old/ -> /"}
+
 def _code(n: int) -> str:
     """The nth id. Distinct per n, which is all the fixture needs of it —
     `_merge_by_code` collapses a repeated code, and the cap could then
@@ -131,7 +136,7 @@ def _db(tmp_path, ev):
 #: below quotes a genuinely *grounded* figure rather than one the extractor
 #: happens to treat as vocabulary.
 #:
-#: It goes in a crawled URL, measured rather than assumed: the `local-signals`
+#: It goes in a crawled URL, measured rather than assumed: the `migration-redirects`
 #: host's context lists every crawled page with its title, H1 and word count, and no page body text
 #: (the page table, `SITE_URL_OR_PAGE_LIST`). A number the
 #: crawl reached as part of a URL is therefore grounded; one in the title or the
@@ -154,8 +159,8 @@ def brief_site(make_site):
     head = ('<title>Fixture Home Page Title</title>'
             '<meta name="viewport" content="width=device-width">'
             '<link rel="canonical" href="/">')
-    # `GROUNDED` lives in a crawled URL, which is what the local-signals host's
-    # context echoes (its page table). Linked from the home page so the crawl
+    # `GROUNDED` lives in a crawled URL, which is what the migration-redirects host's
+    # context echoes (its new-URL inventory). Linked from the home page so the crawl
     # reaches it; the number then appears in the rendered context and a figure
     # quoting it is grounded rather than flagged.
     home = (f"<html><head>{head}</head><body><h1>Home</h1>"
@@ -181,7 +186,7 @@ def crawled(brief_site):
 def _run(tmp_path, crawled, report, *, use_cache=True, conn=None, run_id=None):
     """The real production path, in the real order: record then store.
 
-    Hosted on the legacy `local-signals` brief, not `crawl`: `_report` is the
+    Hosted on the legacy `migration-redirects` brief (it moved off `local-signals` when item 278 row 11 rewrote that one to the contract), not `crawl`: `_report` is the
     legacy pipe-index shape, and `crawl` (which superseded crawl-health) is a
     contract brief that reads a JSON block instead. The cap-and-caveat feature
     under test is generic; the legacy path it exercises is still live for the
@@ -193,9 +198,9 @@ def _run(tmp_path, crawled, report, *, use_cache=True, conn=None, run_id=None):
     if conn is None:
         conn, run_id = _db(tmp_path, crawled)
     cfg = dataclasses.replace(Settings(), anthropic_api_key="")
-    out = run_expert(conn, run_id, "local-signals", crawled,
+    out = run_expert(conn, run_id, "migration-redirects", crawled,
                      Site(domain="fixture.local"), cfg, StubExpert(report),
-                     use_cache=use_cache)
+                     use_cache=use_cache, operator_inputs=MIGRATION_MAP)
     assert out["status"] == "ok", out
     return conn, run_id, out
 
@@ -205,7 +210,7 @@ def _flags(conn, run_id) -> dict[str, bool]:
     return {r["check_id"]: json.loads(r["evidence"] or "{}").get("figure_unverified")
             for r in conn.execute(
                 "SELECT check_id, evidence FROM findings WHERE run_id=?"
-                " AND dimension='EXP:local-signals'", (run_id,))}
+                " AND dimension='EXP:migration-redirects'", (run_id,))}
 
 
 def test_a_figure_the_cap_dropped_is_still_marked_unverified(tmp_path, crawled):
@@ -246,6 +251,11 @@ def test_the_dropped_figure_carries_its_caveat_into_the_client_document(
     try:
         site_id = conn.execute("SELECT site_id FROM audit_runs WHERE id=?",
                                (run_id,)).fetchone()["site_id"]
+        # A legacy brief's finding waits for the operator (item 250): it
+        # reaches a client document once confirmed.
+        from clauditseo.persistence import runs as _runs
+        for _fp in _runs.awaiting_confirmation(conn, site_id):
+            _runs.set_state(conn, site_id, _fp, "open")
         section, _ = _expert_section(conn, tool_runs_for(conn, site_id), site_id, "client")
         line = next((ln for ln in section.splitlines()
                      if DROPPED_CODE in ln), None)

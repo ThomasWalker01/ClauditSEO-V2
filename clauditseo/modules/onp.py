@@ -105,6 +105,8 @@ DEFAULT_SEVERITY: dict[str, Severity | dict[str, Severity]] = {
     "img-duplicate-links": Severity.MEDIUM,
     "img-link-alt-not-destination": Severity.MEDIUM,
     "img-alt-decorative-nonempty": Severity.LOW, "img-filename-generic": Severity.LOW,
+    # Item 272 (row 11): alt text that says nothing a reader can use.
+    "img-alt-filename": Severity.LOW,
     "img-sitemap-missing": Severity.LOW,
     # The one header image that is not decorative (brief v16 step AU6).
     # One row per site, carrying every sub-finding one replacement closes.
@@ -217,7 +219,10 @@ CROSS_PAGE_CHECKS: frozenset[str] = frozenset({
 BRIEF_ONLY_CHECKS = ("title-entity-alignment", "h1-triple-restated", "h1-title-verbatim",
                      "h1-brand-repeated", "h1-hook", "h2-support", "h2-location-service",
                      "h2-overstuffed", "h2-question-unanswered", "h3-sub-service", "h3-geo-map",
-                     "img-oversized", "img-weight-budget", "img-sizes-wrong",
+                     # Item 272 (row 9): `img-oversized` and `img-weight-budget`
+                     # are no longer here - the browser pass raises both, so
+                     # they are free checks the brief's rows merge onto.
+                     "img-sizes-wrong",
                      "img-text-in-image", "img-link-alt-not-destination",
                      "img-sitemap-missing",
                      # The Structured data checks no crawl can answer (brief
@@ -291,6 +296,26 @@ _LEGACY_FORMATS = {"jpg", "jpeg", "png", "gif", "bmp", "tiff"}
 #: An icon by its own declared size: too small to carry meaning, so an alt
 #: that describes it is noise between a screen reader and the page.
 _ICON_PX = 48
+
+
+#: Alt text page builders write when nobody did (item 272, row 11).
+BUILDER_ALTS = frozenset({"frames (bricks)", "bricks", "elementor", "divi", "wpbakery",
+                          "image", "img", "photo", "picture", "placeholder"})
+
+
+def _alt_says_nothing(alt: str, src: str) -> str | None:
+    """Why an image's alt says nothing, or None: it is the file's name in
+    words ("IMG 4821", "team photo final"), or a builder's default
+    ("Frames (Bricks)"). Folded for case and punctuation."""
+    fold = lambda s: " ".join(re.findall(r"[a-z0-9]+", (s or "").lower()))
+    said = fold(alt)
+    if not said:
+        return None
+    if said in BUILDER_ALTS or (alt or "").strip().lower() in BUILDER_ALTS:
+        return "a page builder's default"
+    if said == fold(_src_stem(src)):
+        return "the file's name"
+    return None
 
 
 def _src_stem(src: str) -> str:
@@ -2398,6 +2423,16 @@ class OnPageModule:
                            evidence={"stem": _src_stem(src), "basis": "the filename"},
                            recommendation="Rename the file after what the image shows, in the words "
                            "the page is about.")
+                said_nothing = (None if icon
+                                else _alt_says_nothing(image.get("alt") or "", src))
+                if said_nothing:
+                    raise_(check_id="img-alt-filename",
+                           summary=f"{src} on {f.path} has alt text that is {said_nothing}: "
+                                   f"\u201c{image.get('alt')}\u201d.",
+                           evidence={"alt": image.get("alt"), "stem": _src_stem(src),
+                                     "basis": "the markup's alt against the filename"},
+                           recommendation="Write alt text that says what the image shows, in "
+                           "the page's own words, or alt=\"\" where it is decoration.")
                 if icon and (image.get("alt") or "").strip():
                     raise_(check_id="img-alt-decorative-nonempty",
                            summary=f"{src} on {f.path} is decorative and carries alt text.",

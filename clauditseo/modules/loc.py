@@ -60,6 +60,21 @@ LOCAL_BUSINESS_TYPES = {
 }
 
 
+#: Item 278 (row 11): the five free checks, registered so the local brief may
+#: name them and the contract can read their defaults. The severities are the
+#: ones the emitters below have always used.
+DEFAULT_SEVERITY: dict[str, Severity] = {
+    "nap-missing": Severity.MEDIUM,
+    "nap-inconsistent": Severity.MEDIUM,
+    "localbusiness-schema-missing": Severity.MEDIUM,
+    "opening-hours-missing": Severity.LOW,
+    "thin-location-page": Severity.LOW,
+}
+#: No LOC check is brief-only yet: model-only local checks are the operator's
+#: to name (item 278, row 11).
+BRIEF_ONLY_CHECKS: frozenset[str] = frozenset()
+
+
 def is_local_business(type_value: Any) -> bool:
     """Whether a JSON-LD @type is a LocalBusiness or one of its subtypes."""
     name = str(type_value).rsplit("/", 1)[-1].strip().lower()

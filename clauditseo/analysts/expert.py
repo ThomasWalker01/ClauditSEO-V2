@@ -21,6 +21,7 @@ rather than to invent the missing input.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sqlite3
 from pathlib import Path
@@ -32,6 +33,8 @@ from clauditseo.config import Settings
 from clauditseo.engine.types import evidence_hash
 from clauditseo.money import money
 from clauditseo.providers.google import CONFIRMED as PLACES_CONFIRMED
+
+log = logging.getLogger(__name__)
 from clauditseo.reporting.render import provenance_tag
 
 PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"
@@ -1928,6 +1931,11 @@ def _links_context(ev: dict, site: Any, conn=None, run_id: str | None = None,
     graph = inlinks(ev)
     by_url = {r["url"]: r for r in ev.get("pages", [])}
 
+    # Item 271 (row 13): each page's triple from the site record - brand,
+    # GBP primary category, the page's location entity - which the crawl
+    # does not store. Every row read "-" and the model held `anchor-entity`
+    # on every page, paid for to say the record was empty.
+    triple_of = _record_triples(site, start)
     page_rows = []
     for record in html_records(ev):
         depth = record.get("click_depth")
@@ -1937,7 +1945,7 @@ def _links_context(ev: dict, site: Any, conn=None, run_id: str | None = None,
             record.get("page_type") or "-",
             record.get("h1") or ABSENT,
             record.get("title") or ABSENT,
-            record.get("triple") or "-",
+            record.get("triple") or triple_of(record["url"]) or "-",
             depth if depth is not None else "unreachable",
             ", ".join(terms) or "-",
             len(graph.get(record["url"], [])),
@@ -2084,6 +2092,21 @@ def locale_certainty(records: list[dict]) -> str:
     return "single"
 
 
+def locale_facts(records: list[dict]) -> dict:
+    """What `locale_evidence` says, as fields (item 274, row 12): the screen
+    draws these as Observed rather than a block of the brief's prose."""
+    return {
+        "pages_inspected": len(records),
+        "lang_values": sorted({(r.get("lang") or "").strip().lower()
+                               for r in records if (r.get("lang") or "").strip()}),
+        "lang_undeclared": sum(1 for r in records if not (r.get("lang") or "").strip()),
+        "locale_folders": sorted({seg for r in records
+                                  for seg in [urlsplit(r["url"]).path.strip("/").split("/")[0]]
+                                  if seg and _LOCALE_SEGMENT.match(seg)}),
+        "alternates_on": sum(1 for r in records if r.get("hreflang")),
+    }
+
+
 def locale_evidence(records: list[dict], start_url: str) -> tuple[str, bool]:
     """What the crawl says about how many locales this site presents, and
     whether that is more than one.
@@ -2191,7 +2214,9 @@ def _hreflang_context(ev: dict, site: Any, conn=None, run_id: str | None = None,
                       f"{len(_pages)} pages fetched"),
         "LOCALE": getattr(site, "locale", None) or ABSENT,
         "SITE_URL": ev["start_url"],
-        "TARGET_LOCALES": ABSENT,
+        # The record's stated locales (migration 0074); a run's own input
+        # still overrides it.
+        "TARGET_LOCALES": getattr(site, "target_locales", None) or ABSENT,
         "ARCHITECTURE": ABSENT + " (not stated; infer only from the URLs supplied)",
         "IMPLEMENTATION_METHOD": ("HTML head (observed)" if rows else ABSENT),
         "SAMPLE_MARKUP_OR_URLS": markup,
@@ -2253,6 +2278,10 @@ def _hreflang_applies(ev: dict, context: dict[str, str], **_) -> str | None:
     if certainty == "unknown":
         return {
             "state": "not_assessed",
+            # Item 274 (row 12): one sentence for the lines that quote the
+            # gate, and the evidence as fields for the card.
+            "why": "whether hreflang applies could not be determined: no page declares a language",
+            "evidence": locale_facts(records),
             "reason": ("Whether hreflang applies could not be determined, so "
                        "the analysis was not dispatched and nothing was billed "
                        "for it. This is NOT a finding that the site is "
@@ -2265,6 +2294,8 @@ def _hreflang_applies(ev: dict, context: dict[str, str], **_) -> str | None:
         }
     return {
         "state": "na",
+        "why": "hreflang does not apply: this site presents one locale",
+        "evidence": locale_facts(records),
         "reason": ("hreflang does not apply to this site, so the analysis was not "
                    "dispatched and nothing was billed for it.\n\n" + evidence_text
                    + "\n\nTwo things would change this answer: a target locale "
@@ -2457,7 +2488,8 @@ def _title_desc_context(ev: dict, site: Any, conn=None, run_id: str | None = Non
                                       or [f"ONP/{c}" for c in TITLE_DESC_CHECKS]) + chr(10) + sweep
 
     brand, brand_assumption = _brand_of(records, site)
-    from clauditseo.modules.onp import DESC_MAX, DESC_MIN, TITLE_MAX, TITLE_MIN
+    from clauditseo.modules.onp import (DESC_MAX, DESC_MIN, DESC_PX, TITLE_MAX, TITLE_MIN,
+                                        TITLE_PX_MOBILE)
     rec = _site_record_inputs(site)
     return {
         "RUN_ID": run_id or "this run",
@@ -2474,6 +2506,11 @@ def _title_desc_context(ev: dict, site: Any, conn=None, run_id: str | None = Non
         # interpolates` holds it.
         "TITLE_MIN": str(TITLE_MIN), "TITLE_MAX": str(TITLE_MAX),
         "DESC_MIN": str(DESC_MIN), "DESC_MAX": str(DESC_MAX),
+        # The widths the sweep cuts at and the reader gates replacements on
+        # (screen audits round 3, title-desc AC-05, AC-07): the brief stated
+        # the maxima in characters, and replacements that fit the characters
+        # and not the pixels were dropped with the finding they answered.
+        "TITLE_PX": str(TITLE_PX_MOBILE), "DESC_PX": str(DESC_PX),
         **rec,
         # Not a placeholder: what the engine assumed filling the ones above,
         # carried onto the contract's assumptions (brief v11 step AI).
@@ -2562,6 +2599,31 @@ def _site_record_inputs(site: Any) -> dict[str, str]:
 
 
 HEADINGS_CHECKS = ("h1-missing", "h1-multiple", "heading-skip")
+
+
+def _record_triples(site: Any, start: str):
+    """A page's triple from the site record alone (item 271, row 13):
+    "brand · category · location", where the record holds a category or the
+    page's location entity; None where it holds neither, so the row says the
+    record is empty rather than inventing one."""
+    brand = getattr(site, "brand", None) or ""
+    category = getattr(site, "gbp_primary_category", None) or ""
+    locations: dict[str, str] = {}
+    for l in getattr(site, "location_pages", None) or []:
+        try:
+            if isinstance(l, dict) and l.get("location_entity"):
+                key = (urlsplit(l.get("url", "")).path or "/").rstrip("/") or "/"
+                locations[key] = str(l["location_entity"])
+        except ValueError:
+            continue
+
+    def triple_of(url: str) -> str | None:
+        path = (urlsplit(url).path or "/").rstrip("/") or "/"
+        place = locations.get(path, "")
+        if not category and not place:
+            return None
+        return " · ".join([brand or "-", category or "-", place or "-"])
+    return triple_of
 
 
 def _page_triples(conn, site: Any, records: list[dict], start: str) -> tuple[str, str | None]:
@@ -2755,7 +2817,12 @@ IMAGES_CHECKS = ("img-alt-missing", "img-alt-decorative-nonempty",
                  # step AU6), and one image too heavy for what it shows
                  # (step AU7). Both arrived after the fifteen, and are
                  # listed after them for that reason rather than sorted in.
-                 "img-logo", "img-heavy")
+                 "img-logo", "img-heavy",
+                 # Alt text that is the filename or a placeholder (item 272,
+                 # row 11): a free check with no row, clean line or "not
+                 # measured" line until the brief listed it (screen audits
+                 # round 3, Images IP-12).
+                 "img-alt-filename")
 
 
 def _inventory_rows(record: dict) -> list[list]:
@@ -3370,18 +3437,40 @@ def _site_nap_summary(ev: dict) -> str:
             "retained by the crawl] rather than missing.")
 
 
-def _local_signals_context(ev: dict, site: Any, **_) -> dict[str, str]:
+#: A phone number as an Australian NAP line writes one: +61, a 0X area or
+#: mobile prefix, or 13/1300/1800.
+_NAP_PHONE = re.compile(r"(\+61[\d\s()-]{8,}\d|\(0\d\)[\d\s-]{6,}\d|\b0\d[\d\s()-]{7,}\d|\b1[38]00[\d\s]{5,}\d|\b13[\d\s]{4,}\d)")
+
+
+def _local_signals_context(ev: dict, site: Any, conn=None, run_id: str | None = None,
+                           **_) -> dict[str, str]:
+    # Item 278 (row 11): conforming. The run, and the sweep's own rows the
+    # analysis reads first; an absent input is a hold naming it, never a
+    # value the model infers.
+    nap = (getattr(site, "nap", None) or "").strip()
+    phone = _NAP_PHONE.search(nap) if nap else None
     return {
+        "RUN_ID": run_id or ABSENT,
+        "SWEEP_FINDINGS": _sweep_rows(
+            conn, run_id, "LOC",
+            ("nap-missing", "nap-inconsistent", "localbusiness-schema-missing",
+             "opening-hours-missing", "thin-location-page"),
+            ev.get("start_url") or ""),
         "SITE_URL_OR_PAGE_LIST":
             _local_page_table(ev) + "\n\n" + _site_nap_summary(ev),
-        "BUSINESS_NAME": ABSENT + " — no canonical name of record was supplied, so "
-                                  "infer the most frequent variant and flag it",
-        "ADDRESS": ABSENT,
-        "PHONE": ABSENT + " — the published variants are listed in the page evidence",
+        "BUSINESS_NAME": getattr(site, "brand", None) or ABSENT,
+        # From the site record where Admin > Sites holds it (screen audits
+        # round 3, Local US-03): hard-wired absent, the brief's canonical
+        # judgement could never run on any site.
+        "ADDRESS": (f"the NAP of record, as entered: {nap}" if nap else ABSENT),
+        "PHONE": (phone.group(0).strip() if phone else ABSENT),
         "BUSINESS_TYPE": getattr(site, "business_type", None) or ABSENT,
-        "TARGET_LOCATIONS": ABSENT,
-        "OPENING_HOURS": ABSENT + " — compare only what the site and its schema state",
-        "PLATFORM": ABSENT,
+        "TARGET_LOCATIONS": (getattr(site, "locations", None)
+                             or getattr(site, "service_area_entity", None) or ABSENT),
+        # The site record has no hours field; the brief compares what the
+        # site and its schema state.
+        "OPENING_HOURS": ABSENT,
+        "PLATFORM": getattr(site, "platform", None) or ABSENT,
         "LOCALE": getattr(site, "locale", None) or getattr(site, "target_market", None)
                   or "Australia, en-AU",
     }
@@ -3441,6 +3530,19 @@ def _places_block(profile: dict | None) -> str:
         "This is the PUBLIC view. Posts, Q&A, photos, attributes, the business "
         "description and verification status are not visible through it and "
         "remain unassessed unless supplied.")
+
+
+def _with_run_id(build):
+    """A builder that also supplies `{{RUN_ID}}` (item 278, row 11): the
+    three Local briefs being rewritten to the contract write it in Block 1,
+    and a conforming brief's placeholder the engine does not fill is a load
+    error. Wrapped rather than threaded through each builder's several
+    returns."""
+    def built(ev: dict, site: Any, run_id: str | None = None, **kw) -> dict[str, str]:
+        return {"RUN_ID": run_id or ABSENT, **build(ev, site, run_id=run_id, **kw)}
+    built.__name__ = build.__name__
+    built.__doc__ = build.__doc__
+    return built
 
 
 def _gbp_audit_context(ev: dict, site: Any, places: dict | None = None,
@@ -3864,7 +3966,7 @@ EXPERT_TOOLS: dict[str, dict[str, Any]] = {
     # fixed set of pillars.
     "gbp-audit": {"prompt": "gbp-audit.md", "scope": "site",
                   "tier": "standard",
-                  "build": _gbp_audit_context,
+                  "build": _with_run_id(_gbp_audit_context),
                   "inputs": [
                       {"key": "PLACE_QUERY", "label": "Google listing search",
                        "hint": "how to find the Business Profile if the bare "
@@ -3904,7 +4006,7 @@ EXPERT_TOOLS: dict[str, dict[str, Any]] = {
     # Standard: comparison of supplied listings against a canonical record.
     "citations-nap": {"prompt": "citations-nap.md", "scope": "site",
                       "tier": "standard",
-                      "build": _citations_nap_context,
+                      "build": _with_run_id(_citations_nap_context),
                       "inputs": [
                           {"key": "PLACE_QUERY", "label": "Google listing search",
                            "hint": "how to find the Business Profile if the bare "
@@ -3939,7 +4041,7 @@ EXPERT_TOOLS: dict[str, dict[str, Any]] = {
     # brief requires be verified or explicitly marked unverified.
     "review-signals": {"prompt": "review-signals.md", "scope": "site",
                        "tier": "deep",
-                       "build": _review_signals_context,
+                       "build": _with_run_id(_review_signals_context),
                        "inputs": [
                            {"key": "PLACE_QUERY", "label": "Google listing search",
                             "hint": "how to find the Business Profile if the bare "
@@ -4489,6 +4591,20 @@ def _uncovered(conn: sqlite3.Connection, run_id: str, checks: list[str],
             for url in urls:
                 if (check, _path(url)) not in covered:
                     out.append({"check": check, "page": url, "in_page_set": _path(url) in in_set})
+    # Item 271 (row 4): a check owed per page an automatic check raised, and
+    # not returned for it, is uncovered on that page - logged with the run.
+    from .contract import REQUIRED_BY
+    for check in checks:
+        for trigger in REQUIRED_BY.get(check, ()):
+            dimension, _, check_id = trigger.partition("/")
+            for f in conn.execute(
+                    "SELECT affected_urls FROM findings WHERE run_id=? AND dimension=?"
+                    " AND check_id=? AND source='deterministic'", (run_id, dimension, check_id)):
+                for url in json.loads(f["affected_urls"] or "[]"):
+                    if (check, _path(url)) not in covered:
+                        covered.add((check, _path(url)))
+                        out.append({"check": check, "page": url, "owed_by": trigger,
+                                    "in_page_set": _path(url) in in_set})
     return out
 
 
@@ -4514,8 +4630,36 @@ def _image_name(src) -> str:
     return tail.rsplit("/", 1)[-1].lower()
 
 
+def _page_facts_for_rules(site: Any, evidence: dict | None) -> dict[str, dict] | None:
+    """Item 268 (row 7): each crawled page's type on the site record, its H1
+    and its title, for the Headings guards. None where there is no evidence."""
+    if not evidence:
+        return None
+    from clauditseo.modules.onp import _page_type_for
+    from .contract import _path as _contract_path
+    out: dict[str, dict] = {}
+    for p in evidence.get("pages") or []:
+        if not isinstance(p, dict) or not p.get("url"):
+            continue
+        heads = p.get("headings") or []
+        h1 = next((h[1] for h in heads if isinstance(h, (list, tuple)) and h and h[0] == 1), None)
+        out[_contract_path(p["url"])] = {"type": _page_type_for(site, p["url"]),
+                                         "h1": h1, "title": p.get("title")}
+    return out
+
+
+def _declared_paths(evidence: dict | None) -> set[str] | None:
+    """Item 275: the paths the run's sitemaps list, as the contract keys a
+    page; None where there is no evidence to read them from."""
+    if not evidence:
+        return None
+    from .contract import _path as _contract_path
+    return {_contract_path(u) for u in evidence.get("sitemap_entries") or [] if u}
+
+
 def contract_rules(site: Any, strategy: str | None = None, evidence: dict | None = None,
-                   conn: sqlite3.Connection | None = None, run_id: str | None = None):
+                   conn: sqlite3.Connection | None = None, run_id: str | None = None,
+                   tool_id: str | None = None):
     """The part's rules on a replacement (brief v12 step AL), from the
     registry's bounds and the site record: the strategy in force, the GBP
     primary category alignment is graded against, and the location entity
@@ -4523,6 +4667,7 @@ def contract_rules(site: Any, strategy: str | None = None, evidence: dict | None
     from clauditseo.modules.onp import (DESC_MAX, DESC_MIN, TITLE_NEIGHBOURHOOD_MAX,
                                         TITLE_TARGET_MAX, TITLE_TARGET_MIN)
     from .contract import Rules, _path
+    from clauditseo import briefs as _briefs_mod
     entities = {}
     for l in getattr(site, "location_pages", None) or []:
         if isinstance(l, dict) and l.get("url") and l.get("location_entity"):
@@ -4536,6 +4681,9 @@ def contract_rules(site: Any, strategy: str | None = None, evidence: dict | None
                  # SEC/csp-policy's origin rule (item 143 step BD). None where
                  # the evidence predates the inventory, which disables it.
                  resource_origins=_observed_origins(evidence),
+                 declared_paths=_declared_paths(evidence),
+                 page_facts=_page_facts_for_rules(site, evidence),
+                 read_only=(_briefs_mod.read_only_checks(tool_id) if tool_id else frozenset()),
                  site_host=(urlsplit((evidence or {}).get("start_url") or "").hostname or ""),
                  **_rename_facts(site, evidence),
                  **_sweep_facts(conn, run_id))
@@ -4556,7 +4704,15 @@ def _sweep_facts(conn: sqlite3.Connection | None, run_id: str | None) -> dict:
                           " AND source='deterministic'", (run_id,)):
         raised.setdefault(f["check_id"], set()).update(
             _path(str(u)) for u in json.loads(f["affected_urls"] or "[]"))
-    return {"sweep_raised": raised, "sweep_measured": set(json.loads(run["dimensions"] or "[]"))}
+    # Item 267: the free checks this run could not assess, from the run's own
+    # reader of that rule, so a brief's row on one is not refused as the
+    # sweep's. Full ids only: the reader names no dimension for a bare one.
+    from clauditseo.checks import FREE, check_costs
+    from clauditseo.persistence import runs as _runs
+    free = [c for c, cost in check_costs().items() if "/" in c and cost == FREE]
+    unassessed = _runs.not_assessed_payload(conn, run_id, checks_by_part={"all": free}).get("all", {})
+    return {"sweep_raised": raised, "sweep_measured": set(json.loads(run["dimensions"] or "[]")),
+            "sweep_unassessed": unassessed}
 
 
 def _rename_facts(site: Any, evidence: dict | None) -> dict:
@@ -4580,6 +4736,75 @@ def _observed_origins(evidence: dict | None) -> set[str] | None:
     if not isinstance(inventory, dict):
         return None
     return {h for hosts in inventory.values() if isinstance(hosts, dict) for h in hosts}
+
+
+def _read_report(conn: sqlite3.Connection, run_id: str, tool_id: str, report: str,
+                 evidence: dict, site: Any, context: dict
+                 ) -> tuple[str, list[dict], dict | None, list[dict]]:
+    """What the reader makes of a model's answer: the readable body, the
+    findings, and - for a brief that conforms - the contract.
+
+    One function for the two callers that must not disagree (item 249): the
+    run that has just been paid for, and the re-read of a stored answer under
+    the rules as they now stand. A rule in `contract.parse` or `enforce` that
+    changed after an analysis ran reached nothing stored, because only the
+    first caller existed and it runs once per purchase."""
+    unknown_rows: list[dict] = []
+    report, raised = parse_findings_block(
+        report, [p.get("url") for p in (evidence or {}).get("pages", [])
+                 if p.get("url")], drops=unknown_rows)
+    # The output contract (brief v10 step AF): a conforming brief's first
+    # fenced JSON block is its findings, judged row by row against the
+    # header's checks and the run's pages; a question-only answer is
+    # `needs-input`, not `read`. Its rows replace the legacy index and are
+    # stored under the sweep's own check ids below.
+    contract = None
+    if conforms(tool_id):
+        from . import contract as _contract
+        page_set = [p.get("url") for p in (evidence or {}).get("pages", [])
+                    if p.get("status") == 200 and p.get("url")]
+        from clauditseo.checks import default_severities
+        # The part's own rules on the replacements (brief v12 step AL),
+        # from the registry's bounds and the site record.
+        from clauditseo import briefs as _briefs_mod
+        parsed = _contract.parse(report, EXPERT_TOOLS[tool_id]["checks"], page_set,
+                                 defaults=default_severities(),
+                                 rules=contract_rules(site, evidence=evidence,
+                                                      conn=conn, run_id=run_id,
+                                                      tool_id=tool_id),
+                                 reads=list(getattr(_briefs_mod.by_id().get(tool_id),
+                                                    "reads", ()) or ()),
+                                 inputs={k: v for k, v in context.items()
+                                         if isinstance(v, str) and len(v) < 200})
+        if parsed.ai_surface is not None:
+            # Block 3 (item 145 BI): judged against the crawl, which only this
+            # path holds, before the body is taken as the readable report.
+            from . import ai_surface as _ais_block
+            build = str(context.get("LLMS_TXT_BUILD") or "").strip().lower() == "true"
+            _ais_block.police_llms_file(parsed, evidence, build)
+            _ais_block.police_absent_llms(parsed, build)
+        report = parsed.body
+        raised = _contract.legacy_findings(parsed.rows)
+        contract = parsed.as_dict()
+        # A generator writes a document and no rows, so nothing reaches
+        # `record_contract_findings` with an empty list that would read as
+        # a clean page (brief v17 step AX). `kind` is on the stored
+        # contract so every reader of it can tell the two apart without
+        # inferring from an absence.
+        if parsed.generator is not None:
+            contract["kind"] = "generator"
+        # What the engine assumed filling the inputs, ahead of what the
+        # model assumed (brief v11 step AI).
+        engine_assumed = context.get("_ENGINE_ASSUMPTIONS") or []
+        if engine_assumed:
+            contract["assumptions"] = list(engine_assumed) + list(contract["assumptions"])
+        # The pages the sweep raised for a check that the brief did not
+        # return (brief v11 step AH): named, with whether the page was in
+        # the set at all - an omission of a page in the set is a prompt
+        # defect to record, not a count to accept.
+        contract["uncovered"] = _uncovered(conn, run_id, EXPERT_TOOLS[tool_id]["checks"],
+                                           parsed.rows, page_set, parsed.not_assessable)
+    return report, raised, contract, unknown_rows
 
 
 def reparse_contract(conn: sqlite3.Connection, run_id: str, tool_id: str, site: Any) -> dict:
@@ -4615,9 +4840,11 @@ def reparse_contract(conn: sqlite3.Connection, run_id: str, tool_id: str, site: 
     from clauditseo.persistence.runs import get_evidence as _get_evidence
     _contract.enforce(parsed, contract_rules(site, parsed.strategy,
                                              evidence=_get_evidence(conn, run_id) or {},
-                                             conn=conn, run_id=run_id))
+                                             conn=conn, run_id=run_id, tool_id=tool_id))
+    from clauditseo.persistence.repo import now_iso
     contract.update({"rows": [r.as_dict() for r in parsed.rows], "dropped": parsed.dropped,
-                     "not_assessable": parsed.not_assessable, "reparsed": True})
+                     "not_assessable": parsed.not_assessable, "reparsed": True,
+                     "reparsed_at": now_iso()})
     from clauditseo.persistence.runs import get_evidence
     page_set = [p.get("url") for p in ((get_evidence(conn, run_id) or {}).get("pages") or [])
                 if p.get("status") == 200 and p.get("url")]
@@ -4630,6 +4857,152 @@ def reparse_contract(conn: sqlite3.Connection, run_id: str, tool_id: str, site: 
                       run_id, tool_id, stored.get("page_url") or ""))
     _store_contract(conn, run_id, tool_id, stored.get("model"), contract)
     return contract
+
+
+def reparse_report(conn: sqlite3.Connection, run_id: str, tool_id: str, site: Any,
+                   page_url: str = "") -> dict:
+    """Re-read one stored analysis under the reader as it now stands, without
+    a model call (item 249). Returns `{before, after, source}`.
+
+    From the model's own answer where it was kept (`raw`, migration 0055):
+    the whole reader runs again, so a rule in `parse` - where a template row
+    is filed, what kind a fix is - reaches the stored analysis as well as one
+    in `enforce`. Where there is no raw answer, or the reader cannot be given
+    the context it had (a page-scoped analysis, or one that needed inputs the
+    operator typed and the row does not keep), the stored rows are re-judged
+    by `enforce` alone, as `reparse_contract` always did.
+    """
+    row = conn.execute(
+        "SELECT raw, model_id, contract, truncated FROM expert_reports"
+        " WHERE run_id=? AND tool_id=? AND page_url=?", (run_id, tool_id, page_url or "")).fetchone()
+    if not row or not row["contract"]:
+        raise ValueError(f"{tool_id} has no stored contract against run {run_id}")
+    before = json.loads(row["contract"])
+    raw = (row["raw"] or "").strip()
+    from clauditseo.persistence.runs import get_evidence
+    evidence = get_evidence(conn, run_id) or {}
+    context = None
+    if (raw and not page_url and not row["truncated"] and conforms(tool_id)
+            and not missing_required_inputs(tool_id, None)):
+        try:
+            context = build_context(tool_id, evidence, site, None, conn=conn, run_id=run_id)
+        except Exception:                                   # noqa: BLE001
+            log.exception("reparse: no context for %s on %s; re-judging its rows", tool_id, run_id)
+            context = None
+    contract = None
+    if context:
+        report, raised, contract, _ = _read_report(conn, run_id, tool_id, raw, evidence,
+                                                   site, context)
+    from . import contract as _contract_mod
+    stamp = (_contract_mod.reader_version(), run_id, tool_id, page_url or "")
+    if contract is None:
+        after = reparse_contract(conn, run_id, tool_id, site)
+        with conn:
+            conn.execute("UPDATE expert_reports SET reader_version=? WHERE run_id=?"
+                         " AND tool_id=? AND page_url=?", stamp)
+        return {"before": before, "after": after, "source": "rows"}
+    from clauditseo.persistence.repo import now_iso
+    contract.update({"reparsed": True, "reparsed_from": "raw", "reparsed_at": now_iso()})
+    with conn:
+        conn.execute("UPDATE expert_reports SET report=?, contract=?, findings=?,"
+                     " reader_version=? WHERE run_id=? AND tool_id=? AND page_url=?",
+                     (report, json.dumps(contract), json.dumps(raised), *stamp))
+    _store_contract(conn, run_id, tool_id, row["model_id"], contract)
+    return {"before": before, "after": contract, "source": "raw"}
+
+
+def contract_changes(before: dict, after: dict) -> dict:
+    """What a re-read changed, row by row, for the report a re-parse prints.
+    A row is known by its check and its page; `moved` are rows whose page,
+    kind, severity or replacement differ."""
+    def key(r: dict) -> tuple:
+        return (r.get("check_id") or r.get("check"), r.get("page"), r.get("template"))
+
+    def face(r: dict) -> tuple:
+        return (r.get("severity"), r.get("kind"), r.get("replacement"), r.get("status"))
+
+    b = {key(r): r for r in before.get("rows") or [] if isinstance(r, dict)}
+    a = {key(r): r for r in after.get("rows") or [] if isinstance(r, dict)}
+    return {
+        "rows": (len(b), len(a)),
+        "dropped": (len(before.get("dropped") or []), len(after.get("dropped") or [])),
+        "not_assessable": (len(before.get("not_assessable") or []),
+                           len(after.get("not_assessable") or [])),
+        "gone": sorted(str(k) for k in b.keys() - a.keys()),
+        "new": sorted(str(k) for k in a.keys() - b.keys()),
+        "changed": sorted(f"{k}: {face(b[k])} -> {face(a[k])}"
+                          for k in b.keys() & a.keys() if face(b[k]) != face(a[k])),
+    }
+
+
+def reparse_site(conn: sqlite3.Connection, site_id: str, site: Any) -> list[dict]:
+    """Re-read every stored analysis of a site that carries a contract, then
+    rebuild its Latest View (item 249). One entry per analysis, in the order
+    they ran."""
+    out = []
+    rows = conn.execute(
+        "SELECT er.run_id, er.tool_id, er.page_url FROM expert_reports er"
+        " JOIN audit_runs r ON r.id = er.run_id"
+        " WHERE r.site_id=? AND er.contract IS NOT NULL ORDER BY er.created_at", (site_id,)).fetchall()
+    for r in rows:
+        if r["tool_id"] not in EXPERT_TOOLS:
+            continue
+        try:
+            got = reparse_report(conn, r["run_id"], r["tool_id"], site, r["page_url"] or "")
+        except Exception as exc:                            # noqa: BLE001
+            out.append({"run_id": r["run_id"], "tool_id": r["tool_id"],
+                        "error": f"{type(exc).__name__}: {exc}"[:200]})
+            continue
+        out.append({"run_id": r["run_id"], "tool_id": r["tool_id"], "source": got["source"],
+                    **contract_changes(got["before"], got["after"])})
+    if rows:
+        from clauditseo.persistence import latest_view
+        latest_view.rebuild(conn, site_id, "analyses re-read under the current rules (item 249)",
+                            {"analyses": len(out)})
+    return out
+
+
+def reparse_stale(conn: sqlite3.Connection, site_of) -> list[str]:
+    """Re-read the analyses whose reader has changed since they were read
+    (item 249): every site holding one stamped with another
+    `reader_version`. Called at startup, so a change to the reader's rules
+    reaches what is stored without a command and without a model call.
+
+    An analysis that was never stamped is left alone - it predates the
+    stamp, and `clauditseo reparse-contracts` is the one-off that reads and
+    stamps it. Returns the domains re-read."""
+    from clauditseo.persistence import repo
+    from . import contract as _contract_mod
+    try:
+        sites = conn.execute(
+            "SELECT DISTINCT r.site_id FROM expert_reports er"
+            " JOIN audit_runs r ON r.id = er.run_id"
+            " WHERE er.contract IS NOT NULL AND er.reader_version IS NOT NULL"
+            " AND er.reader_version != ?", (_contract_mod.reader_version(),)).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    unstamped = conn.execute(
+        "SELECT COUNT(*) FROM expert_reports WHERE contract IS NOT NULL"
+        " AND reader_version IS NULL").fetchone()[0]
+    if unstamped:
+        # Visible until the one-off has been run; never re-read from here,
+        # because the first re-read rewrites findings rows and states and
+        # the operator chooses when that happens.
+        log.warning("%d stored analys%s never been re-read under the current rules;"
+                    " run `clauditseo reparse-contracts` once to re-read %s",
+                    unstamped, "is has" if unstamped == 1 else "es have",
+                    "it" if unstamped == 1 else "them")
+    done = []
+    for (site_id,) in sites:
+        row = repo.get_site(conn, site_id)
+        if not row:
+            continue
+        try:
+            reparse_site(conn, site_id, site_of(repo.site_record(row)))
+            done.append(row["domain"])
+        except Exception:                                   # noqa: BLE001
+            log.exception("could not re-read the analyses of %s", row["domain"])
+    return done
 
 
 def _store_contract(conn: sqlite3.Connection, run_id: str, tool_id: str,
@@ -4890,60 +5263,8 @@ def run_expert(conn: sqlite3.Connection, run_id: str, tool_id: str,
                            else f"the model returned no report (stop: {response.stop})")}
 
     evidence_text = json.dumps(context, ensure_ascii=False)
-    unknown_rows: list[dict] = []
-    report, raised = parse_findings_block(
-        report, [p.get("url") for p in (evidence or {}).get("pages", [])
-                 if p.get("url")], drops=unknown_rows)
-    # The output contract (brief v10 step AF): a conforming brief's first
-    # fenced JSON block is its findings, judged row by row against the
-    # header's checks and the run's pages; a question-only answer is
-    # `needs-input`, not `read`. Its rows replace the legacy index and are
-    # stored under the sweep's own check ids below.
-    contract = None
-    if conforms(tool_id):
-        from . import contract as _contract
-        page_set = [p.get("url") for p in (evidence or {}).get("pages", [])
-                    if p.get("status") == 200 and p.get("url")]
-        from clauditseo.checks import default_severities
-        # The part's own rules on the replacements (brief v12 step AL),
-        # from the registry's bounds and the site record.
-        from clauditseo import briefs as _briefs_mod
-        parsed = _contract.parse(report, EXPERT_TOOLS[tool_id]["checks"], page_set,
-                                 defaults=default_severities(),
-                                 rules=contract_rules(site, evidence=evidence,
-                                                      conn=conn, run_id=run_id),
-                                 reads=list(getattr(_briefs_mod.by_id().get(tool_id),
-                                                    "reads", ()) or ()),
-                                 inputs={k: v for k, v in context.items()
-                                         if isinstance(v, str) and len(v) < 200})
-        if parsed.ai_surface is not None:
-            # Block 3 (item 145 BI): judged against the crawl, which only this
-            # path holds, before the body is taken as the readable report.
-            from . import ai_surface as _ais_block
-            _ais_block.police_llms_file(
-                parsed, evidence,
-                str(context.get("LLMS_TXT_BUILD") or "").strip().lower() == "true")
-        report = parsed.body
-        raised = _contract.legacy_findings(parsed.rows)
-        contract = parsed.as_dict()
-        # A generator writes a document and no rows, so nothing reaches
-        # `record_contract_findings` with an empty list that would read as
-        # a clean page (brief v17 step AX). `kind` is on the stored
-        # contract so every reader of it can tell the two apart without
-        # inferring from an absence.
-        if parsed.generator is not None:
-            contract["kind"] = "generator"
-        # What the engine assumed filling the inputs, ahead of what the
-        # model assumed (brief v11 step AI).
-        engine_assumed = context.get("_ENGINE_ASSUMPTIONS") or []
-        if engine_assumed:
-            contract["assumptions"] = list(engine_assumed) + list(contract["assumptions"])
-        # The pages the sweep raised for a check that the brief did not
-        # return (brief v11 step AH): named, with whether the page was in
-        # the set at all - an omission of a page in the set is a prompt
-        # defect to record, not a count to accept.
-        contract["uncovered"] = _uncovered(conn, run_id, EXPERT_TOOLS[tool_id]["checks"],
-                                           parsed.rows, page_set, parsed.not_assessable)
+    report, raised, contract, unknown_rows = _read_report(
+        conn, run_id, tool_id, report, evidence, site, context)
     if response.stop == "max_tokens" and not raised:
         # The index is written last, so a report that runs out of budget loses
         # it. An empty finding list would otherwise read as "nothing found".
@@ -5020,6 +5341,12 @@ def run_expert(conn: sqlite3.Connection, run_id: str, tool_id: str,
                 # because a brief that invents ids will go on inventing
                 # them and nobody would know.
                 "dropped_unknown_checks": unknown_rows, **payload}
+    # Which brief wrote it and which reader read it (item 249). On the
+    # envelope and not the cached payload: a replay under a later brief has
+    # a different cache key, and a replay read by a later reader is re-read.
+    from . import contract as _contract_mod
+    envelope["brief_version"] = brief_version(tool_id)
+    envelope["reader_version"] = _contract_mod.reader_version()
     from clauditseo.persistence.runs import store_expert_report
     store_expert_report(conn, run_id, tool_id, envelope,
                         page_url=getattr(extra.get("page"), "url", None),

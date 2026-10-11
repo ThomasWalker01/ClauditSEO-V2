@@ -4,6 +4,35 @@ All notable changes to ClauditSEO are recorded here. Dates are DD Month YYYY.
 
 ## Unreleased
 
+11 October 2026. A finding on a page that now answers an error is set aside
+(channel ruling 20261011-0745). An automatic page-level Links finding
+(`inlinks-low`, `orphan`, `depth-deep`, `anchor-generic`, `nofollow-internal`)
+whose pages all answered 400 or above on a run moves to a new state,
+`set-aside` (migration 0076), drawn "on an error page". It leaves the open
+counts, the Links column and the link suggestions. It is not a fix: if the
+page answers again and the check still fires, it reopens as open, never as
+regressed. `broken-internal` is never set aside, because the error is what it
+measures. Runs record the pages that answered an error, and a replay derives
+the same from the stored statuses.
+
+11 October 2026. Spend on a deleted run stays in the month (channel ruling
+20261011-0746). A run, site or client delete removed its cost rows, so the
+month's total, the per-client rows and the spending cap fell by money already
+billed. Every delete path now adds the rows' sums to a per-month tally first
+(migration 0075, `deleted_spend`, naming no client, site or run), which the
+month total and the cap include, and the Admin ledger shows as one "Deleted
+runs" row a month. The per-client ledger now groups by the operator's own
+month, as the total does. Spend deleted before this change is gone from the
+database and cannot be rebuilt.
+
+11 October 2026. The history chat is retired (channel ruling 20261011-0747).
+It was deterministic, and a question it did not recognise was answered with
+the latest run's score, drawn as a cited answer; its trend reading compared
+the first and last points without asking whether they were comparable; and
+nothing linked to it. Every answer it could give is on a screen with doors to
+the rows. `#/sites/<id>/chat` lands on the site, `POST /api/chat` is gone, and
+the Admin key no longer claims to enable it.
+
 Engine 0.10.0. A URL and the same URL with an ad platform's tracking tag on it
 are one page. `normalise_url` strips `utm_*`, `gclid`, `gbraid`, the `gad_*`
 pair and the other named ad-click keys before a link is enqueued, so a crawl

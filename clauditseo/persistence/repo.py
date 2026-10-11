@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import secrets
 import sqlite3
 import uuid
@@ -220,7 +221,10 @@ SITE_TEXT_FIELDS = ("brand", "gbp_primary_category", "service_area_entity", "tit
                     # The registered entity's legal name where it differs from
                     # `brand` (item 145 BH, migration 0063). Its two list
                     # companions are JSON and sit below.
-                    "legal_name")
+                    "legal_name",
+                    # The operator's stated target locales (migration 0074):
+                    # what lifts the hreflang gate on a one-locale crawl.
+                    "target_locales")
 SITE_JSON_FIELDS = ("neighbourhoods", "entity_variants", "sub_services", "location_pages",
                     "page_types", "breakpoints", "priority_internal_targets",
                     # Two lists and a map (brief v16 step AS), and the two
@@ -269,6 +273,26 @@ def edge_agents() -> tuple[str, ...]:
     the UA matrix sends (a robots token has no UA, so no edge can refuse it)."""
     from clauditseo.crawler.ua_matrix import UA_MATRIX_AGENTS
     return tuple(t for t, ua, c in UA_MATRIX_AGENTS if c != "search" and ua)
+
+
+#: One target locale: a language, optionally a region or script, or the
+#: fallback hreflang declares as `x-default`.
+LOCALE_TAG = re.compile(r"^(?:[a-z]{2,3}(?:-[A-Za-z]{4})?(?:-(?:[A-Z]{2}|[0-9]{3}))?|x-default)$")
+
+
+def locale_tags(value: str | None) -> list[str]:
+    """The stored list as tags, in order, without blanks or repeats; a region
+    is upper-cased and a language lower-cased, as hreflang writes them."""
+    out: list[str] = []
+    for raw in (value or "").replace(";", ",").split(","):
+        t = raw.strip().replace("_", "-")
+        if not t:
+            continue
+        parts = t.split("-")
+        t = "-".join([parts[0].lower()] + [p.upper() if len(p) == 2 else p for p in parts[1:]])
+        if t not in out:
+            out.append(t)
+    return out
 
 
 def edge_blocked_agents(value: str | None) -> set[str]:
@@ -377,6 +401,10 @@ SITE_TABLES = ("finding_states", "metric_snapshots", "reports", "notes", "preche
 def _delete_site_rows(conn: sqlite3.Connection, site_id: str) -> None:
     run_ids = [r["id"] for r in conn.execute(
         "SELECT id FROM audit_runs WHERE site_id=?", (site_id,))]
+    # The site's spend is kept in the month's tally first (channel ruling
+    # 20261011-0746); a client delete comes through here too.
+    from .spend import keep_deleted_spend
+    keep_deleted_spend(conn, run_ids)
     for run_id in run_ids:
         for table in RUN_TABLES:
             conn.execute(f"DELETE FROM {table} WHERE run_id=?", (run_id,))

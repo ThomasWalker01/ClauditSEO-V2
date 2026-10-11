@@ -21,6 +21,7 @@ import { SecondaryButton } from "./buttons";
 import React from "react";
 import { api, ApiError } from "./api";
 import { Pill } from "./pill";
+import { stamp as localStamp } from "./dates";
 
 export type ConfirmItem = {
   text: string;
@@ -124,7 +125,7 @@ export function ToConfirm({ text }: { text: string }) {
         </span>
         {/* UX-66. Stable caption, state on `aria-busy`, words in the
             unconditionally-mounted region beside it — the convention
-            `views.tsx`'s `ReportView` states in full. */}
+            `reports.tsx`'s `GenerateCard` states in full. */}
         <button className="link-btn confirmed-again"
                 disabled={running === probe} aria-busy={running === probe}
                 onClick={() => probe && run(probe)}
@@ -148,7 +149,7 @@ export function ToConfirm({ text }: { text: string }) {
   return (
     <span className="to-confirm to-confirm-runnable">
       {marker}
-      {/* UX-66, the convention `views.tsx`'s `ReportView` states in full. */}
+      {/* UX-66, the convention `reports.tsx`'s `GenerateCard` states in full. */}
       {/* Item 178: one connection, no model - free, so not the paid tone. */}
       <SecondaryButton className="to-confirm-run"
               disabled={running === probe} aria-busy={running === probe}
@@ -172,5 +173,5 @@ export function ToConfirm({ text }: { text: string }) {
 
 function when(stamp: string): string {
   const at = new Date(stamp);
-  return Number.isNaN(at.getTime()) ? stamp : at.toLocaleString();
+  return Number.isNaN(at.getTime()) ? stamp : localStamp(stamp);
 }

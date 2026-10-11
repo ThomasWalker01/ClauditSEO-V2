@@ -86,9 +86,7 @@ READY: dict[str, str] = {
     "client-urls": ".part-page .un-template",
     "client-speed": ".part-page .sp-card",
     "reports": ".stats-row",
-    "workbench": ".wb-checks",
     "launch": ".dim-grid",
-    "chat": ".inline-form",
     "dossier": ".dossier-url",
     "run": ".group-list",
     "run-page": ".url-links",
@@ -128,20 +126,20 @@ ROUTES = [
     ("client-urls", "#/sites/{site}?tab=findings&part=urls"),
     ("client-speed", "#/sites/{site}?tab=findings&part=speed"),
     ("reports", "#/sites/{site}/reports"),
-    ("workbench", "#/sites/{site}/workbench"),
     ("launch", "#/sites/{site}/launch"),
     # Added closing UX-06. `ROUTES` listed seven of the fourteen `App.tsx`
     # serves, and the test beside it iterated this list — so a screen added
     # without a line here could never fail anything, while the WCAG 2.2 AA
     # claim was made for the whole app. Three of the seven missing are where
     # UX-01, UX-02 and WF-05 live.
-    ("chat", "#/sites/{site}/chat"),
     ("dossier", "#/sites/{site}/dossier/{page}"),
     ("run", "#/runs/{run}"),
-    ("run-page", "#/runs/{run}/page/{page}"),
+    # `#/runs/{run}/page/{page}` redirects to the dossier since item 251, which
+    # the line above already sweeps.
     ("compare", "#/compare/{run}/{run2}"),
     ("deliverable", "#/client-reports/{report}"),
-    ("generate", "#/reports/{run}"),
+    # `#/reports/{run}` redirects to the site's Reports tab since item 251,
+    # which `reports` above already sweeps.
     # The same screen in the state the product cares most about. A blocked run
     # renders a different branch, and pointing `run` at a complete one leaves
     # that branch unpainted however many routes the list holds.
@@ -193,7 +191,8 @@ MUST_RENDER = {
     "score": "score badge",
     "stat": "headline number",
     "tone": "action pill",
-    "wb-status-ready": "tool status chip on the workbench",
+    # On Admin's model tiers since item 264 retired the site Workbench.
+    "wb-status-ready": "tool status chip on Admin's model tiers",
     # The tab row was retired at the site-screen plan's step 5; the strip
     # and the reference row are the navigation now, and both are listed.
     "ref-link": "a reference link — Pages, Notes — above the pane",
@@ -961,7 +960,6 @@ REVEAL = {
          (".page-find", True, "/promo"),               # the page, once
          ("@every-part", False)],                      # every category, with facts
     ],
-    "workbench": [[(".wb-head", True)]],
     # The analyses table is folded since brief v2 step G; the narrow-run
     # wording and the scores it holds are captured once it is open. Not on
     # the blocked site, which has no analysis and so no fold - its
@@ -1439,6 +1437,16 @@ ROUTES_NOT_SWEPT = {
     # redirect has no screen to audit. It is excused rather than removed from
     # the list, which is the distinction this pair already draws.
     "tools": "redirects to the site's Analyses catalogue, or to Home",
+    # Item 251 retired the page-detail screen. `#/runs/<id>/page/<url>` is
+    # kept as a redirect so a stored link lands on the page's dossier, which
+    # is swept above; a redirect has no screen of its own to audit.
+    "page": "redirects to the page's dossier",
+    # Item 264 retired the site Workbench the same way: `#/sites/<id>/workbench`
+    # lands on that site's Analyses tab, which is swept above.
+    "workbench": "redirects to the site's Analyses tab",
+    # The history chat is retired (channel ruling 20261011-0747) and its
+    # address lands on the site.
+    "chat": "redirects to the site",
 }
 
 #: `parts[0] === "<name>"` in App.tsx's dispatcher, which is how a hash route
@@ -1719,7 +1727,10 @@ def test_the_dialog_population_counts_dialogs_and_not_the_files_holding_them(
 #: 12 since item 141 (brief v19 step BB): the URLs & parameters part gained the
 #: ten free sweep checks, and the fixture's URLs trip some of them, so `urls`
 #: is now a non-empty category where before it held only brief-only checks.
-UNFILTERED_NON_EMPTY = 12
+#: 11 since items 278 and 279: the fixture's only open Accessibility row was
+#: `axe-sampled`, the rendered pass's sample, which is now a coverage note,
+#: so Accessibility holds two notes and no finding.
+UNFILTERED_NON_EMPTY = 11
 
 
 def test_the_findings_tree_is_swept_with_no_page_chosen(swept):
@@ -2241,7 +2252,20 @@ def test_a_brief_whose_figures_all_lapse_still_accounts_for_them(served):
     from playwright.sync_api import sync_playwright
 
     base, ids = served
+    # The page-level analyses live on the dossier since item 251; the old
+    # page-detail address redirects there, and is driven as a stored link.
     url = f"{base}/#/runs/{ids['run']}/page/{ids['page']}"
+    # The dossier lists the newest stored report of each page-level analysis
+    # FOR THIS PAGE (channel answer 20261002-1150), and the shared fixture
+    # stores its brief with no page at all - a shape no brief has been stored
+    # in since migration 0029. Filed on the page for this test and put back,
+    # because other files assert on the seed as it stands.
+    import sqlite3
+    from urllib.parse import unquote
+    seed = sqlite3.connect(ids["db"])
+    seed.execute("UPDATE expert_reports SET page_url=? WHERE run_id=? AND tool_id='content-brief'",
+                 (unquote(ids["page"]), ids["run"]))
+    seed.commit()
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         try:
@@ -2259,9 +2283,15 @@ def test_a_brief_whose_figures_all_lapse_still_accounts_for_them(served):
             painted = pg.eval_on_selector_all(
                 ".figures-withheld", "els => els.map(e => e.innerText)")
             items = pg.eval_on_selector_all(".figures-note li", "els => els.length")
+            landed = pg.evaluate("location.hash")
         finally:
             browser.close()
+            seed.execute("UPDATE expert_reports SET page_url='' WHERE run_id=?"
+                         " AND tool_id='content-brief'", (ids["run"],))
+            seed.commit()
+            seed.close()
 
+    assert "/dossier/" in landed, f"the stored page-detail link did not arrive at the dossier: {landed}"
     assert len(painted) == 1, (
         "the brief lost every flagged figure to the re-judge and the panel "
         f"said nothing about it; .figures-withheld matched {painted!r}")

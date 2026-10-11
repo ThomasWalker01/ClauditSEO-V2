@@ -800,15 +800,18 @@ def test_the_two_hop_card_draws_three_dots_and_says_why_it_is_bad(browser, serve
 def test_site_scope_draws_the_grid_and_page_scope_draws_one_card(browser, served):
     base, sites = served
     site = _read(browser, base, sites["full"])
-    assert site["cards"] == runs.CANONICAL_CHAINS_CAP
+    # Item 277 (row 11): a page with no canonical is a line, not a card, so
+    # the grid holds the capped chains less those.
+    assert 0 < site["cards"] <= runs.CANONICAL_CHAINS_CAP
     assert site["kinds"][0] == "cc-bad"
     assert "more chain" in site["more"]
     assert "canonicalise to themselves" in site["tally"]
-    assert site["legend"] == [
-        "self-canonical — as it should be",
-        "points elsewhere — check it is intended",
-        "ends on a page that cannot be indexed",
-        "parameter or slash variant"]
+    # The key names the kinds drawn, and only those.
+    words = dict([("cc-ok", "self-canonical — as it should be"),
+                  ("cc-warn", "points elsewhere — check it is intended"),
+                  ("cc-bad", "ends on a page that cannot be indexed"),
+                  ("cc-mute", "parameter or slash variant")])
+    assert site["legend"] == [w for k, w in words.items() if k in set(site["kinds"])]
     # The mute chains, read off the site grid. Until Q-54 they could only
     # be read there: the pane's page filter lists the pages the record
     # knows about, and a variant raised nothing, so it was in no filter.

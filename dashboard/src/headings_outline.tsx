@@ -339,6 +339,9 @@ export function closingLine(rows: SkipRow[]): string | null {
   const total = rows.reduce((n, r) => n + r.pages, 0);
   const top = rows[0];
   if (!top || !total || top.pages / total < DOMINANT) return null;
+  // Item 268 (row 6): the residual bucket is not a template, so there is no
+  // template to fix ("Fix the no shared template template ...").
+  if (top.prefix === "") return null;
   return `Fix the ${templateWord(top)} template and the count above `
          + `drops by ${top.pages} on the next audit.`;
 }
@@ -394,6 +397,7 @@ export function SkipsByTemplate({ shapes }: { shapes: HeadingShapes | null | und
   // Item 180 (ruling 20260918-0402): the pages this picture leaves out, named
   // once, rather than a silent difference between the picture and the table.
   const skipped = shapes.not_checked ?? [];
+  const errored = shapes.errored ?? [];
   return (
     <section className="ho-site">
       {head}
@@ -404,6 +408,18 @@ export function SkipsByTemplate({ shapes }: { shapes: HeadingShapes | null | und
           canonical points at another page, which is the one judged
           {" "}({skipped.slice(0, 3).join(", ")}
           {skipped.length > 3 ? ` and ${skipped.length - 3} more` : ""}).
+        </p>
+      )}
+      {/* Item 268 (row 5): and the pages that answered an error, which the
+          checks leave out too - the two pages the picture counted and the
+          record did not. */}
+      {errored.length > 0 && (
+        <p className="muted ho-not-checked">
+          {errored.length} page{errored.length === 1 ? "" : "s"}
+          {errored.length === 1 ? " answers" : " answer"} an error and
+          {errored.length === 1 ? " is" : " are"} not read by these checks
+          {" "}({errored.slice(0, 3).join(", ")}
+          {errored.length > 3 ? ` and ${errored.length - 3} more` : ""}).
         </p>
       )}
       <table className="ho-grid">

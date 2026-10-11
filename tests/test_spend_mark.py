@@ -233,7 +233,6 @@ def test_the_crawl_control_is_not_marked():
     # the part page's analysis and content brief, Speed's two depths (one map),
     # and Reports' Generate for the run report (the plan brief).
     ("admin.tsx", 1),
-    ("workbench.tsx", 1),
     ("part_page.tsx", 2),
     ("speed_now.tsx", 1),
     # Generate for the run report, and the $ on the Generate card's sentence

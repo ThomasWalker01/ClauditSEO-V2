@@ -300,7 +300,7 @@ Two blocks, in this order.
     {"domain": "A", "status": "assessed"},
     {"domain": "D", "status": "partial", "missing": "login-error probe — pending authorisation"},
     {"domain": "G", "status": "not assessed", "missing": "Safe Browsing key on the site record"},
-    {"domain": "H", "status": "not assessed", "missing": "active_probing_authorised = true"}
+    {"domain": "H", "status": "not assessed", "missing": "needs active probing, which this build never performs"}
   ],
   "transport": {"tls": ["1.2","1.3"], "legacy": false, "cert_expires": "2026-11-02", "chain_ok": true, "sans": ["…"], "redirect_hops": 1, "protocol": "h2", "mixed_content_pages": 0},
   "headers": [{"header": "content-security-policy", "present": false, "value": null, "verdict": "absent"}],
@@ -328,7 +328,7 @@ Two blocks, in this order.
   ],
   "do_not_spend_on": [{"control": "COOP/COEP", "why": "brochure site; no cross-origin isolation need; would break the Vimeo embed"}],
   "not_assessable": [
-    {"check": "SEC/open-ports", "domain": "H", "needs": "active_probing_authorised on the site record"},
+    {"check": "SEC/open-ports", "domain": "H", "needs": "active probing, which this build never performs"},
     {"check": "SEC/reputation", "domain": "G", "needs": "Safe Browsing key or GSC connection"}
   ],
   "assumptions": ["stack inferred nginx behind Cloudflare from server/cf-ray headers"]

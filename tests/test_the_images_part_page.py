@@ -301,11 +301,11 @@ def test_narrowed_the_grid_shows_every_image_and_a_fix_is_markup_before_and_afte
     assert not any(c["checks"] == ["ONP/img-weight-budget"] for c in got["cards"]), got["cards"]
     # Held for a list on the record: one line, not a card per page.
     assert any("img-sitemap-missing not assessable" in n for n in got["na"]), got["na"]
-    # And the one that can only ever be held is a card, never open.
-    review = next(c for c in got["cards"] if "ONP/img-review-schema" in c["checks"])
-    assert review["copy"] == "", review
-    # Item 211: label and value apart in the text, in the table's shape.
-    assert review["why"].startswith("Why held: needs review provenance"), review
+    # And the one that can only ever be held is a held line, never open and
+    # never a card among the faults (item 272).
+    assert not any("ONP/img-review-schema" in c["checks"] for c in got["cards"]), got["cards"]
+    assert any(n.startswith("img-review-schema not assessable") and "needs review provenance" in n
+               for n in got["na"]), got["na"]
     assert got["reaudit"] == 0 and got["selects"] == 0, got
 
 
@@ -372,14 +372,27 @@ def test_a_held_only_check_is_never_counted_among_the_checks_that_pass(browser, 
         assert "img-sitemap-missing" not in seen["clean"], (
             f"{scope}: a check the brief held for the whole site is named "
             f"among the checks that pass here: {seen['clean']!r}")
-        assert any("the image sitemap" in n for n in seen["na"]), (
+        # Item 276 (row 4): on the whole part the reason is on the check's
+        # row in the table, and the Fixes line points there.
+        said = ("the image sitemap" if scope == "narrowed"
+                else "the reason is on its row in the checks table")
+        assert any(n.startswith("img-sitemap-missing") and said in n for n in seen["na"]), (
             f"{scope}: the site-wide held check is neither passing nor "
             f"stated: {seen['na']!r}")
         # And the reason the held-only check is absent from that line is
-        # that it is held, not that it left the part: one card, and one.
-        cards = [c for c in seen["cards"] if "ONP/img-review-schema" in c["checks"]]
-        assert len(cards) == 1, (
-            f"{scope}: a held-only check gets one card. The registry stands "
-            "one for every site and the brief writes its own on `page: \"*\"`, "
-            "and Birch rendered both - the same answer twice, differing only "
-            f"in how much it said: {cards}")
+        # that it is held, not that it left the part: one held line, and one.
+        # The registry stands one for every site and the brief writes its own
+        # on `page: "*"`, and Birch rendered both. Since item 272 a hold is a
+        # line, never a card.
+        lines = [n for n in seen["na"] if n.startswith("img-review-schema")]
+        assert len(lines) == 1 and not any(
+            "ONP/img-review-schema" in c["checks"] for c in seen["cards"]), (scope, lines)
+
+
+def test_the_images_column_counts_every_image_a_card_names():
+    """Item 272: the column counted each card's first image, so a sweep row
+    naming seven images on one page counted one, and `img-no-srcset` read 2
+    across two pages that carry twelve."""
+    part_page = (SRC / "part_page.tsx").read_text(encoding="utf-8")
+    assert ("f.images?.length ? f.images : f.image ? [f.image] : []" in part_page)
+    assert "new Set(counted.map((f) => f.image).filter(Boolean)).size" not in part_page

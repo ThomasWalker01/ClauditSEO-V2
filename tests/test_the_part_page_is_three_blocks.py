@@ -291,7 +291,8 @@ def test_the_whole_site_view_leads_with_the_actions_then_the_checks_then_the_fix
     # only where triage had been bought. The ranking is computed with the
     # audit now, so it is always drawn, and a header that lists it is the
     # honest description of the header.
-    assert got["firstBlock"][:5] == ["part-h2", "part-rank", "part-coverage",
+    # Item 273 (row 12): the part's own count, under its name.
+    assert got["firstBlock"][:6] == ["part-h2", "part-count", "part-rank", "part-coverage",
                                      "part-switch", "part-page"], got["firstBlock"]
     assert len(got["acts"]) == 2, got["acts"]
     # Each control names what its own press covers, and in site mode that is
@@ -306,7 +307,8 @@ def test_the_whole_site_view_leads_with_the_actions_then_the_checks_then_the_fix
     assert "·" in got["acts"][0] and "~" not in got["acts"][0], (
         "a site-mode re-check still quotes a time for a crawl it has not sized",
         got["acts"])
-    assert "Re-run analysis · this audit" in got["acts"][1], got["acts"]
+    # Item 269 (row 5): the button names the analysis it runs.
+    assert "Re-run title-desc analysis · this audit" in got["acts"][1], got["acts"]
     assert got["prov"][0].startswith("automatic checks 2026-"), got["prov"]
     assert "analysis title-desc" in got["prov"][1] and "claude-sonnet-5" in got["prov"][1]
     assert "2 rows" in got["prov"][1], got["prov"]
@@ -343,6 +345,11 @@ def test_the_whole_site_view_leads_with_the_actions_then_the_checks_then_the_fix
     # Item 210: the engine's accounting at data weight, and the model's own
     # words behind a closed disclosure - no longer typeset as the page's facts.
     assert got["summary"].startswith("What the analysis returned"), got["summary"]
+    # Item 276 (row 3): the rows sum to what the run kept and dropped, and the
+    # holds are said as checks, after them - "1 held" read as a fourth term.
+    assert got["summary"].endswith(
+        "2 merged onto automatic cards · 0 on their own · 0 dropped; "
+        "1 check could not be assessed"), got["summary"]
     assert "2 FAIL" in got["prose"], "the model's prose is not behind the disclosure"
     # A card per failing (check, page). The two holds share one reason, so
     # since item 213 they are one line with their page count, and since item
@@ -369,19 +376,23 @@ def test_narrowed_the_card_reads_the_page_and_a_held_check_links_to_where_it_is_
         pg.fill(".page-find", "/")
         pg.wait_for_selector(".now-card", timeout=15_000)
         pg.wait_for_function(
-            "() => document.querySelectorAll('.fix-card').length === 2", timeout=15_000)
+            "() => document.querySelectorAll('.fix-card').length === 1"
+            " && document.querySelectorAll('.fix-na').length === 1", timeout=15_000)
         got = pg.evaluate(_JS)
     finally:
         pg.close()
     assert got["acts"][0].startswith("Re-check ") and "· this page · free · ~" in got["acts"][0], got["acts"]
-    assert "Re-run analysis · this page" in got["acts"][1], got["acts"]
+    # Item 269 (row 5): the run carries no page, so page mode says so.
+    assert "Re-run title-desc analysis · this audit, all pages" in got["acts"][1], got["acts"]
     # The page's own strings, graded against the engine's own bounds, with
     # a held check stated as held rather than as a failure.
     assert got["now"] == 1 and got["checks"] == []
-    assert got["badges"][0].startswith("str-pass|33 chars · in range"), got["badges"]
-    assert any(b.startswith("str-held|title-entity-alignment not checked — GBP primary category")
-               for b in got["badges"]), got["badges"]
-    assert any(b.startswith(f"str-fail|{len(LONG)} chars · outside 120–160") for b in got["badges"])
+    # Item 273 (row 3): graded as the check grades it, in pixels at its cut.
+    assert got["badges"][0] == "str-pass|295 px · fits the 410 px cut on mobile", got["badges"]
+    # Item 273 (row 13): the hold is said once, on its own card below, not
+    # also as a badge on the title.
+    assert not any(b.startswith("str-held|title-entity-alignment") for b in got["badges"]), got["badges"]
+    assert "str-fail|1513 px · cut at 920 px on desktop" in got["badges"], got["badges"]
     assert got["badges"][-1] == "str-pass|self", got["badges"]
     # Part B (brief v16i): the snippet card, measured in pixels. The card
     # names the words that fall off rather than a character cut, and the
@@ -391,15 +402,15 @@ def test_narrowed_the_card_reads_the_page_and_a_held_check_links_to_where_it_is_
     assert "px" in got["snipCap"], got["snipCap"]
     assert got["note"] == "", ("the character-count note should be gone now "
                                "the card measures pixels")
-    # Two cards: the failing string struck above its replacement, and the
-    # held check with a link to where the input is set.
+    # One card, the failing string struck above its replacement; the held
+    # check is a line (item 272) with a link to where the input is set.
     fixes = {f["check"]: f for f in got["fixes"]}
     fix = fixes["ONP/meta-desc-length"]
     assert fix["now"] == LONG and fix["rep"] == GOOD and fix["copy"], fix
-    held = fixes["ONP/title-entity-alignment"]
-    # Item 211: label and value apart in the text, in the table's shape.
-    assert held["why"].startswith("Why held: needs GBP primary category"), held
-    assert held["link"] == "#/admin?tab=sites" and not held["copy"], held
+    assert "ONP/title-entity-alignment" not in fixes, fixes
+    # Item 211: the table's shape, "needs <input>", and the link home.
+    assert got["na"] == ["title-entity-alignment not assessable — needs GBP primary category "
+                         "— set it on Admin › Sites"], got["na"]
     assert "[TO CONFIRM" not in got["text"]
     # Five, not the mockup's four: this page has a description, so
     # `meta-desc-missing` passes on it as well.

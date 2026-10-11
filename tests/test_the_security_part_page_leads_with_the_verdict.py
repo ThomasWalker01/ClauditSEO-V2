@@ -20,14 +20,20 @@ from tests.parts import ANATOMY_READY, open_part
 from tests.needs_build import needs_build
 
 _READ = """() => {
-  const card = document.querySelector('.now-card:has(.secv)');
+  // Item 276 (row 9): the verdict leads the part page, above the legend and
+  // the actions, not the picture card.
+  const page = document.querySelector('.part-page');
   return {
-    first: card ? card.firstElementChild.className : null,
-    verdict: document.querySelector('.secv b')?.textContent || null,
+    first: page ? page.firstElementChild.className : null,
+    verdict: document.querySelector('.secv h3')?.textContent || null,
+    heads: [...document.querySelectorAll('.part-page h3, .part-page h4')]
+      .slice(0, 6).map((h) => h.tagName + ' ' + h.textContent.trim()),
+    caption: document.querySelector('.seclayers-caption')?.textContent || '',
     cards: [...document.querySelectorAll('.seccard')].map((c) => ({
       domain: c.dataset.domain, state: c.dataset.state,
       word: c.querySelector('.seccard-word')?.textContent || '',
       note: c.querySelector('.seccard-note')?.textContent || '',
+      label: c.getAttribute('aria-label') || '',
       layer: c.closest('.seclayer')?.querySelector('.seclayer-name')?.textContent || '',
       dashed: getComputedStyle(c).borderTopStyle === 'dashed',
     })),
@@ -68,6 +74,13 @@ def test_the_verdict_is_the_first_thing_on_the_page(served):
     assert got["first"] and "secv" in got["first"], got["first"]
     # No brief ran on the fixture: the line says so and never says "secure".
     assert got["verdict"] == "Compromise not assessable"
+    # Round-1 #15: the three blocks are h3s under the part's h2, and the
+    # checks' two sections h4s beneath them.
+    assert [h.split(" ")[0] for h in got["heads"][:3]] == ["H3", "H3", "H3"], got["heads"]
+    assert got["heads"][1].startswith("H3 The layers"), got["heads"]
+    assert got["heads"][2] == "H3 What the site has now", got["heads"]
+    # Items 267 (row 16) and 268 (row 8): the checks headings are h3 too.
+    assert got["heads"][3].startswith("H3 Free checks"), got["heads"]
 
 
 @needs_build
@@ -80,6 +93,10 @@ def test_a_held_domain_is_hollow_and_says_why(served):
         # Item 180: a domain none of whose checks ran says "not measured".
         assert ("held" in by[letter]["word"] or "not measured" in by[letter]["word"]) and by[letter]["note"], by[letter]
     assert "authorisation" in by["H"]["note"] and "reputation source" in by["G"]["note"]
+    # Round-1 #15: each tile says what pressing it does, and keeps its state.
+    assert by["E"]["label"].startswith("narrow fixes to E DNS & mail: "), by["E"]
+    assert by["E"]["word"].strip(" ·") in by["E"]["label"], by["E"]
+    assert got["caption"] == "Press a layer to narrow the fixes below.", got["caption"]
     # Each card sits at the layer the addendum names.
     layers = {"E": "DNS & mail", "A": "Firewall / CDN", "B": "Firewall / CDN", "H": "Firewall / CDN",
               "C": "Origin", "D": "Origin", "I": "Origin", "F": "Page", "G": "Page"}
@@ -92,12 +109,19 @@ def test_the_layers_and_the_ledger_agree(served):
     the ledger names takes the ledger's state rather than the sweep's."""
     ledger = [{"domain": "A", "status": "assessed"},
               {"domain": "D", "status": "partial", "missing": "login-error probe - pending authorisation"},
-              {"domain": "E", "status": "not assessed", "missing": "no resolver"}]
+              {"domain": "E", "status": "not assessed", "missing": "no resolver"},
+              {"domain": "H", "status": "not assessed",
+               "missing": "active_probing_authorised = true on the site record"}]
     got = _open(served, ledger)
     by = {c["domain"]: c for c in got["cards"]}
     assert by["A"]["state"] in ("ok", "warn")
     assert by["D"]["state"] == "partial" and "login-error probe" in by["D"]["note"]
-    assert by["E"]["state"] == "held" and "no resolver" in by["E"]["note"]
+    # Round-1 #8: an unassessed domain's gap says what it needs ...
+    assert by["E"]["state"] == "held" and by["E"]["note"] == "needs no resolver", by["E"]
+    # ... and the probing switch is said in the engine's held words, never as
+    # though it were set.
+    assert "active_probing_authorised = true" not in by["H"]["note"], by["H"]
+    assert by["H"]["note"].startswith("pending authorisation: "), by["H"]
     assert got["verdict"] == "No sign of compromise"
     for entry in ledger:
         card = by[entry["domain"]]
@@ -141,6 +165,14 @@ def test_held_checks_split_into_authorisation_and_input_and_the_declined_control
             got = pg.evaluate("""() => [...document.querySelectorAll('.fix-na-head, .fix-na')]
                 .map((e) => [e.className.includes('head') ? 'H' : 'L', e.textContent])""")
             dnso = pg.evaluate("() => [...document.querySelectorAll('.fix-dnso')].map((e) => e.textContent)")
+            # The held headings under each section's own heading, in order.
+            per_section = pg.evaluate("""() => {
+              const out = []; let cur = null;
+              for (const el of document.querySelectorAll('.part-fixes .fixes-head, .part-fixes .fix-na-head')) {
+                if (el.classList.contains('fixes-head')) { cur = []; out.push(cur); }
+                else if (cur) cur.push(el.textContent.trim());
+              }
+              return out; }""")
         finally:
             browser.close()
     # Held lines are grouped within each section (Free checks, Analysis), so
@@ -157,6 +189,10 @@ def test_held_checks_split_into_authorisation_and_input_and_the_declined_control
     # A probe's missing BODIES is an input, not an authorisation.
     assert placed["cloaking"] == "Missing input", got
     assert placed["reputation"] == "Missing input", got
+    # Each heading once per section: the lines that point at the table and
+    # the lines that keep their reason sit under the one heading (found live
+    # on twenty22, where "Missing input" stood twice in one section).
+    assert all(len(h) == len(set(h)) for h in per_section), per_section
     assert len(dnso) == 1 and "COOP/COEP" in dnso[0]
 
 

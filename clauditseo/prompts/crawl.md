@@ -23,6 +23,9 @@ checks:
   # own the check.
   - LNK/depth-deep
   - TEC/render-only
+  - TEC/scripts-blocked-by-csp
+  - TEC/page-script-error
+  - TEC/script-failed-to-load
   - TEC/crawl-budget-waste
   - TEC/render-policy
 ---
@@ -55,8 +58,10 @@ CHECK SET (use these ids verbatim):
   TEC/ai-crawler-blocked   GPTBot, ClaudeBot, PerplexityBot, Google-Extended,
                             Applebot-Extended, CCBot disallowed at the rule —
                             BLOCKER; the fix is a diff, the decision is policy
-  TEC/ua-server-refusal     robots allows a crawler but the server returns 403/
-                            429/999 to its crawler name — HELD until CDN/WAF named
+  TEC/ua-server-refusal     robots allows a SEARCH crawler (Googlebot, Bingbot)
+                            but the server returns 403/429/999 to its name —
+                            HELD until CDN/WAF named. An AI agent refused this
+                            way is AIS/edge-blocks-ai-ua, filed by AI surface
   TEC/sitemap-invalid       unparseable, wrong namespace, > 50 000 URLs or
                             > 50 MB per file, index pointing at 404s
   TEC/sitemap-regression    declared URL count fell ≥ 20 % between audits
@@ -76,6 +81,14 @@ CHECK SET (use these ids verbatim):
                             they are TEC/links-behind-js, which carries the
                             router-only-anchor signal with its whole-site orphan
                             guard; cross-reference it, do not double-report.
+  TEC/scripts-blocked-by-csp the page's own Content-Security-Policy refuses
+                            scripts the page ships — per rendered page; HIGH
+                            where one of the page's own scripts then throws
+  TEC/page-script-error     an uncaught error from one of the page's own
+                            scripts — per rendered page. Third-party scripts
+                            are listed in the evidence and do not raise it
+  TEC/script-failed-to-load one of the page's own scripts failed to load or
+                            returned 4xx/5xx — per rendered page
   TEC/crawl-budget-waste    (analysis) share of fetches spent on parameter,
                             pagination, faceted or duplicate URLs
   TEC/render-policy         (analysis) which render-only content must move to
@@ -112,8 +125,12 @@ Handling rules:
   exactly, including casing.
 - Report `robots-missing` only when the fetch shows it absent; an input not
   supplied is `not_assessable`, never a finding.
-- 999, 403 to a known crawler, and 200-with-error-copy are soft failures:
-  `ua-server-refusal`, held, never `ai-crawler-blocked`.
+- 999, 403 to a search crawler, and 200-with-error-copy are soft failures:
+  `ua-server-refusal`, held, never `ai-crawler-blocked`. The same refusal to
+  an AI agent (GPTBot, ClaudeBot, CCBot, Bytespider, Amazonbot ...) is
+  `AIS/edge-blocks-ai-ua`, filed by the AI surface part: not this brief's
+  check, so neither a row nor a hold here. A CDN or WAF the matrix's headers
+  already name (a `cf-ray` header names Cloudflare) is not a missing input.
 - Googlebot renders on a deferred pass; Bingbot inconsistently; most AI
   retrieval crawlers not at all. Judge `render-policy` on that basis.
 - Never ask a question. Assume, act, and list the assumption.
@@ -122,7 +139,8 @@ Handling rules:
 Severity: registry default; raise only with a reason in `note`.
 (Registered: ai-crawler-blocked, sitemap-regression, robots-missing,
 sitemap-invalid — HIGH; sitemap-coverage, sitemap-404s, sitemap-noindex,
-unreachable, render-only, crawl-budget-waste, render-policy — MEDIUM;
+unreachable, render-only, scripts-blocked-by-csp, page-script-error,
+script-failed-to-load, crawl-budget-waste, render-policy — MEDIUM;
 sitemap-lastmod-stale, depth-deep — LOW; ua-server-refusal — HELD.
 ai-crawler-blocked carries `blocker: true` in the registry.)
 
@@ -174,14 +192,24 @@ Two blocks, in this order.
 }
 ```
 Rules for the block:
+- `status` is `FAIL`, `WARN` or `PASS-OVERRIDE` and nothing else. A check
+  that passes is omitted: there is no PASS row. A check you cannot assess
+  goes only in `not_assessable`: there is no NOT_ASSESSABLE or HELD row.
 - `matrix` and `sets` are drawn by the UI as the "now"; Block 2 does not
   repeat them.
 - Site-level rows have `page: null` and an `artefact` (robots.txt ·
   sitemap.xml · redirect rule · render policy); per-page rows (`render-only`,
-  `depth-deep`, `unreachable`) name the page.
+  `unreachable`) name the page. A `sitemap-404s`, `sitemap-noindex` or
+  `unreachable` row may name a URL the sitemap declares and the crawl did
+  not reach.
+- `LNK/depth-deep` is read here, not written: Links owns its fix, so no
+  depth-deep row.
 - `replacement` is the artefact content (a diff, a rule, a URL list
   reference) or, for render-policy, the per-page rule: which elements
-  move server-side.
+  move server-side. Never advice ("add a body link from ..."): a row whose
+  only change is advice has no replacement and says so in `note`.
+- `needs` names the missing input in plain words, never an item or step
+  number.
 - `blocker: true` only on `ai-crawler-blocked` and `robots-missing`.
 
 ## Block 2 — readable

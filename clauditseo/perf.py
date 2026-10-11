@@ -261,11 +261,24 @@ _READ_TRACE_JS = r"""
   }
   // Interactive elements under 24 x 24 CSS px, the WCAG 2.2 SC 2.5.8 minimum.
   // Zero-box elements are skipped: a display:none link is not a tap target.
+  // SC 2.5.8 exempts a target inside a sentence ("Inline"): a link drawn
+  // inline whose block carries other text is sized by the line, not by the
+  // author (screen audits round 3, Mobile AC-02 - "table below", 79 x 20, was
+  // counted a fault).
+  const inSentence = (el) => {
+    if (el.tagName !== "A" || getComputedStyle(el).display !== "inline") return false;
+    let block = el.parentElement;
+    while (block && getComputedStyle(block).display === "inline") block = block.parentElement;
+    if (!block) return false;
+    const own = (el.textContent || "").trim().length;
+    return (block.textContent || "").trim().length - own >= 20;
+  };
   const small = [];
   for (const el of document.querySelectorAll(
       "a[href], button, input, select, textarea, [role=button], [onclick]")) {
     const r = el.getBoundingClientRect();
     if (r.width === 0 || r.height === 0) continue;
+    if (inSentence(el)) continue;
     if (r.width < 24 || r.height < 24) {
       small.push({tag: el.tagName.toLowerCase(),
                   text: (el.textContent || "").trim().slice(0, 40) || null,

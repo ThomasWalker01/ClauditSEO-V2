@@ -36,6 +36,11 @@ UNMINIFIED_RATIO = 0.20
 #: More than this share of a stylesheet or script shipped-but-unused is worth a
 #: LOW row; coverage is noisy below it.
 UNUSED_SHARE = 0.5
+#: Render-blocking time worth a finding: the head's blocking resources must
+#: hold the first paint this long between them (screen audits round 3, Speed
+#: AC-03). With no threshold, one stylesheet that blocked for 2 ms put a
+#: Medium on twelve pages.
+RENDER_BLOCKING_MIN_MS = 100
 
 #: PRF's registry entry (brief v19 step BC). The dimension has always carried
 #: its free-check severities inline in the emitters rather than in a table, so
@@ -509,15 +514,24 @@ class PerformanceModule:
         resources = tr.get("resources") or []
 
         blocking = [r for r in resources if r.get("blocking") is True]
-        if blocking:
-            kb = sum((r.get("transfer") or 0) for r in blocking) // 1024
+        blocked_ms = sum((r.get("duration_ms") or 0) for r in blocking)
+        if blocking and blocked_ms >= RENDER_BLOCKING_MIN_MS:
+            # A transfer the trace could not read (cross-origin, no
+            # Timing-Allow-Origin) is not a zero (Speed IP-01): said as unread.
+            read = [r.get("transfer") for r in blocking if r.get("transfer")]
+            size = (f"{sum(read) // 1024} KB" if len(read) == len(blocking)
+                    else "size not read" if not read
+                    else f"{sum(read) // 1024} KB of {len(read)} read")
             out.append(Finding(
                 dimension=self.code, check_id="render-blocking", severity=Severity.MEDIUM,
                 summary=f"{path}: {len(blocking)} render-blocking resource(s) in the head "
-                        f"({kb} KB) without async/defer/media.",
+                        f"held the first paint {blocked_ms:.0f} ms ({size}) without "
+                        "async/defer/media.",
                 subject=path, affected_urls=[url], confidence=Confidence.LOW,
                 evidence={"resources": [r["url"] for r in blocking][:10],
-                          "count": len(blocking), "bytes": kb * 1024, "measured": "lab"},
+                          "count": len(blocking), "blocked_ms": round(blocked_ms),
+                          "bytes": sum(read) if len(read) == len(blocking) else None,
+                          "measured": "lab"},
                 recommendation="Defer or async non-critical CSS/JS; inline the above-fold "
                                "CSS subset; see critical-path for the ordered plan."))
 
@@ -606,14 +620,17 @@ class PerformanceModule:
                                "third-party-policy."))
 
         fonts = tr.get("fonts") or []
-        bad_fonts = [f for f in fonts
-                     if f.get("display") in (None, UNAVAIL, "auto", "block")
-                     or f.get("preloaded") is False]
+        # Only a font that DECLARES a blocking display (screen audits round 3,
+        # Speed AC-02). A font not preloaded is not a fault - the brief caps
+        # preloads per template - and a display the trace could not read is
+        # no evidence either way: 12 of the part's 30 findings were these.
+        bad_fonts = [f for f in fonts if f.get("display") in ("auto", "block")]
         if fonts and bad_fonts:
             out.append(Finding(
                 dimension=self.code, check_id="font-blocking", severity=Severity.MEDIUM,
-                summary=f"{path}: {len(bad_fonts)} web font(s) without font-display: swap "
-                        "or a preload (FOIT risk).",
+                summary=f"{path}: {len(bad_fonts)} web font(s) with font-display: "
+                        f"{'/'.join(sorted({f.get('display') for f in bad_fonts}))} "
+                        "(invisible text until the font loads).",
                 subject=path, affected_urls=[url], confidence=Confidence.LOW,
                 evidence={"fonts": [f.get("family") for f in bad_fonts][:10], "measured": "lab"},
                 recommendation="Set font-display: swap and preload the one or two fonts the "

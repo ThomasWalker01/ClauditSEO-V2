@@ -441,3 +441,25 @@ def test_backlinks_reports_only_its_own_providers_as_failing():
     assert "pagespeed" not in failing, (
         "a CWV provider's failure is not a backlinks provider's failure: "
         f"{failing}")
+
+
+def test_a_quick_recheck_says_the_provider_was_not_asked():
+    """Item 278. T1 makes no external call, so a configured provider is not
+    asked - and the finding said "No backlink data provider is configured"
+    over a Moz key Admin showed set."""
+    from clauditseo.engine.types import Site, Tier
+    from clauditseo.modules.ofp import OffPageModule
+
+    class _Moz:
+        name = "moz"
+
+        def snapshot(self, domain):                  # noqa: ARG002
+            raise AssertionError("T1 asks no provider")
+
+    hub = ProviderHub(backlink_providers=[_Moz()])
+    findings = OffPageModule().run(
+        [], Tier.T1, {"site": Site(domain="example.test"), "providers": hub})
+    note = next(f for f in findings if f.check_id == "backlinks-not-assessed")
+    assert "Not requested at this depth; a Standard re-check asks the provider." in note.summary
+    assert "No backlink data provider is configured" not in note.summary
+    assert note.recommendation == "Re-check at Standard depth to ask moz."

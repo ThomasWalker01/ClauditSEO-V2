@@ -42,6 +42,41 @@ def test_every_registry_entry_is_whole_and_unique():
         assert e["kind"] != "tone" or e.get("class"), e
 
 
+def test_no_word_has_two_definitions():
+    """Item 263 (admin-glossary IP-03), against item 166's ruling: "not
+    measured" had three entries with three sentences, and "action", "paid
+    action", "irreversible action", "link", "analysis", "automatic checks",
+    "seen once", "site" and "page" two each. One word, one definition: a word
+    drawn in a second place is an entry `same_as` the first."""
+    words: dict[str, str] = {}
+    for e in glossary.definitions():
+        key = e["word"].strip().lower()
+        assert key not in words, (
+            f"\"{e['word']}\" is defined twice: {words[key]} and {e['id']}. Make one "
+            "`same_as` the other, or give one of them its own word")
+        words[key] = e["id"]
+
+
+def test_a_same_as_entry_takes_its_words_and_keeps_its_own_binding():
+    raw = {e["id"]: e for e in __import__("json").loads(
+        glossary.PATH.read_text(encoding="utf-8"))["entries"]}
+    by = {e["id"]: e for e in glossary.entries()}
+    aliases = [e for e in raw.values() if "same_as" in e]
+    assert aliases, "the registry has no same_as entries; this clause tests nothing"
+    for a in aliases:
+        target = raw[a["same_as"]]
+        assert "same_as" not in target, f"{a['id']} points at another alias, {target['id']}"
+        assert "word" not in a and "full" not in a and "matches" not in a, (
+            f"{a['id']} carries words of its own beside same_as")
+        got = by[a["id"]]
+        assert (got["word"], got["full"]) == (target["word"], target["full"]), a["id"]
+        assert got["vocabulary"] == a["vocabulary"] and got.get("class") == a.get("class"), a["id"]
+    # An appendix finds each word once.
+    doc = "The Largest Contentful Paint and the canonical were measured."
+    found = [e["id"] for e in glossary.terms_in(doc)]
+    assert len(found) == len(set(found)) and not any("same_as" in by[i] for i in found), found
+
+
 def test_the_disclosure_sentence_is_the_first_sentence_of_the_full_definition():
     for e in glossary.entries():
         s = glossary.short(e)
@@ -111,7 +146,8 @@ def test_a_parts_own_words_are_disclosed_where_only_that_part_draws_them():
     shared |= set(re.findall(r'"([a-z-]+)"', re.search(
         r"const BAND_LEGEND = \[(.+?)\];", page, re.S).group(1)))
     parts = {c.key for c in anatomy.CATEGORIES}
-    drawn = {"speed": "speed_now.tsx", "title-desc": "title_snippet.tsx"}
+    drawn = {"speed": "speed_now.tsx", "title-desc": "title_snippet.tsx",
+             "a11y": "a11y_fixorder.tsx"}
     for part, terms in extra.items():
         assert part in parts, part
         for term in terms:
@@ -215,9 +251,21 @@ def test_the_glossary_route_lists_every_registry_entry_once(served):
         """() => ({ ids: [...document.querySelectorAll('.glossary-entry')].map((e) => e.dataset.term),
                     here: document.querySelector('.glossary-here')?.dataset.term,
                     nav: [...document.querySelectorAll('.topnav a')].map((a) => a.textContent.trim()) })"""))
-    assert sorted(got["ids"]) == sorted(e["id"] for e in glossary.entries()), got["ids"]
+    # Item 263: each word once - the definitions, not the ids that share one.
+    assert sorted(got["ids"]) == sorted(e["id"] for e in glossary.definitions()), got["ids"]
     assert len(got["ids"]) == len(set(got["ids"]))
     assert got["here"] == "hreflang" and "Glossary" in got["nav"], got
+    words = _open(base, "#/glossary", ".glossary-entry", lambda pg: pg.evaluate(
+        "() => [...document.querySelectorAll('.glossary-entry dt')].map((d) => d.childNodes[0].textContent.trim().toLowerCase())"))
+    assert len([w for w in words if w == "not measured"]) == 1, words
+
+
+@needs_build
+def test_a_link_naming_a_same_as_id_lands_on_the_one_definition(served):
+    base, _ids = served
+    here = _open(base, "#/glossary?term=button-spend", ".glossary-here", lambda pg: pg.evaluate(
+        "() => document.querySelector('.glossary-here').dataset.term"))
+    assert here == "action-paid", here
 
 
 @needs_build
@@ -262,3 +310,17 @@ def test_no_screen_says_sweep_or_brief(served):
         if got["sweep"] or got["brief"]:
             bad[route] = got
     assert not bad, bad
+
+
+@needs_build
+def test_a_legend_draws_a_shared_definition_once(served):
+    """Item 263: the Speed part's legend names `not-assessed` and `band-mute`,
+    which are one word since they share a definition. It drew "not measured"
+    twice with one sentence; it draws it once."""
+    base, ids = served
+    rows = _open(base, f"#/sites/{ids['site']}?tab=findings&part=speed", "details.legend",
+                 lambda pg: pg.evaluate("""() => [...document.querySelectorAll('details.legend')]
+                   .map((d) => [...d.querySelectorAll('.legend-row dt')].map((t) => t.textContent.trim()))"""))
+    assert rows, "no legend on the part"
+    for words in rows:
+        assert len(words) == len(set(words)), f"a legend draws one word twice: {words}"

@@ -78,6 +78,32 @@ def tier_for_scope(scope_key: str) -> Tier:
     return _TIER_FOR_SCOPE[scope_key]
 
 
+#: What a run that named no scope read, by the tier it executed at (item 253).
+#: The launch route used to record every such run as `full`, so a one-page T1
+#: stood as a reading of the whole site: it replaced the Latest View's
+#: crawl-relative blocks and its silence cleared cross-page findings. The tier
+#: is a page budget, and the budget is what the run read.
+_SCOPE_FOR_TIER = {"T1": "page", "T2": "site", "T3": "full"}
+
+
+def scope_for_tier(tier_name: str | None, nav_only: bool = False) -> str | None:
+    """The scope to record for a run that named none: `nav` for the
+    navigation set, else the tier's. None for `auto` (or anything unknown):
+    an adaptive run has not chosen its breadth yet, and `runs.set_tier`
+    records the scope when it stamps the tier it executed at."""
+    if nav_only:
+        return "nav"
+    return _SCOPE_FOR_TIER.get(tier_name or "")
+
+
+def depth_for(analyst: bool, model_tier: str | None = None) -> str:
+    """The depth to record for a run that named none, from what it will do:
+    no model is Quick; a model is Standard unless it is the deep one."""
+    if not analyst:
+        return "quick"
+    return "deep" if model_tier == "deep" else "standard"
+
+
 def crawl_kwargs(scope_key: str | None, tier: Tier,
                  start_url: str) -> dict:
     """The crawl arguments a scope implies, on top of the tier's own.

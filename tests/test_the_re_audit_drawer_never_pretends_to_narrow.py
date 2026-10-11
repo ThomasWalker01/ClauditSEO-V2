@@ -54,6 +54,7 @@ _JS = """() => {
     pages: sel ? { value: sel.value,
                    options: [...sel.options].map((o) => ({ value: o.value, disabled: o.disabled })) } : null,
     scopeNote: (d?.querySelector('.reaudit-scope-note')?.textContent || '').trim(),
+    pagesNote: (d?.querySelector('.reaudit-pages-note')?.textContent || '').replace(/\\s+/g, ' ').trim(),
     depths: [...(d?.querySelectorAll('.reaudit-depth button.tone') || [])].map((b) => ({
       text: b.textContent.trim(), on: b.getAttribute('aria-pressed') === 'true' })),
     cost: (d?.querySelector('.reaudit-cost')?.textContent || '').trim(),
@@ -118,9 +119,12 @@ def test_the_drawer_states_the_sweep_the_pages_and_the_depth_before_any_click(br
     assert len(got["chips"]) > 1 and all(c.startswith("+ ") for c in got["chips"][1:]), (
         f"the parts that move with ONP are not listed before the click: {got['chips']}")
     assert got["pages"]["value"] == "site", got["pages"]
-    disabled = {o["value"] for o in got["pages"]["options"] if o["disabled"]}
-    assert {"finding", "nav", "filter"} <= disabled, got["pages"]
-    assert "one" in disabled, "one page is offered before a page is narrowed to"
+    # Item 278 (row 7): only what can be chosen is listed, and what cannot is
+    # said once beside it - not four greyed options.
+    assert [o["value"] for o in got["pages"]["options"]] == ["site"], got["pages"]
+    assert not any(o["disabled"] for o in got["pages"]["options"]), got["pages"]
+    assert "no route takes a list of pages" in got["pagesNote"], got["pagesNote"]
+    assert "one page, until you narrow to it above" in got["pagesNote"], got["pagesNote"]
     # Brief v2 step D: the copy names the one page-scoped run this product
     # has (verify, from a finding) and says what no route takes.
     assert "verify" in got["scopeNote"] and "no route takes a list of pages" in got["scopeNote"], got["scopeNote"]
@@ -160,8 +164,9 @@ def test_one_press_on_a_finding_opens_the_drawer_pre_scoped_and_named(browser, s
         got = pg.evaluate(_JS)
     finally:
         pg.close()
-    finding_option = [o for o in scoped["pages"]["options"] if o["value"] == "finding"][0]
-    assert not finding_option["disabled"], "the finding's own pages are not offered as a scope"
+    finding_option = [o for o in scoped["pages"]["options"] if o["value"] == "finding"]
+    assert finding_option and not finding_option[0]["disabled"], (
+        "the finding's own pages are not offered as a scope")
     assert scoped["pages"]["value"] == "finding", scoped["pages"]
     assert "verify" in scoped["scopeNote"] and "list of pages" in scoped["scopeNote"], scoped["scopeNote"]
     assert scoped["from"].startswith("From ") and "page" in scoped["from"], scoped["from"]

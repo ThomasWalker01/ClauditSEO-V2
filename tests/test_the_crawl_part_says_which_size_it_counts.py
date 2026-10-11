@@ -62,7 +62,9 @@ def test_the_payloads_carry_the_known_size_and_the_error_pages(tmp_path):
     assert now["published"] == 3, now                  # / /a /d
     assert now["known"] == runs.site_size(EVIDENCE)["size"] == 6, now  # + /gone /x /y
     depth = runs.crawl_depth_payload(conn, run_id)
-    assert depth["crawled"] == 3 and depth["errored"] == 1, depth
+    assert depth["crawled"] == 3 and depth["errored"] == 1 and depth["drawn"] == 2, depth
+    # The error page is in no bar.
+    assert not any("/gone" in u for u in depth["at"]), depth["at"]
 
 
 @pytest.fixture(scope="module")
@@ -102,4 +104,7 @@ def test_the_page_says_how_the_sizes_relate(served):
     kv, note = (" ".join(t.split()) for t in (text["kv"], text["note"]))
     assert ("the 6 known also counts 3 URLs found linked or fetched that were neither "
             "reached nor in a sitemap") in kv, kv
-    assert "Over the 3 URLs the crawl fetched, including 1 that returned an error." in note, note
+    # Item 275 (row 6): the bars are drawn over the pages that answered, as
+    # the depth check counts them.
+    assert ("Over the 2 URLs the crawl fetched that answered; 1 that returned an error "
+            "is left out, as the depth check leaves it.") in note, note

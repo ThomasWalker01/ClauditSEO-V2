@@ -15,6 +15,7 @@ import { BriefPriceFrame, PriceScopeNote, money } from "./components";
 import { Pill } from "./pill";
 import { useDialog } from "./confirm";
 import { SaveRule } from "./save_rule";
+import { day } from "./dates";
 
 export type ToolRow = { tool_id: string; cadence: string; last_run_at: string | null;
                  due_now: boolean };
@@ -217,7 +218,7 @@ export function ScheduleModal({ siteId, onClose }:
                             </select>
                           </td>
                           <td className="muted">
-                            {row?.last_run_at ? row.last_run_at.slice(0, 10)
+                            {row?.last_run_at ? day(row.last_run_at)
                              : <span className="muted">—</span>}
                             {row?.due_now && <span className="due-tag">due now</span>}
                           </td>
@@ -267,7 +268,7 @@ export function ScheduleModal({ siteId, onClose }:
               <SecondaryButton onClick={onClose}>cancel</SecondaryButton>
               {/* UX-66. Stable caption, state on `aria-busy`, words in the
                   unconditionally-mounted region beside it — the convention
-                  `views.tsx`'s `ReportView` states in full. */}
+                  `reports.tsx`'s `GenerateCard` states in full. */}
               <SecondaryButton onClick={save}
                       disabled={saving} aria-busy={saving}>
                 save schedule

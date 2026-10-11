@@ -417,6 +417,12 @@ def test_the_error_offers_a_retry_and_says_when_it_is_trying(served):
             browser.close()
 
 
+# The Record's tick, which raises the mark bar. Accessibility's cards carry
+# a tick of their own since item 279 (row 6), with its own re-check in place
+# of the bar, and it stands first on that part.
+RECORD_TICK = ".fix-chk:not(.fix-done .fix-chk)"
+
+
 def _open_a_category_with_ticks(page) -> None:
     """Click category leaves until one shows a tickable finding.
 
@@ -439,7 +445,7 @@ def _open_a_category_with_ticks(page) -> None:
         for j in range(page.locator("table.causes .group-toggle").count()):
             page.locator("table.causes .group-toggle").nth(j).click()
         page.wait_for_timeout(100)
-        if page.locator(".fix-chk").count() > 0:
+        if page.locator(RECORD_TICK).count() > 0:
             return
         open_part_key(page, "")        # close it again before trying the next
         page.wait_for_timeout(100)
@@ -504,7 +510,7 @@ def test_a_refresh_that_is_not_a_page_change_does_not_claim_one(served):
             # The request carries the picker's run since brief v6 step V1.
             page.route(re.compile(r"/anatomy(\?run_id=[^&]*)?$"), lambda route: held.append(route))
 
-            page.locator(".fix-chk").first.check()
+            page.locator(RECORD_TICK).first.check()
             page.wait_for_timeout(300)
             run = page.locator(".mark-bar .mark-verify")
             assert run.count() == 1, (

@@ -16,6 +16,24 @@ from datetime import datetime, timedelta
 from clauditseo.persistence import runs
 
 INTERVALS = {"weekly": timedelta(days=7), "monthly": timedelta(days=30)}
+
+
+def instant(value: datetime | str | None) -> datetime | None:
+    """A stamp or a clock reading as a moment that can be compared (item 248).
+
+    A run's `started_at` is UTC and the scheduler's `now` is the machine's
+    local clock. Compared with the offset stripped from one and never put on
+    the other, a cadence fell due by the offset early: ten hours on a UTC+10
+    machine. A value with no offset is the machine's local time, which is
+    what `datetime.now()` and the stamps this module writes are."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    return value if value.tzinfo else value.astimezone()
 CHECK_EVERY_S = 30 * 60
 
 
@@ -55,8 +73,8 @@ def due_sites(conn: sqlite3.Connection, now: datetime) -> list[dict]:
             (site["id"],)).fetchone()
         if not last:
             continue        # never crawled: the first run is the operator's call
-        started = datetime.fromisoformat(last["started_at"].replace("Z", "+00:00"))
-        if now - started.replace(tzinfo=None) >= interval:
+        started = instant(last["started_at"])
+        if started is not None and instant(now) - started >= interval:
             out.append(dict(site))
     return out
 
@@ -194,8 +212,8 @@ def due_tools(conn: sqlite3.Connection, now: datetime) -> list[dict]:
         if not run:
             continue
         if row["last_run_at"]:
-            last = _parse(row["last_run_at"])
-            if last and now - last < interval:
+            last = instant(row["last_run_at"])
+            if last and instant(now) - last < interval:
                 continue
         out.append({"site_id": row["site_id"], "domain": row["domain"],
                     "tool_id": row["tool_id"], "cadence": row["cadence"],
@@ -204,10 +222,7 @@ def due_tools(conn: sqlite3.Connection, now: datetime) -> list[dict]:
 
 
 def _parse(stamp: str) -> datetime | None:
-    try:
-        return datetime.fromisoformat(stamp.replace("Z", "+00:00")).replace(tzinfo=None)
-    except ValueError:
-        return None
+    return instant(stamp)
 
 
 def mark_tool_ran(conn: sqlite3.Connection, site_id: str, tool_id: str,

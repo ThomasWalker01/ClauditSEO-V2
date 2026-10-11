@@ -5,14 +5,14 @@ import {
   api, ApiError, ClientDetail, ClientSummary, Finding, FindingState, Meta, Run,
   Severity, SiteDetail,
   completedAudits, hasResults, hasScore, isDeletable, isInFlight, isSiteReading,
-  useFetch,
+  scopeOf, useFetch,
 } from "./api";
 import { goHandler as navHandler, goto as navigate, historyRunFromHash, withPart } from "./nav";
 import { stamp } from "./client_lanes";
 import { PrecheckPanel, pagesGone, usePrecheck } from "./precheck";
 import { ScanMatrix } from "./scanmatrix";
 import { DangerButton, SpendButton, SpendTarget } from "./spend";
-import { ENTRIES, Legend } from "./glossary";
+import { Legend, entry } from "./glossary";
 import { pathKey } from "./population";
 import {
   AnalystBand, Card, CopyCmd, ErrorNote, FindingsTable, GroupedFindings, Loading,
@@ -31,7 +31,6 @@ import { AnalysePane } from "./pane_analyse";
 import { costsAcross } from "./cost";
 import { PAGE, RecordPane } from "./pane_record";
 import { PageAdvice, SchemaAuditPanel } from "./advice";
-import { ReportView as RenderedMarkdown } from "./markdown";
 import { Pill } from "./pill";
 // Only the page-scoped panel survives here: it takes a URL, which the
 // site-wide list has no notion of. The five site-scoped ExpertSpec arrays it
@@ -40,6 +39,7 @@ import { Pill } from "./pill";
 import { ExpertPanel, ExpertSpec } from "./expert";
 import { useAnalyses } from "./analyses";
 import { useSelection } from "./selection";
+import { day } from "./dates";
 
 // Quick single-purpose audits launchable straight from the client screen.
 /** The scope each crawler tier covers (channel ruling 20260918-0410): the words
@@ -152,11 +152,6 @@ export function ClientDetailView({ clientId }: { clientId: string }) {
               <td>{s.regressions > 0
                    ? <strong className="regressed">{s.regressions}</strong> : 0}</td>
               <td>
-                <SecondaryButton
-                        title="The full tool menu, in working order"
-                        onClick={() => goto(`#/sites/${s.id}/workbench`)}>
-                  workbench
-                </SecondaryButton>
                 {/* UX-66, and the worst shape of it: the caption swapped to
                     a bare ellipsis, so the control's accessible name became
                     "…" rather than merely a different name. The label stays;
@@ -250,14 +245,74 @@ function StopRun({ runId, onStopped }: { runId: string; onStopped: () => void })
 // ---- site ------------------------------------------------------------------
 
 
+/** A part the address named that this site does not have, or a retired one
+ *  (item 261): said once, beside the pane-unknown sentence.
+ *
+ *  Item 261 (shop UX-01; item 238 was the body half). `?part=workflow` - the
+ *  retired part - and any key the site has no part for were kept as the part
+ *  in hand: the body drew the shop, but the strip drew the part-page
+ *  variant, the floating catalogue tab stood over the shop, the title read
+ *  "Analyses · workflow" and the legend withheld its keys. Resolved once the
+ *  site's parts are known: the address is rewritten without the key (a
+ *  replacement, so Back does not return to it), and the screen says what it
+ *  did. Out of `SiteDetailView`, which holds what the address decides and
+ *  hands the rest down. */
+function useUnknownPart(part: string, categories: { key: string; group: string }[] | undefined) {
+  const [unknownPart, setUnknownPart] = useState<string | null>(null);
+  useEffect(() => {
+    if (!part || !categories) return;
+    // A part this site has, named after the rewrite, retires the sentence.
+    if (categories.filter(isPart).some((c) => c.key === part)) { setUnknownPart(null); return; }
+    setUnknownPart(part);
+    const [path, query] = (window.location.hash || "").split("?");
+    const q = new URLSearchParams(query || "");
+    q.delete("part");
+    const tail = q.toString();
+    window.location.replace(tail ? `${path}?${tail}` : path);
+  }, [part, categories]);
+  return unknownPart;
+}
+
+/** The address named something this screen does not have: a pane, or a part
+ *  (item 261). Mounted always, empty until it has something to say: a live
+ *  region that arrives with its text is not announced (audit F-22), and the
+ *  case this exists for is a stored address opened fresh. */
+function PaneUnknown({ tab, part, shown }: { tab: string | null; part: string | null; shown: string }) {
+  return (
+    <p className="muted head-note pane-unknown" role="status">
+      {tab && `There is no pane called “${tab}” — showing ${shown}.`}
+      {!tab && part && `There is no part called “${part}” — showing the catalogue.`}
+    </p>
+  );
+}
+
 /** What the record's state filter offers, and therefore what `?state=` may
  *  name. `outstanding` is open + regressed; `attention` adds the analysis
  *  findings that wait for the operator, and is the pane's default (item 237). */
 const STATE_FILTERS = ["attention", "outstanding", "to-confirm", "all", "open", "regressed", "fixed",
                        "candidate", "accepted-risk", "withdrawn",
+                       // On a page that now answers an error (channel ruling
+                       // 20261011-0745).
+                       "set-aside",
                        // Findings on a page the latest site-wide crawl did not
                        // fetch (brief v2 step F, from step B's join).
                        "gone"];
+/** `?state=` may also name a comma list of states, as `?sev=` names a list
+ *  of severities (item 252): the hold counts open AND regressed, so its door
+ *  has to be able to say both. A list that is a chip's own set is that chip
+ *  - `open,regressed` presses "Open + regressed" - and any other list of
+ *  states is kept as the list, in one order, so two spellings are one filter.
+ *  Null for anything else, which leaves the record where it was. */
+const LISTABLE = ["open", "regressed", "fixed", "candidate", "accepted-risk", "withdrawn",
+                  "set-aside"];
+const stateFilterOf = (v: string | null): string | null => {
+  if (!v) return null;
+  if (STATE_FILTERS.includes(v)) return v;
+  const named = [...new Set(v.split(",").map((s) => s.trim()).filter(Boolean))];
+  if (named.length < 2 || !named.every((s) => LISTABLE.includes(s))) return null;
+  const list = LISTABLE.filter((s) => named.includes(s)).join(",");
+  return list === "open,regressed" ? "outstanding" : list;
+};
 
 type Tab = "landing" | "findings" | "history" | "all" | "pages" | "notes";
 
@@ -353,7 +408,7 @@ const stateKey = (site: string) => `clauditseo:state:${site}`;
 const rememberedState = (site: string): string | null => {
   try {
     const v = localStorage.getItem(stateKey(site));
-    return v && STATE_FILTERS.includes(v) ? v : null;
+    return stateFilterOf(v);
   } catch { return null; }
 };
 /** How the record is grouped (brief step 6, UX-01): by check, or not at
@@ -719,6 +774,7 @@ export function SiteDetailView({ siteId }: { siteId: string }) {
    *  re-reads this screen's own payload too, since the record's rows carry
    *  the states it moves. */
   const anat = useAnatomy(siteId, () => setTick((t) => t + 1));
+  const unknownPart = useUnknownPart(part, anat.data?.categories);
   /** The one fix loop (audit F-17): a mark made on the Analyses pane is the
    *  same mark on the Record pane, in the same set, judged by the same
    *  audit, with no re-read in between. */
@@ -783,7 +839,7 @@ export function SiteDetailView({ siteId }: { siteId: string }) {
     // Only beside an explicit pane: a `?state=` left in the tail by a site
     // switch would otherwise set site B's filter to what site A was looking
     // at (audit F-12); the switcher drops it too.
-    const state = q.get("state");
+    const state = stateFilterOf(q.get("state"));
     const g = q.get("group");
     if (raw && g && GROUPINGS.includes(g)) {
       setGroup(g); rememberGroup(site, g);
@@ -791,7 +847,7 @@ export function SiteDetailView({ siteId }: { siteId: string }) {
       const lastG = rememberedGroup(site);
       if (lastG) setGroup(lastG);
     }
-    if (raw && state && STATE_FILTERS.includes(state)) {
+    if (raw && state) {
       setFState(state); setShown(PAGE); rememberState(site, state);
     } else {
       // No state named: the record opens on what it was last left on.
@@ -925,12 +981,7 @@ export function SiteDetailView({ siteId }: { siteId: string }) {
                      listShowing={tab === "findings" && (!part || catalogue)}
                      onCatalogue={tab === "findings" && part ? () => setCatalogue((v) => !v) : undefined} />
       )}
-      {/* Mounted always, empty until it has something to say: a live region
-          that arrives with its text is not announced (audit F-22), and the
-          case this exists for is a stored address opened fresh. */}
-      <p className="muted head-note pane-unknown" role="status">
-        {unknownTab && `There is no pane called “${unknownTab}” — showing ${PANES[tab].label}.`}
-      </p>
+      <PaneUnknown tab={unknownTab} part={unknownPart} shown={PANES[tab].label} />
 
       {/* A landmark with the pane's own name, and the skip link's target. */}
       <div className="pane-body" id="pane" tabIndex={-1} role="region"
@@ -1031,10 +1082,10 @@ export function SiteDetailView({ siteId }: { siteId: string }) {
         <ul className="group-pages">
           {((data as any).notes ?? []).map((n: any) => (
             <li key={n.id}>
-              <span className="muted">{n.created_at.slice(0, 10)}</span> {n.body}{" "}
-              <DangerButton label={`delete the note from ${n.created_at.slice(0, 10)}`} confirm={{
+              <span className="muted">{day(n.created_at)}</span> {n.body}{" "}
+              <DangerButton label={`delete the note from ${day(n.created_at)}`} confirm={{
                   title: "Delete this note?", action: "Delete the note",
-                  body: <p>&ldquo;{n.body}&rdquo;, from {n.created_at.slice(0, 10)}.</p> }}
+                  body: <p>&ldquo;{n.body}&rdquo;, from {day(n.created_at)}.</p> }}
                 onConfirm={async () => { await api.del(`/api/sites/${siteId}/notes/${n.id}`); setTick((t) => t + 1); }}>✕</DangerButton>
             </li>
           ))}
@@ -1239,8 +1290,13 @@ export function RunDetailView({ runId }: { runId: string }) {
   return (
     <>
       <h2>
-        Audit of {(data.started_at ?? "").slice(0, 10)}
-        {" · "}{ENTRIES.find((e) => e.engine === data.tier)?.word ?? data.tier}
+        Audit of {day(data.started_at)}
+        {/* Items 262 and 258: the run's own scope, never a lookup by tier.
+            `scope-nav` and `scope-site` both carry the engine word T2, so
+            `find(engine === tier)` returned the first - "Nav" - and the
+            heading of a T2 site sample contradicted its own banner ("A
+            sample of the site"). The tier stays, once, in the muted part. */}
+        {" · "}{runScopeWord(data)}
         {" "}<span className="muted">({data.tier}{data.status !== "complete" ? ` · ${data.status}` : ""})</span>
       </h2>
       {/* What this run WAS, in the words it was chosen with — before the
@@ -1388,7 +1444,7 @@ export function RunDetailView({ runId }: { runId: string }) {
                   "/ 100" is a frame for a figure and there is no figure.
 
                   The sentence is the one `render.py`'s `NO_COMPOSITE` gives
-                  the reports, chat and the CLI, said in rendered text rather
+                  the reports and the CLI, said in rendered text rather
                   than a `title`. Held to that constant by
                   `tests/test_missing_composite_on_screen.py`, which reads
                   both clauses out of it rather than restating them - so a
@@ -1499,7 +1555,7 @@ export function RunDetailView({ runId }: { runId: string }) {
             ? <FindingsTable findings={data.deterministic_findings ?? []} />
             : <GroupedFindings findings={data.deterministic_findings ?? []}
                                onOpenPage={(url) =>
-                                 goto(`#/runs/${runId}/page/${encodeURIComponent(url)}`)} />}
+                                 goto(`#/sites/${data.site_id}/dossier/${encodeURIComponent(url)}`)} />}
 
           <AnalystBand findings={data.analyst_findings ?? []} />
 
@@ -1520,41 +1576,6 @@ export function RunDetailView({ runId }: { runId: string }) {
           )}
         </>
       )}
-    </>
-  );
-}
-
-// ---- single page within a run ----------------------------------------------
-
-export function PageDetailView({ runId, url }: { runId: string; url: string }) {
-  // The page-scoped briefs, from the lanes payload's own headers (brief
-  // v11 step AI) rather than a list kept here.
-  const { data: pageLanes } = useAnalyses(runId);
-  const pageExperts: ExpertSpec[] = (pageLanes ? [...pageLanes.ready, ...pageLanes.available] : [])
-    .filter((x) => x.type === "page")
-    .map((x) => ({ id: x.tool, name: x.name, blurb: x.does,
-                   tier: x.tier as ExpertSpec["tier"], inputs: x.inputs }));
-  const { data, error, loading, retry } = useFetch<Run>(`/api/runs/${runId}`);
-  if (error) return <ErrorNote error={error} onRetry={retry} retrying={loading} />;
-  if (!data) return <Loading />;
-  const mine = (data.deterministic_findings ?? [])
-    .filter((f) => f.affected_urls.includes(url));
-
-  return (
-    <>
-      <h2>{pathOf(url)}</h2>
-      <p className="muted">
-        <a href={`#/runs/${runId}`}>back to the audit {runId.slice(0, 8)}</a> ·{" "}
-        <a href={url} target="_blank" rel="noopener noreferrer">open page ↗</a>
-      </p>
-      <PageAdvice runId={runId} url={url} />
-      <SchemaAuditPanel runId={runId} url={url} />
-      <ExpertPanel runId={runId} siteId={data.site_id} tools={pageExperts} url={url}
-                   heading="Page-level experts" />
-      <h3>Findings on this page ({mine.length})</h3>
-      {mine.length
-        ? <FindingsTable findings={mine} />
-        : <p className="muted">No deterministic findings recorded for this URL.</p>}
     </>
   );
 }
@@ -1648,6 +1669,9 @@ function scopeCount(scope: { pages_crawled: number | null;
   return "fetched an unrecorded number of page(s)";
 }
 
+/** Rows of one compare list drawn before "show more" (item 251). */
+const COMPARE_PAGE = 25;
+
 export function CompareView({ a, b }: { a: string; b: string }) {
   const { data, error, loading, retry } = useFetch<CompareResult>(`/api/compare?a=${a}&b=${b}`);
   //: WF-21, carried High from report 026 to 094. `TEMPLATES` has held
@@ -1659,6 +1683,10 @@ export function CompareView({ a, b }: { a: string; b: string }) {
   //: before the two early returns below, or the hook order changes between
   //: a loaded and an erroring render.
   const [audience, setAudience] = useState("client");
+  /** How many rows of each list are drawn (item 251). The persisting list
+   *  was every finding both audits share - 423 rows on twenty22, a screen
+   *  53,662 px tall - and the diff a reader came for sat above it. */
+  const [shown, setShown] = useState<Record<string, number>>({});
   const [making, setMaking] = useState(false);
   const [made, setMade] = useState<
     { id: string; path: string; warnings: string[] } | null>(null);
@@ -1708,7 +1736,7 @@ export function CompareView({ a, b }: { a: string; b: string }) {
     <Card>
       <h3 className={cls}>{title} ({items.length})</h3>
       {items.length
-        ? <ul>{items.map((f) => (
+        ? <ul>{items.slice(0, shown[title] ?? COMPARE_PAGE).map((f) => (
             <li key={f.fingerprint}>
               [{f.severity}] {f.dimension}/{f.check_id} — {f.summary}
               {reasonKey && (f as Finding & { new_reason?: Reason })[reasonKey] &&
@@ -1718,6 +1746,15 @@ export function CompareView({ a, b }: { a: string; b: string }) {
             </li>
           ))}</ul>
         : <p className="muted">None.</p>}
+      {items.length > (shown[title] ?? COMPARE_PAGE) && (
+        <p className="muted compare-more">
+          Showing {shown[title] ?? COMPARE_PAGE} of {items.length}.{" "}
+          <SecondaryButton onClick={() => setShown((x) => ({
+            ...x, [title]: (x[title] ?? COMPARE_PAGE) + COMPARE_PAGE }))}>
+            show {Math.min(COMPARE_PAGE, items.length - (shown[title] ?? COMPARE_PAGE))} more
+          </SecondaryButton>
+        </p>
+      )}
     </Card>
   );
   return (
@@ -1772,7 +1809,7 @@ export function CompareView({ a, b }: { a: string; b: string }) {
         {/* UX-88. The caption no longer swaps to a busy word. The label is
             this control's accessible name, so a name that changes mid-press
             is announced as a different control appearing — which is why
-            `reports.tsx:270-289` moved the same word off the same kind of
+            `reports.tsx`'s Deliverables regenerate control moved the same word off the same kind of
             button for UX-64, and this is that convention rather than a
             second one. `aria-busy` carries the state the caption used to. */}
         <PrimaryButton onClick={generate} disabled={making} aria-busy={making}>
@@ -1884,6 +1921,15 @@ interface ScanBannerRun {
   scan_url?: string | null;
   /** The stored column: a JSON-encoded array of paths. */
   crawled_paths?: string | string[] | null;
+}
+
+/** The scope's word from the glossary (Page, Nav, Site, Full), from the
+ *  run's stored scope or, for a run from before the column, its page count
+ *  (`scopeOf`). The tier where neither says. */
+function runScopeWord(run: Pick<Run, "scan_scope" | "crawled_paths" | "tier">
+                      & { effective_scope?: string | null }): string {
+  const scope = scopeOf(run);
+  return scope ? entry(`scope-${scope}`).word : run.tier;
 }
 
 const SCAN_SCOPE_WORDS: Record<string, string> = {
@@ -2220,7 +2266,7 @@ export function LauncherView({ siteId }: { siteId: string }) {
         {/* UX-96. The caption no longer swaps to a busy word. A button's
             label is its accessible name, so a name that changes mid-press is
             announced as a different control appearing — which is why
-            `reports.tsx:270-289` moved the same word off the same kind of
+            `reports.tsx`'s Deliverables regenerate control moved the same word off the same kind of
             button for UX-64, and why round 111 moved it off `CompareView`'s
             generate control thirteen hundred lines above (UX-88). This is
             that convention taken a third time rather than a fourth wording.
@@ -2272,7 +2318,7 @@ export function LauncherView({ siteId }: { siteId: string }) {
               was still absorbed by the `or`, which is WF-102 exactly. */}
           {/* UX-66. Stable caption, state on `aria-busy`, words in the
               unconditionally-mounted region below — the same convention this
-              file's own `ReportView` generate control takes. */}
+              one `reports.tsx`'s `GenerateCard` takes. */}
           {/* Item 178 (03-1): when the analyst layer runs this spends, so it
               is the spend control, priced in words and confirmed; without it the
               audit costs time only and starts on the press as before. */}
@@ -2323,144 +2369,3 @@ export function LauncherView({ siteId }: { siteId: string }) {
   );
 }
 
-// ---- reports ---------------------------------------------------------------
-
-export function ReportView({ runId }: { runId: string }) {
-  const [template, setTemplate] = useState("run");
-  const [audience, setAudience] = useState("client");
-  const [markdown, setMarkdown] = useState<string | null>(null);
-  const [path, setPath] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  //: Not errors — the report was made. Things about it worth knowing before
-  //: it is sent, said here because this is the moment they apply.
-  const [warnings, setWarnings] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false);
-
-  const generate = async () => {
-    setBusy(true);
-    setError(null);
-    setWarnings([]);
-    try {
-      const resp = await api.post<{ markdown: string; path: string;
-                                    warnings?: string[] }>("/api/reports", {
-        template, audience, run_ids: [runId],
-      });
-      setMarkdown(resp.markdown);
-      setPath(resp.path);
-      setWarnings(resp.warnings ?? []);
-    } catch (e) {
-      setError((e as ApiError).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <>
-      <h2>Generate report</h2>
-      <p className="muted">Run <a href={`#/runs/${runId}`}>{runId.slice(0, 8)}</a></p>
-      <div className="inline-form">
-        <select value={template} onChange={(e) => setTemplate(e.target.value)}
-                aria-label="template">
-          <option value="run">Run report</option>
-          {/* Brief v17 step AV6: the same document without the two
-              sections a model wrote. Named for what it contains
-              rather than for what it omits. */}
-          <option value="run-free">Audit report — free checks only</option>
-          <option value="monthly-trend">Monthly trend report</option>
-        </select>
-        <select value={audience} onChange={(e) => setAudience(e.target.value)}
-                aria-label="audience">
-          <option value="client">Client-facing</option>
-          <option value="internal">Internal technical</option>
-        </select>
-        {/* UX-66. The caption no longer swaps to a busy word. A button's
-            label is its accessible name, so a name that changes mid-press is
-            announced as a different control appearing — which is why
-            `reports.tsx:270-289` moved the same word off the same kind of
-            button for UX-64, why round 111 moved it off `CompareView`'s
-            generate control (UX-88), and why round 112 moved it off
-            `LauncherView`'s "Check this URL" (UX-96). This is that convention
-            taken a fourth time rather than a fourth wording. `aria-busy`
-            carries the state the caption used to, and the region below says
-            it in words for the operator who can see neither. */}
-        <PrimaryButton onClick={generate} disabled={busy} aria-busy={busy}>
-          Generate
-        </PrimaryButton>
-      </div>
-      {error && <ErrorNote error={error} />}
-      {/* UX-66. Mounted unconditionally, and that is the load-bearing part: a
-          live region inserted in the same render as its text gives assistive
-          technology nothing to observe a change against, so it has to be here
-          before there is anything to say. Empty while idle. `aria-live` is
-          stated rather than left to the implicit mapping of `role="status"`,
-          matching `Loading` in `components.tsx`, `reports.tsx`'s generate control and
-          `CompareView`'s, so the screen keeps one convention. */}
-      <div className="muted" role="status" aria-live="polite">
-        {busy && <Working>Generating the report…</Working>}
-      </div>
-      {/* Above the document, because it is about what is in it. Below the
-          "Saved to" line it would read as a note about the file. */}
-      {warnings.map((w) => (
-        <p key={w} className="muted"><strong>Before you send this:</strong> {w}</p>
-      ))}
-      {path && <p className="muted">Saved to {path}</p>}
-      {markdown && <RenderedMarkdown source={markdown} />}
-    </>
-  );
-}
-
-// ---- history chat ----------------------------------------------------------
-
-type ChatEntry = { question: string; answer: string; cited_runs: string[] };
-
-export function ChatView({ siteId }: { siteId: string }) {
-  const [log, setLog] = useState<ChatEntry[]>([]);
-  const [question, setQuestion] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  const ask = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!question.trim()) return;
-    setBusy(true);
-    try {
-      const resp = await api.post<{ answer: string; cited_runs: string[] }>(
-        "/api/chat", { site_id: siteId, question });
-      setLog((l) => [...l, { question, ...resp }]);
-      setQuestion("");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <>
-      <h2>History chat <span className="muted">(read-only)</span></h2>
-      <p className="muted">
-        Answers are grounded in this site's stored audits and findings, and cite
-        the audits they drew from. Nothing here can change data.
-      </p>
-      {log.map((entry, i) => (
-        <Card key={i}>
-          <p><strong>You:</strong> {entry.question}</p>
-          <p style={{ whiteSpace: "pre-wrap" }}>{entry.answer}</p>
-          {!!entry.cited_runs.length && (
-            <p className="muted">
-              cited audits:{" "}
-              {entry.cited_runs.map((r) => (
-                <a key={r} href={`#/runs/${r}`} style={{ marginRight: 8 }}>
-                  {r.slice(0, 8)}
-                </a>
-              ))}
-            </p>
-          )}
-        </Card>
-      ))}
-      <form onSubmit={ask} className="inline-form">
-        <input value={question} onChange={(e) => setQuestion(e.target.value)}
-               placeholder="What regressed since the last audit?" style={{ flex: 1 }} />
-        <SecondaryButton submit disabled={busy}>Ask</SecondaryButton>
-      </form>
-    </>
-  );
-}

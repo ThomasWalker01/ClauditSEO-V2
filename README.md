@@ -128,7 +128,7 @@ content.
 
 Optional judgement on top of the deterministic engine: four analyst agents
 (E-E-A-T, search intent, answer-extractability, and a prioritisation
-narrative) plus a read-only history chat. The analysts are genuinely agentic:
+narrative). The analysts are genuinely agentic:
 each can call tools mid-analysis — fetch a page from the audited site,
 re-run a single deterministic check, or query the site's stored run history —
 and the loop continues until the model decides it is done. Ground rules, all

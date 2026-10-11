@@ -201,3 +201,19 @@ def test_the_apology_paragraph_is_gone():
     # The rendered sentence, not the phrase: the comment that replaced it
     # quotes the old wording to say why it went.
     assert "Counts are for this page only" not in src
+
+
+def test_speed_has_a_page_block_of_its_own():
+    """Item 265 (speed UX-03): Speed's trace is per page, and page mode for
+    `/` - one of the traced pages - drew fix cards only. It draws that page's
+    own trace, or says it was not traced, and its checks table at page scope.
+    `noPageBlock` stays for the parts whose picture describes the site."""
+    src = (SRC / "part_page.tsx").read_text(encoding="utf-8")
+    start = src.index("  speed: {")
+    speed = src[start:src.index("},", start)]
+    assert "noPageBlock" not in speed and "now: SpeedPageNow" in speed and "pageChecks: true" in speed, speed
+    assert "{render.pageChecks && (" in src, "the checks table is not drawn at page scope"
+    now = (SRC / "speed_now.tsx").read_text(encoding="utf-8")
+    assert "pathOf(x.page) === pathOf(page)" in now, (
+        "the traced page is matched by something other than its whole path")
+    assert "Not traced this audit" in now

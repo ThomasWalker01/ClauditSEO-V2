@@ -48,12 +48,26 @@ type Report = {
    *  `run_scope` says a one-page audit is not the site, and the "Ran against"
    *  column prints the run's composite. */
   run_scope?: string | null;
+  run_part_only?: string | null;
   /** Completed audits that have run since the one this analysis read. 0 is
    *  current; anything else means the site has moved underneath it. */
   audits_since: number | null;
   is_latest: boolean;
   findings: number; worst_severity: string | null;
+  /** Where the analysis is read (item 252): the part it investigates, and
+   *  whether that part's page - or the page's dossier - draws this row. Only
+   *  the newest per analysis is drawn there. */
+  part?: string | null; part_label?: string | null; shown?: boolean;
 };
+
+/** The address an analysis row's text is on, or null where no screen draws
+ *  it (item 252). "open" went to the run page for every row - 22 of
+ *  twenty22's 23 to one address - and the run page draws no analysis. */
+export function analysisHref(siteId: string, r: Pick<Report, "page_url" | "part" | "shown">): string | null {
+  if (!r.shown) return null;
+  if (r.page_url) return `#/sites/${siteId}/dossier/${encodeURIComponent(r.page_url)}`;
+  return r.part ? `#/sites/${siteId}?tab=findings&part=${encodeURIComponent(r.part)}` : null;
+}
 
 type RunRow = {
   id: string; started_at: string; tier: string;
@@ -69,6 +83,8 @@ type RunRow = {
    *  fair". */
   effective_scope?: string | null;
   site_reading?: boolean;
+  /** "Links only" on a part-only re-check (screen audits round 3). */
+  part_only?: string | null;
 };
 
 type Payload = {
@@ -87,7 +103,6 @@ type Payload = {
   runs_with_reports: number;
 };
 
-const day = (iso: string) => (iso || "").slice(0, 10);
 const tokens = (n: number) =>
   n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M`
   : n >= 1_000 ? `${Math.round(n / 1_000)}k` : String(n);
@@ -103,6 +118,14 @@ type Deliverable = {
   //: Completed audits since the one this document describes. 0 is current;
   //: null means its run is no longer in the site's history.
   audits_since: number | null;
+  //: What a run report was built over, from the frozen copy of the Latest
+  //: View stored with it (item 251). Null for a comparison and for a
+  //: document made before the copy was kept.
+  built_over?: { taken_at: string | null; run_id: string | null; score: number | null;
+                 tier: string | null; audit_at: string | null; open_findings: number;
+                 held_on: number | null; measured_from: string | null;
+                 measured_to: string | null; analyses: number;
+                 oldest_analysis: string | null } | null;
   //: "current" | "superseded" | "unknown". Unknown is its own state: see
   //: client_reports() for why it must not be read as current.
   renderer: string;
@@ -126,13 +149,17 @@ type Deliverable = {
  */
 /** Generate a deliverable against the audit in scope (brief v2 step G,
  *  UX-11). The rail's step 6 said "generate" and landed on a screen whose
- *  first control was a filter; this is that control, first. It posts what
- *  `ReportView` posts, for the audit the picker holds - and the comparison
- *  template for that audit against the reading before it. Generating is
- *  free (`clauditseo/reporting/generate.py` runs no model), so no spend
- *  mark; UX-66's shape for the busy state. */
-function GenerateCard({ siteId, runs, onMade }: {
+ *  first control was a filter; this is that control, first - and since item
+ *  256 the only one in the product that produces a client document: the
+ *  per-run screen at `#/reports/<run>` posted the same request with no hold,
+ *  no plan and no spend mark, and is gone. Rendering is free
+ *  (`clauditseo/reporting/generate.py` runs no model); the run report writes
+ *  the client plan with a model first, and that press is the spend. */
+function GenerateCard({ siteId, runs, reports, onMade }: {
   siteId: string; runs: RunRow[]; onMade: () => void;
+  /** The site's written analyses, for what the run report says of their age
+   *  (item 256). */
+  reports: Report[];
 }) {
   const { runId } = useSelection();
   const [template, setTemplate] = useState("run");
@@ -140,6 +167,10 @@ function GenerateCard({ siteId, runs, onMade }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [made, setMade] = useState<string | null>(null);
+  //: What the generator asks to be checked before the document is sent (screen
+  //: audits round 3, Reports UX-01): no operator name set, the plan refused.
+  //: Read and dropped since item 256 retired the only screen that drew them.
+  const [warnings, setWarnings] = useState<string[]>([]);
   //: Which of the two calls is in flight, and what the plan said if it
   //: refused. Separate from `error`, which is the one that stopped the
   //: document: a plan that could not be written is a caveat on a document
@@ -148,7 +179,8 @@ function GenerateCard({ siteId, runs, onMade }: {
   const [planNote, setPlanNote] = useState<string | null>(null);
   // The audit in scope, or the newest reading when the picker holds none
   // of these; the comparison pairs it with the reading before it.
-  const readings = runs.filter((x) => x.kind === "audit" && x.score != null);
+  // Not a part-only re-check: the plan and the document speak for the site.
+  const readings = runs.filter((x) => x.kind === "audit" && x.score != null && !x.part_only);
   const at = Math.max(0, readings.findIndex((x) => x.id === runId));
   const current = readings[at];
   const previous = readings[at + 1];
@@ -165,6 +197,11 @@ function GenerateCard({ siteId, runs, onMade }: {
   // definition - and neither do the comparison and trend templates, which
   // have no plan section to fill.
   const needsPlan = template === "run";
+  // The analyses a run report carries that were written against an audit
+  // that is no longer the newest, and the oldest of them (item 256).
+  const stale = reports.filter((r) => (r.audits_since ?? 0) > 0);
+  const oldest = stale.reduce((a, r) => (r.run_started_at < a ? r.run_started_at : a),
+                              stale[0]?.run_started_at ?? "");
   /** Item 178 (08-2, 08-3): the hold, from the one answer every surface reads.
    *  A client document is not offered while it is held, or before the hold
    *  has been read - the landing's held button and a live Generate here could
@@ -174,7 +211,7 @@ function GenerateCard({ siteId, runs, onMade }: {
   const clientHeld = audience === "client" && Boolean(target)
     && (holdFor === null || holdFor.held);
   const generate = async () => {
-    setBusy(true); setError(null); setMade(null);
+    setBusy(true); setError(null); setMade(null); setWarnings([]);
     try {
       if (needsPlan) {
         setStage("writing the plan…");
@@ -193,10 +230,10 @@ function GenerateCard({ siteId, runs, onMade }: {
         }
       }
       setStage("rendering the document…");
-      const resp = await api.post<{ id?: string; path?: string }>("/api/reports", {
-        template, audience, run_ids: ids,
-      });
+      const resp = await api.post<{ id?: string; path?: string; warnings?: string[] }>(
+        "/api/reports", { template, audience, run_ids: ids });
       setMade(resp.id ?? resp.path ?? "made");
+      setWarnings(resp.warnings ?? []);
       onMade();
     } catch (e) {
       setError((e as Error).message);
@@ -208,9 +245,22 @@ function GenerateCard({ siteId, runs, onMade }: {
   return (
     <Card>
       <h3>Generate</h3>
-      <p className="muted">
-        {current
-          ? <>From the audit of {day(current.started_at)} · {current.tier}
+      {/* Item 256: what the document is made from, said as what it is. The
+          sentence read "From the audit of ... - the one selected on the client
+          screen" and "Pick an audit in the header": since item 239 a run
+          report is a copy of the site's record, not of a picked audit, and
+          only the comparison is a pair of audits. */}
+      <p className="muted report-gen-from">
+        {!current
+          ? "No audit of this site has completed yet; a document is made from one."
+          : template === "comparison" && previous
+            ? <>The audit of {day(current.started_at)} against the audit
+                of {day(previous.started_at)}. Free: no model runs.</>
+          : template === "monthly-trend"
+            ? "The site's scored audits, month by month. Free: no model runs."
+          : <>The {template === "run" ? "run report" : "audit report"} is the
+              site's record as of today: its score from the audit
+              of {day(current.started_at)} ({current.tier}
               {/* The extent beside the score, for the reason `RunScore` gates
                   on it: `· 72.77` alone read as this site's score where the
                   audit was one page of 53. Named, not withheld - the number is
@@ -218,14 +268,16 @@ function GenerateCard({ siteId, runs, onMade }: {
               {current.score != null
                 ? ` · ${current.score}${scoreExtent(current.effective_scope)
                     ? ` ${scoreExtent(current.effective_scope)}` : ""}`
-                : ""} — the one selected on
-              the <a href={`#/sites/${siteId}`} onClick={goHandler(`#/sites/${siteId}`)}>client
-              screen</a>.{" "}
+                : ""}); findings dated by the audit that last measured them
+              {template === "run" && (
+                <>; analyses as last written{stale.length
+                  ? `, ${stale.length} of them against older audits (oldest ${day(oldest)})`
+                  : ""}</>
+              )}.{" "}
               {needsPlan
-                ? <><SpendMark />The run report writes the client plan first,
-                    at the model set for it on Admin.</>
-                : "Free: no model runs."}</>
-          : "Pick an audit in the header; a document is generated against one."}
+                ? <><SpendMark />It writes the client plan first, at the model
+                    set for it on Admin.</>
+                : "Free: no model runs."}</>}
       </p>
       <div className="inline-form report-gen">
         <select value={template} onChange={(e) => setTemplate(e.target.value)}
@@ -261,6 +313,17 @@ function GenerateCard({ siteId, runs, onMade }: {
             Generate
           </SpendButton>
         ) : (
+          // UX-66, stated in full here since item 256 retired the screen that
+          // used to state it. The caption does not swap to a busy word. A
+          // button's label is its accessible name, so a name that changes
+          // mid-press is announced as a different control appearing - which
+          // is why the Deliverables regenerate control below moved the same
+          // word off the same kind of button for UX-64, why round 111 moved
+          // it off `CompareView`'s generate control (UX-88), and why round
+          // 112 moved it off `LauncherView`'s "Check this URL" (UX-96).
+          // `aria-busy` carries the state the caption used to, and the
+          // region below says it in words for the operator who can see
+          // neither.
           <PrimaryButton onClick={clientHeld ? undefined : generate}
                 disabled={busy || !target} aria-busy={busy}
                 aria-disabled={clientHeld || undefined}
@@ -272,10 +335,23 @@ function GenerateCard({ siteId, runs, onMade }: {
           ? <ReportHeld id="generate-held" count={holdFor.count} siteId={siteId} />
           : <span id="generate-held" className="muted">Checking whether the client report can go out…</span>)}
       </div>
+      {/* UX-66. Mounted unconditionally, and that is the load-bearing part: a
+          live region inserted in the same render as its text gives assistive
+          technology nothing to observe a change against, so it has to be here
+          before there is anything to say. Empty while idle. `aria-live` is
+          stated rather than left to the implicit mapping of `role="status"`,
+          matching `Loading` in `components.tsx` and `CompareView`'s, so the
+          screen keeps one convention. */}
       <div className="muted" role="status" aria-live="polite">
         {busy ? <Working>{stage || "Generating the document…"}</Working>
           : made ? "Generated; it is in the table below." : ""}
       </div>
+      {made && !busy && warnings.length > 0 && (
+        <div className="report-gen-warnings" role="note">
+          <p><strong>Before you send this:</strong></p>
+          <ul>{warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
+        </div>
+      )}
       {planNote && !busy && (
         <p className="muted">
           The client plan could not be written, so the document carries the
@@ -401,9 +477,33 @@ function Deliverables({ siteId, tick = 0 }: { siteId: string; tick?: number }) {
         <tbody>
           {shown.map(({ row: r, identical }) => (
             <tr key={r.id}>
-              <td>{r.created_at.slice(0, 10)}</td>
+              <td>{day(r.created_at)}</td>
               <td>
                 {r.template}
+                {/* Item 251: what this document was built over, read from the
+                    copy stored with it, so the row states the document's own
+                    facts and not whatever the site holds now. */}
+                {r.built_over && (
+                  <div className="muted report-built-over">
+                    built over the audit of {day(r.built_over.audit_at)}
+                    {(() => {
+                      const bits = [r.built_over.tier,
+                                    r.built_over.score != null ? `score ${r.built_over.score}` : null]
+                        .filter(Boolean).join(", ");
+                      return bits ? ` (${bits})` : "";
+                    })()}
+                    {" · "}{r.built_over.open_findings} open finding{r.built_over.open_findings === 1 ? "" : "s"}
+                    {r.built_over.measured_from && r.built_over.measured_to
+                      ? (day(r.built_over.measured_from) === day(r.built_over.measured_to)
+                          ? `, measured ${day(r.built_over.measured_to)}`
+                          : `, measured ${day(r.built_over.measured_from)} to ${day(r.built_over.measured_to)}`)
+                      : ""}
+                    {r.built_over.analyses > 0
+                      ? ` · ${r.built_over.analyses} analys${r.built_over.analyses === 1 ? "is" : "es"}`
+                        + (r.built_over.oldest_analysis ? `, the oldest from ${day(r.built_over.oldest_analysis)}` : "")
+                      : ""}
+                  </div>
+                )}
                 {identical > 1 && (
                   <div className="muted dup-note">
                     {identical} identical renders — same template, audience,
@@ -499,7 +599,7 @@ function Deliverables({ siteId, tick = 0 }: { siteId: string; tick?: number }) {
                     </SecondaryButton>
                   ) : (
                     <details className="row-more">
-                      <summary aria-label={`actions for the ${r.template} document of ${r.created_at.slice(0, 10)}`}>⋯</summary>
+                      <summary aria-label={`actions for the ${r.template} document of ${day(r.created_at)}`}>⋯</summary>
                       <SecondaryButton
                               disabled={busy === r.id}
                               onClick={() => regenerate(r)}>
@@ -547,6 +647,7 @@ function Deliverables({ siteId, tick = 0 }: { siteId: string; tick?: number }) {
 }
 
 import { Legend } from "./glossary";
+import { day } from "./dates";
 
 export function ReportsView({ siteId }: { siteId: string }) {
   const { site } = useSelection();
@@ -583,14 +684,16 @@ export function ReportsView({ siteId }: { siteId: string }) {
         <strong> Documents render free.</strong>{" "}
         The run report writes a client plan with a model first, and says so on
         its Generate; the audit report of free checks only spends nothing. The
-        analyses listed were paid for already. Open one to read it, or start a new one
+        analyses listed were paid for already. Each opens where it is read: on the
+        page of the part it investigates, or on the page it was run for. Start a new one
         from the part it investigates on the client screen.
       </p>
 
       {/* Brief v2 step G: generate first, then what was handed over, then
           the analyses that fed it - folded, since step 4 lists them beside
           the part each investigates. */}
-      <GenerateCard siteId={siteId} runs={data.runs} onMade={() => setMade((n) => n + 1)} />
+      <GenerateCard siteId={siteId} runs={data.runs} reports={data.reports}
+                    onMade={() => setMade((n) => n + 1)} />
       <Deliverables siteId={siteId} tick={made} />
       <Card>
         <Stats>
@@ -717,7 +820,8 @@ export function ReportsView({ siteId }: { siteId: string }) {
                       <span className="muted">{r.run_tier}</span>
                       {" "}<RunScore kind={r.run_kind} status={r.run_status}
                                      score={r.run_score}
-                                     scope={r.run_scope ?? null} />
+                                     scope={r.run_scope ?? null}
+                                     partOnly={r.run_part_only ?? null} />
                       {/* Counted, not flagged: "superseded" is not something
                           an operator can act on, but "three audits since" is
                           — one is a re-read, five is a rewrite. */}
@@ -746,10 +850,25 @@ export function ReportsView({ siteId }: { siteId: string }) {
                         : <span title="Ran before a dollar rate was configured">—</span>}
                     </td>
                     <td className="muted">{r.model ?? "—"}</td>
-                    <td>
-                      <LinkButton href={`#/runs/${r.run_id}`}>
-                        open&nbsp;→
-                      </LinkButton>
+                    <td className="rep-open">
+                      {/* Item 252: to the screen that draws this analysis, or
+                          no link and the reason. */}
+                      {(() => {
+                        const at = analysisHref(siteId, r);
+                        if (at) {
+                          return (
+                            <LinkButton href={at} onClick={goHandler(at)}>
+                              {r.page_url ? "open on the page" : `open on ${r.part_label ?? r.part}`}&nbsp;→
+                            </LinkButton>
+                          );
+                        }
+                        return (
+                          <span className="muted">
+                            {r.part || r.page_url ? "replaced by a newer analysis"
+                                                  : "not drawn on a part page"}
+                          </span>
+                        );
+                      })()}
                     </td>
                   </tr>
                 ))}
@@ -792,7 +911,8 @@ export function ReportsView({ siteId }: { siteId: string }) {
                         for the same run. One component, two call sites, one
                         missing argument. */}
                     <td><RunScore kind={r.kind} status={r.status}
-                                  score={r.score} scope={r.effective_scope ?? null} /></td>
+                                  score={r.score} scope={r.effective_scope ?? null}
+                                  partOnly={r.part_only ?? null} /></td>
                     <td>
                       <LinkButton href={`#/runs/${r.id}`}>open&nbsp;→</LinkButton>
                     </td>

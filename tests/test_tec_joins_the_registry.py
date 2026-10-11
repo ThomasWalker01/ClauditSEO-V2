@@ -74,6 +74,9 @@ def test_the_registered_defaults_are_the_current_severities():
         "sitemap-invalid": "high", "sitemap-lastmod-stale": "low",
         "sitemap-404s": "medium", "sitemap-noindex": "medium",
         "sitemap-regression": "high", "render-only": "medium",
+        # Item 247: the page's own scripts failing in the browser.
+        "scripts-blocked-by-csp": "medium", "page-script-error": "medium",
+        "script-failed-to-load": "medium",
     }
     for check, sev in expected.items():
         assert ds[f"TEC/{check}"] == sev, (check, ds.get(f"TEC/{check}"))

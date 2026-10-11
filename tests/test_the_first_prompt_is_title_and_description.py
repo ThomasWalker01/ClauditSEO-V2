@@ -91,7 +91,7 @@ def test_title_desc_is_a_conforming_brief_on_its_own_part_and_onpage_hygiene_kee
     im = briefs.by_id()["images"]
     # Sixteen: plus `img-logo` (AU6) and `img-heavy` (AU7), less
     # `img-review-schema`, which step AS moved to Structured data.
-    assert im.part == "images" and len(im.checks) == 16
+    assert im.part == "images" and len(im.checks) == 17
     assert conforms("images")
     text = im.path.read_text(encoding="utf-8")
     assert "title-duplicate" not in text and "OTHER_PAGE_TITLES_AND_METAS" not in text

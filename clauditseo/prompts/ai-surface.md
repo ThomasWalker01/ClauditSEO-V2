@@ -431,7 +431,9 @@ Handling rules:
   not emitted. Enrichment never adds an entity the record or map does not
   contain; where the record is thin, `note` names the field that would unlock
   more and stops.
-- `replacement` for enrichment is the sentence as it should read, placed.
+- `replacement` for enrichment is the sentence as it should read, placed:
+  the candidates' sentences themselves, one per line, never a pointer such
+  as "see candidates". For `answer-liftable` it is the passage itself.
   For alignment and type, the JSON-LD delta referencing Structured data's
   node ids — never a re-authored block. For the ID page, the required
   sections mapped to record fields.
@@ -573,7 +575,7 @@ Two blocks, in this order — three when {{LLMS_TXT_BUILD}} is true.
       "candidates": [
         {"entity": "Melbourne", "source": "site record: locations", "place": "first paragraph under the H1", "sentence": "Birch plans and runs corporate conferences in Melbourne and across Australia."}
       ],
-      "replacement": "see candidates — each is the sentence as it should read, placed",
+      "replacement": "Birch plans and runs corporate conferences in Melbourne and across Australia.",
       "kind": "text",
       "note": null
     },
@@ -586,7 +588,7 @@ Two blocks, in this order — three when {{LLMS_TXT_BUILD}} is true.
       "criteria": {"named_subject": false, "answer_present": true, "qualified": false, "self_contained": true},
       "passage": "Birch corporate conferences run from [client to supply] delegates over one to three days, with venue, catering and production handled by one team.",
       "place": "first paragraph under the H1",
-      "replacement": "see passage — placed as stated",
+      "replacement": "Birch corporate conferences run from [client to supply] delegates over one to three days, with venue, catering and production handled by one team.",
       "kind": "text",
       "note": "delegate range must come from the client"
     },
@@ -648,11 +650,12 @@ Rules for the block:
   part for `elsewhere`, null when unresolved).
 - `absent_reads[]` lists each declared read-through check with no row for this
   site, as `check` · `part` · `needs`. `needs` is exactly one of: `part has
-  not run`; `part ran free-only, this check is analysis`; or `blocked:
-  <reason>` with the reason named, for anything else. Never free prose, and
-  never silence: an unavailable read is always one of the three, so a site
-  that bought a free run and a site whose part never ran are told apart in
-  the register. It is separate
+  not run`; `part ran free-only, this check is analysis`; `ran clean`, where
+  the owning automatic check ran on this audit and raised nothing, so there is
+  nothing to carry; or `blocked: <reason>` with the reason named, for anything
+  else. Never free prose, and never silence: a read with no row is always one
+  of the four, so a site that bought a free run, a site whose part never ran
+  and a site whose check passed are told apart in the register. It is separate
   from `not_assessable[]`, which holds only this analysis's own checks blocked by
   an empty record field — so every id in `not_assessable[]` is in `checks:`
   and every id in `absent_reads[]` is in `reads:`. The AI-surface page shows

@@ -95,6 +95,8 @@ export function UrlsNowBlock({ now, picked = null, onTemplate }: {
       </p>
 
       <h4>Patterns</h4>
+      {/* Item 266 (row 11): the control says what it does. */}
+      {onTemplate && <p className="cn-mute">Press a template to show only its fixes.</p>}
       <table className="cn-matrix">
         <thead>
           <tr><th>Template</th><th>Count</th><th>Depth</th><th>Note</th></tr>
@@ -118,6 +120,17 @@ export function UrlsNowBlock({ now, picked = null, onTemplate }: {
           ))}
         </tbody>
       </table>
+      {/* Item 266 (row 9): the table's one finding, as a sentence. */}
+      {(() => {
+        const deep = now.patterns.filter((r) => r.depth > now.thresholds.max_depth);
+        const n = deep.reduce((s, r) => s + r.count, 0);
+        return deep.length ? (
+          <p className="cn-mute">
+            {n} URL{n === 1 ? "" : "s"} over depth {now.thresholds.max_depth} in {deep.length}{" "}
+            template{deep.length === 1 ? "" : "s"}: {deep.map((r) => r.pattern).join(", ")}.
+          </p>
+        ) : null;
+      })()}
 
       <h4>Parameter inventory</h4>
       {now.parameters.length === 0 ? (

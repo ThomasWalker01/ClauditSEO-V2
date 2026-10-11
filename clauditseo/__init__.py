@@ -184,4 +184,25 @@ __version__ = "0.14.0"
 # a top-level `mobile_parity` block - stored when clean too, as "no divergence
 # across N pages"; the page record is unchanged. A run from before reads the
 # three as not assessed.
-ENGINE_VERSION = "0.27.0"
+#
+# 0.28.0: a run row says what its own evidence knew of the site's size and
+# how its scope label was arrived at (item 253) - `known_paths` and
+# `scope_source`. A run labelled site or full is a reading of the site only
+# if it read 50 pages or half of `known_paths`; a row from before carries
+# neither and passes on its label, as it did. The rendered pass also keeps
+# what each page's scripts did (item 247), raising TEC/scripts-blocked-by-csp,
+# TEC/page-script-error and TEC/script-failed-to-load; a run from before
+# raised none of them because it did not listen.
+#
+# 0.29.0: Links files one finding per page (item 251 step 4, channel answers
+# 20261002-1215 and -1310). Filed under the check's own id, a Links finding
+# was a site finding and deducted a flat amount whatever it covered; per page
+# it is rated on the share of pages it is on, as every other dimension's
+# checks are. So the Links subscore and the composite MOVE on the first audit
+# after this with nothing on the site having changed - up where a site's link
+# faults are rare (twenty22: Links 67.0 to about 87.4, composite 68.8 to about
+# 71.1), down where one is widespread. That is why the version moves: a score
+# from before is not comparable with one from after, and the trend draws the
+# break. Stored scores are not recomputed. Migration 0073 splits the stored
+# check-level findings per page.
+ENGINE_VERSION = "0.29.0"

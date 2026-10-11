@@ -48,6 +48,7 @@ def _registries() -> list[tuple[str, dict, frozenset]]:
     from clauditseo.modules import ais as _ais
     from clauditseo.modules import cnt as _cnt
     from clauditseo.modules import links as _links
+    from clauditseo.modules import loc as _loc
     from clauditseo.modules import onp as _onp
     from clauditseo.modules import prf as _prf
     from clauditseo.modules import sec as _sec
@@ -71,6 +72,8 @@ def _registries() -> list[tuple[str, dict, frozenset]]:
              _sec.BRIEF_ONLY_CHECKS),
             # AIS (item 145, brief v22): the AI surface brief's registry.
             (_ais.AiSurfaceModule.code, _ais.DEFAULT_SEVERITY, _ais.BRIEF_ONLY_CHECKS),
+            # LOC (item 278, row 11): the local brief reads its five free checks.
+            (_loc.LocalModule.code, _loc.DEFAULT_SEVERITY, _loc.BRIEF_ONLY_CHECKS),
             # Dimensions with no module, so no sweep and no severity table.
             *LABEL_ONLY_REGISTRIES]
 

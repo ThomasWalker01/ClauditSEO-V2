@@ -75,7 +75,14 @@ VIEWS = DASHBOARD_SRC / "views.tsx"
 
 #: Named rather than located by line, so an edit above it cannot silently
 #: empty this guard's population.
-OWNER = "ReportView"
+#:
+#: `GenerateCard` in `reports.tsx` since item 256. The control this file was
+#: written for was `views.tsx`'s `ReportView`, the per-run screen at
+#: `#/reports/<run>`; that screen is deleted, and the Reports tab's Generate is
+#: the one control left that produces a document. It carried the same shape
+#: already, and the convention's full statement moved there with it.
+OWNER = "GenerateCard"
+REPORTS = DASHBOARD_SRC / "reports.tsx"
 
 #: The control's caption, which is also its accessible name.
 LABEL = "Generate"
@@ -113,9 +120,12 @@ def _body(owner: str, path: Path = VIEWS) -> str:
     the two-copies-of-one-rule defect `DISCIPLINE.md`'s own preamble is about.
     """
     source = _as_buttons(path.read_text(encoding="utf-8"))
+    # `\n}\n`, the column-zero brace that ends the component. A bare `\n}`
+    # ended the body at the close of a props type written over several lines
+    # (`}) {`), which `GenerateCard`'s is and `ReportView`'s was not.
     for opener in (f"export function {owner}", f"function {owner}"):
         if opener in source:
-            return source.split(opener, 1)[1].split("\n}", 1)[0]
+            return source.split(opener, 1)[1].split("\n}\n", 1)[0]
     raise AssertionError(
         f"{owner} is not defined in {path}; this guard's population is empty "
         "and every clause below would pass by finding nothing")
@@ -241,7 +251,7 @@ def _swapping_captions() -> list[tuple[str, tuple[str, ...]]]:
 
 
 def test_the_component_and_its_control_are_both_still_here():
-    body = _uncommented(_body(OWNER))
+    body = _uncommented(_body(OWNER, REPORTS))
     assert "<button" in body, f"{OWNER} renders no button at all"
     captions = [
         _caption(body, m.start()) for m in re.finditer(r"<button\b", body)]
@@ -360,7 +370,7 @@ def test_nothing_is_deferred_now_that_the_operator_has_answered():
 
 
 def test_the_generate_control_keeps_one_accessible_name():
-    body = _uncommented(_body(OWNER))
+    body = _uncommented(_body(OWNER, REPORTS))
     swaps = SWAPPING.findall(body)
     assert not swaps, (
         f"{OWNER} still swaps a control caption to a busy word ({swaps}); the "
@@ -370,7 +380,7 @@ def test_the_generate_control_keeps_one_accessible_name():
 
 
 def test_the_generate_control_carries_the_state_it_stopped_saying():
-    body = _uncommented(_body(OWNER))
+    body = _uncommented(_body(OWNER, REPORTS))
     generate = body[body.find("<button"):body.find("</button>") + 9]
     assert "aria-busy" in generate, (
         "the Generate button dropped the busy word from its label and put "
@@ -382,7 +392,7 @@ def test_the_in_flight_words_reach_a_region_that_was_already_mounted():
     # Uncommented, and that is not incidental: the fix explains itself in a
     # comment that quotes `role="status"` and `aria-live`, and a reader that
     # kept comments matches the explanation instead of the element.
-    body = _uncommented(_body(OWNER))
+    body = _uncommented(_body(OWNER, REPORTS))
     live = re.search(
         r'role="status"[^>]*aria-live="polite"'
         r'|aria-live="polite"[^>]*role="status"', body)
@@ -426,7 +436,7 @@ def test_the_retry_control_and_its_caption_are_both_still_here():
     """The population clause, without which every clause below passes by
     finding nothing — the same shape
     `test_the_component_and_its_control_are_both_still_here` takes for
-    `ReportView`."""
+    `GenerateCard`."""
     body = _uncommented(_body(RETRY_OWNER, COMPONENTS))
     assert "<button" in body, f"{RETRY_OWNER} renders no button at all"
     captions = [

@@ -35,9 +35,10 @@ import { useState } from "react";
 
 import { TrendPoint } from "./api";
 import { SCORE_BANDS } from "./components";
+import { clock, day } from "./dates";
 
-const trendDay = (iso: string) => (iso || "").slice(0, 10);
-const trendMinute = (iso: string) => (iso || "").slice(11, 16);
+const trendDay = day;
+const trendMinute = clock;
 
 /** Labels for a whole trend, carrying a time only where a date collides.
  *

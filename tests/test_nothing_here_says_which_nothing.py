@@ -14,7 +14,6 @@ checks passing on a page with no JSON-LD.
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 
@@ -43,8 +42,11 @@ def _code_lines(text: str) -> list[str]:
 
 
 def test_the_three_states_are_registered_once():
-    entries = json.loads((ROOT / "clauditseo" / "glossary.json").read_text(encoding="utf-8"))["entries"]
-    states = [e for e in entries if e.get("vocabulary") == "measurement states"]
+    # Resolved entries (item 263): "not measured" is defined once, under check
+    # states, and `measure-not-measured` is `same_as` it; the three states
+    # are still three ids with three words.
+    from clauditseo import glossary
+    states = [e for e in glossary.entries() if e.get("vocabulary") == "measurement states"]
     assert {e["id"] for e in states} == {"measure-clean", "measure-not-measured", "measure-cannot"}
     assert {e["word"] for e in states} == {"clean", "not measured", "cannot have findings"}
 

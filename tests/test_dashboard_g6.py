@@ -116,11 +116,10 @@ def test_g6_full_dashboard_flow(api):
     trend = api.get(f"/api/sites/{site_id}/trend").json()
     assert len(trend) == 3
 
-    # history chat: seeded question cites the correct (regression) run
-    chat = api.post("/api/chat", json={"site_id": site_id,
-                                       "question": "What regressed for Gate Six?"}).json()
-    assert run3["id"] in chat["cited_runs"]
-    assert "title-missing" in chat["answer"]
+    # The history chat is retired (channel ruling 20261011-0747); its route
+    # is gone.
+    assert api.post("/api/chat", json={"site_id": site_id,
+                                       "question": "x"}).status_code in (404, 405)
 
     # scores/weights visible per dimension
     assert set(run3["subscores"]) == {"ONP", "TEC"}

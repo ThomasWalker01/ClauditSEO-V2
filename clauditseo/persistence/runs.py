@@ -46,7 +46,7 @@ from .repo import create_id, now_iso
 #: ``test_every_state_the_schema_allows_is_classified_for_the_model``, so a
 #: seventh value cannot be added to the schema without being classified here.
 ALL_STATES = ("candidate", "open", "fixed", "regressed", "accepted-risk",
-              "withdrawn")
+              "withdrawn", "set-aside")
 
 #: What the dispatcher's memory may contain. Positive by construction: a new
 #: state is withheld from the model until somebody adds it here, which is the
@@ -57,7 +57,11 @@ LIVE_STATES = ("candidate", "open", "fixed", "regressed")
 #: ``accepted-risk`` is present and the operator has decided to live with it —
 #: recommending it again is noise. ``withdrawn`` was never true, and the model
 #: cannot leak what it never saw.
-MODEL_BLIND_STATES = ("accepted-risk", "withdrawn")
+MODEL_BLIND_STATES = ("accepted-risk", "withdrawn",
+                      # The page it names now answers an error (channel
+                      # ruling 20261011-0745): the question no longer applies
+                      # there, and the model is not asked about it.
+                      "set-aside")
 
 #: What the operator's own control may write, as against what a run derives.
 #:
@@ -75,7 +79,17 @@ MODEL_BLIND_STATES = ("accepted-risk", "withdrawn")
 #: unsettable — see the account above :data:`ALL_STATES`. A seventh
 #: operator-owned state added to :data:`MODEL_BLIND_STATES` is settable
 #: without a line changing in ``api/app.py``.
-OPERATOR_SETTABLE_STATES = ("open",) + MODEL_BLIND_STATES
+OPERATOR_SETTABLE_STATES = ("open", "accepted-risk", "withdrawn")
+#: ``set-aside`` is model-blind but a run's to derive, not the operator's to
+#: set (channel ruling 20261011-0745); making it settable for gone pages is a
+#: separate decision. So this list is spelled, no longer derived.
+
+#: The page-level Links checks a page that answers an error makes
+#: inapplicable (channel ruling 20261011-0745). `broken-internal` is not one:
+#: the error is what it measures. Other parts may join by adding checks here.
+SET_ASIDE_CHECKS = frozenset({("LNK", "inlinks-low"), ("LNK", "orphan"),
+                              ("LNK", "depth-deep"), ("LNK", "anchor-generic"),
+                              ("LNK", "nofollow-internal")})
 
 #: The latest ``findings`` row for a fingerprint **on one site**.
 #:
@@ -104,17 +118,28 @@ def _latest_finding(fp: str = "fs.fingerprint", site: str = "fs.site_id") -> str
     return LATEST_FINDING.format(fp=fp, site=site)
 
 
+#: Passed as `scan_scope` by a launcher whose run has not chosen its breadth
+#: yet (item 253): an adaptive run. Stored as NULL, and `set_tier` records the
+#: scope when it stamps the tier the run executed at.
+SCOPE_NOT_YET = "not-yet"
+#: `scope_source`: the launcher named the scope, or it was read off the tier.
+SCOPE_POSTED = "posted"
+SCOPE_DERIVED = "derived-from-tier"
+
+
 def create_run(conn: sqlite3.Connection, site_id: str, dimensions: list[str],
                tier: str, created_by: str | None = None,
                analyst_enabled: bool = False, kind: str = "audit",
                scan_scope: str | None = None, scan_depth: str | None = None,
-               scan_url: str | None = None) -> str:
+               scan_url: str | None = None, scope_source: str | None = None) -> str:
     # Brief v6 step V2: an audit that states no scope reads the site - the
     # launch route and the CLI always state one, and a caller that says
     # nothing (a scheduled audit, an import) means the whole site. Only a
     # row from before the column existed is NULL, and for that the page
     # count decides.
-    if scan_scope is None and kind == "audit":
+    if scan_scope == SCOPE_NOT_YET:
+        scan_scope = None
+    elif scan_scope is None and kind == "audit":
         scan_scope = "full"
     """`kind='verify'` for a pass that re-crawls only the pages behind
     specific findings, `kind='refresh'` for a pass that re-measures ONE page
@@ -131,10 +156,13 @@ def create_run(conn: sqlite3.Connection, site_id: str, dimensions: list[str],
         conn.execute(
             "INSERT INTO audit_runs (id, site_id, dimensions, tier, status, engine_version,"
             " analyst_enabled, started_at, created_by, created_at, kind,"
-            " scan_scope, scan_depth, scan_url)"
-            " VALUES (?, ?, ?, ?, 'running', '', ?, ?, ?, ?, ?, ?, ?, ?)",
+            " scan_scope, scan_depth, scan_url, scope_source)"
+            " VALUES (?, ?, ?, ?, 'running', '', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (run_id, site_id, json.dumps(dimensions), tier, int(analyst_enabled),
-             now_iso(), created_by, now_iso(), kind, scan_scope, scan_depth, scan_url),
+             now_iso(), created_by, now_iso(), kind, scan_scope, scan_depth, scan_url,
+             # How the label was arrived at (item 253): `posted` by the
+             # launcher, or `derived-from-tier`. NULL where nobody said.
+             scope_source if scan_scope else None),
         )
     return run_id
 
@@ -198,11 +226,27 @@ def one_evidence_read(conn: sqlite3.Connection):
     read a copy from before its own write. Inside it every payload also sees
     one version of the evidence, where separate reads could straddle a write.
     """
-    token = _EVIDENCE_TEXT.set({"conn": conn, "text": {}})
+    token = _EVIDENCE_TEXT.set({"conn": conn, "text": {}, "memo": {}})
     try:
         yield
     finally:
         _EVIDENCE_TEXT.reset(token)
+
+
+def _once_in_scope(conn: sqlite3.Connection, key: tuple, compute):
+    """`compute()` once per key inside :func:`one_evidence_read`, and every
+    time outside it. For a site-level answer the anatomy route asks for again
+    and again - `_audits_since` was asked 32 times per load, each re-reading
+    every run's crawled-path list, three seconds of a thirteen-second page.
+    Same scoping and the same reason as the evidence text: one request sees
+    one answer, and nothing outlives it."""
+    memo = _EVIDENCE_TEXT.get()
+    if memo is None or memo["conn"] is not conn:
+        return compute()
+    store = memo["memo"]
+    if key not in store:
+        store[key] = compute()
+    return store[key]
 
 
 def evidence_text(conn: sqlite3.Connection, run_id: str | None) -> str | None:
@@ -247,9 +291,18 @@ def parity_mode(conn: sqlite3.Connection, site_id: str,
 
 
 def set_tier(conn: sqlite3.Connection, run_id: str, tier: str) -> None:
-    """Adaptive runs record the tier they actually executed at."""
+    """Adaptive runs record the tier they actually executed at - and, where
+    the run named no scope, what that tier read (item 253): a pulse that
+    stopped at T1 is a page scan, not a reading of the site. A scope the
+    launcher stated is never overwritten."""
+    from clauditseo.scanscope import scope_for_tier
     with conn:
-        conn.execute("UPDATE audit_runs SET tier=? WHERE id=?", (tier, run_id))
+        conn.execute("UPDATE audit_runs SET tier=?,"
+                     " scope_source=CASE WHEN scan_scope IS NULL AND kind='audit'"
+                     " THEN ? ELSE scope_source END,"
+                     " scan_scope=CASE WHEN scan_scope IS NULL AND kind='audit'"
+                     " THEN ? ELSE scan_scope END WHERE id=?",
+                     (tier, SCOPE_DERIVED, scope_for_tier(tier), run_id))
 
 
 def fail_run(conn: sqlite3.Connection, run_id: str, reason: str) -> None:
@@ -411,6 +464,18 @@ SITE_WIDE_MIN_PATHS = 50
 #: counted as a finding it was the "Prioritise & report" part's only one, and
 #: made that part claim a score it never had.
 ENGINE_RUN_NOTES = ("adaptive-escalation", "adaptive-no-escalation")
+#: Items 278 and 279: the engine's scope statements that are not named
+#: `-not-assessed` or `-coverage` - a figure recorded for reference
+#: (`-reported`: referring domains, domain authority) and the rendered pass's
+#: sample (`axe-sampled`). Filed with `scope_statement=True` and Info, they were
+#: counted as findings: Backlinks' badge read 2 over no fault, Accessibility's
+#: 54 counted the sample. `test_every_scope_statement_is_a_coverage_note`
+#: holds every `scope_statement=True` finding the modules file to this rule.
+#: Item 267 (row 8): and `ai-experience-unmeasured`, whose own advice is
+#: "Nothing to change: this row states a limit of the audit" - it was drawn
+#: under Fixes and counted in the part's "Free checks · 4" and the strip.
+SCOPE_NOTES = ("axe-sampled", "ai-experience-unmeasured")
+SCOPE_NOTE_SUFFIXES = ("-not-assessed", "-coverage", "-reported")
 
 
 def is_coverage_note(check_id: str, severity: str | None) -> bool:
@@ -432,16 +497,25 @@ def is_coverage_note(check_id: str, severity: str | None) -> bool:
     """
     if severity != "info":
         return False
-    return (check_id.endswith("-not-assessed")
-            or check_id.endswith("-coverage")
+    return (check_id.endswith(SCOPE_NOTE_SUFFIXES)
+            or check_id in SCOPE_NOTES
             or check_id in ENGINE_RUN_NOTES)
+
+
+def is_note_name(check_id: str) -> bool:
+    """Whether a check id names a coverage note, whatever severity it is
+    filed at: the names `is_coverage_note` reads. For listing a part's
+    registered checks (item 279, row 7), where no row - so no severity -
+    is in hand."""
+    return (check_id.endswith(SCOPE_NOTE_SUFFIXES)
+            or check_id in SCOPE_NOTES or check_id in ENGINE_RUN_NOTES)
 
 
 def coverage_note_sql(check: str = "f.check_id", severity: str = "f.severity") -> str:
     """The same rule as a SQL predicate, for the counts taken in SQL."""
-    notes = ", ".join(f"'{n}'" for n in ENGINE_RUN_NOTES)
-    return (f"({severity} = 'info' AND ({check} LIKE '%-not-assessed'"
-            f" OR {check} LIKE '%-coverage' OR {check} IN ({notes})))")
+    notes = ", ".join(f"'{n}'" for n in (*ENGINE_RUN_NOTES, *SCOPE_NOTES))
+    likes = " OR ".join(f"{check} LIKE '%{s}'" for s in SCOPE_NOTE_SUFFIXES)
+    return f"({severity} = 'info' AND ({likes} OR {check} IN ({notes})))"
 
 
 def scope_of(row) -> str | None:
@@ -482,9 +556,49 @@ def kind_in_site_reading_kinds(column: str = "kind") -> str:
     return f"{column} IN ({marks})"
 
 
+def known_paths_of(evidence: dict | None) -> int | None:
+    """How many pages the run's own evidence says the site has (item 253):
+    what its sitemaps declared, or - where it read no sitemap - what its own
+    crawl discovered, fetched and still queued. None where the evidence says
+    neither. The run's own evidence and never a later run's, so a replay
+    gives a run the same standing it had."""
+    if not evidence:
+        return None
+    declared = evidence.get("sitemap_entry_total") or 0
+    if declared and any((s or {}).get("status") == 200 for s in evidence.get("sitemaps") or []):
+        return int(declared)
+    stats = evidence.get("stats") or {}
+    if stats.get("fetched") is None:
+        return None
+    return int(stats.get("fetched") or 0) + int(stats.get("queue_remaining") or 0)
+
+
+def meets_page_floor(row) -> bool:
+    """The page floor of a site reading (item 253, the channel's answer of
+    2026-10-02): the run read at least `SITE_WIDE_MIN_PATHS` pages, or at
+    least half of what its own evidence says the site has (`known_paths`).
+
+    The label alone is not enough: a `full` crawl that was cut short at three
+    pages of a 49-page sitemap is not a reading of the site. Half, not all,
+    because a real crawl of a small site does not reach every declared page -
+    twenty22's reference crawls read 45 of 49. A row that does not carry the
+    count (in flight, or stored before the column) passes on its label."""
+    keys = row.keys()
+    known = row["known_paths"] if "known_paths" in keys else None
+    raw = row["crawled_paths"] if "crawled_paths" in keys else None
+    if known is None or raw is None:
+        return True
+    try:
+        n = len(json.loads(raw))
+    except (TypeError, ValueError):
+        return True
+    return n >= SITE_WIDE_MIN_PATHS or 2 * n >= known
+
+
 def is_site_wide(row) -> bool:
-    """Whether a run's reading may stand for the site."""
-    return scope_of(row) in ("site", "full")
+    """Whether a run's reading may stand for the site: a site-wide scope
+    that meets the page floor."""
+    return scope_of(row) in ("site", "full") and meets_page_floor(row)
 
 
 def reads_site(row) -> bool:
@@ -513,11 +627,17 @@ def narrow_run_refusal(row) -> str | None:
             f"{'' if n == 1 else 's'}. Pick a site-wide audit, or run one on step 2.")
 
 
-def scope_is_site_wide(scope: str = "scan_scope", paths: str = "crawled_paths") -> str:
+def scope_is_site_wide(scope: str = "scan_scope", paths: str = "crawled_paths",
+                       known: str | None = None) -> str:
     """The SQL twin of `is_site_wide`, for the readers that pick a site's
     score in one query - generated the way `kind_is_site_reading` is, so the
-    rule has one owner."""
-    return (f"({scope} IN ('site','full') OR ({scope} IS NULL AND {paths} IS NOT NULL"
+    rule has one owner. The page floor is `meets_page_floor`'s."""
+    if known is None:
+        known = scope.rsplit(".", 1)[0] + ".known_paths" if "." in scope else "known_paths"
+    floor = (f"({known} IS NULL OR {paths} IS NULL"
+             f" OR json_array_length({paths}) >= {SITE_WIDE_MIN_PATHS}"
+             f" OR 2 * json_array_length({paths}) >= {known})")
+    return (f"(({scope} IN ('site','full') AND {floor}) OR ({scope} IS NULL AND {paths} IS NOT NULL"
             f" AND json_array_length({paths}) >= {SITE_WIDE_MIN_PATHS}))")
 
 
@@ -644,13 +764,16 @@ def complete_run(conn: sqlite3.Connection, run_id: str, result: AuditResult) -> 
         # `_apply_states` below uses the same set and has always been right
         # about it; the value simply never survived the call, which is why
         # `compare_runs` spent two rounds substituting worse evidence.
-        conn.execute("UPDATE audit_runs SET crawled_paths=? WHERE id=?",
+        conn.execute("UPDATE audit_runs SET crawled_paths=?, known_paths=? WHERE id=?",
                      (json.dumps(sorted(getattr(result, "crawled_paths", None) or [])),
+                      # What the run's own evidence says the site has, for
+                      # the page floor (item 253).
+                      known_paths_of(get_evidence(conn, run_id)),
                       run_id))
         kind = row["kind"] if "kind" in row.keys() else "audit"
         # Re-read now that the crawl's paths are stored, so a legacy row with
         # no stored scope is judged by what it fetched (brief v6 step V2).
-        fresh = conn.execute("SELECT kind, scan_scope, crawled_paths FROM audit_runs"
+        fresh = conn.execute("SELECT kind, scan_scope, crawled_paths, known_paths FROM audit_runs"
                              " WHERE id=?", (run_id,)).fetchone() or row
         # A run that was not a reading of the site may only clear what it
         # read — the rule `_apply_states` states in full at the condition
@@ -872,6 +995,9 @@ class Reading:
     #: A reading of the site: an audit whose scope is site-wide. A refresh,
     #: a verify, a nav or page scan is not.
     site_reading: bool
+    #: Paths this run fetched that answered 400 or above (channel ruling
+    #: 20261011-0745): not read, and not unknown either.
+    errored: frozenset[str] = frozenset()
 
     @classmethod
     def of_result(cls, run_id: str, result: "AuditResult", site_reading: bool) -> "Reading":
@@ -879,11 +1005,12 @@ class Reading:
                    frozenset(getattr(result, "crawled_paths", None) or ()),
                    frozenset(getattr(result, "traced_paths", None) or ()),
                    frozenset(getattr(result, "imaged_paths", None) or ()),
-                   site_reading)
+                   site_reading,
+                   frozenset(getattr(result, "errored_paths", None) or ()))
 
     @classmethod
     def of_stored(cls, conn: sqlite3.Connection, run_id: str) -> "Reading | None":
-        row = conn.execute("SELECT id, kind, scan_scope, crawled_paths, dimensions"
+        row = conn.execute("SELECT id, kind, scan_scope, crawled_paths, known_paths, dimensions"
                            " FROM audit_runs WHERE id=?", (run_id,)).fetchone()
         if not row:
             return None
@@ -909,7 +1036,11 @@ class Reading:
                    frozenset(path(p["url"]) for p in pages
                              if any(i.get("weight_kb") or i.get("rendered")
                                     for i in (p.get("image_inventory") or []))),
-                   reads_site(row))
+                   reads_site(row),
+                   # Derived from the stored statuses, so a replay of an old
+                   # run sets aside exactly what the live run would have.
+                   frozenset(path(p["url"]) for p in pages
+                             if isinstance(p.get("status"), int) and p["status"] >= 400))
 
 
 def measured(reading: Reading, dimension: str, check_id: str, affected_urls: list[str],
@@ -942,6 +1073,12 @@ def measured(reading: Reading, dimension: str, check_id: str, affected_urls: lis
     if cross_page(dimension, check_id) and not reading.site_reading:
         return "unmeasured", "a cross-page check needs a reading of the whole site"
     pages = pages_named_by(affected_urls)
+    # Channel ruling 20261011-0745: a page-level check on pages that now
+    # answer an error no longer applies to them. Asked before the page-read
+    # rule, which would call the finding unmeasured forever.
+    if (pages and (dimension, check_id) in SET_ASIDE_CHECKS
+            and pages <= reading.errored):
+        return "inapplicable", "every page the finding names answered an error on this run"
     if pages and not pages & reading.crawled:
         return "unmeasured", "the run did not read a page the finding names"
     if not pages and not reading.site_reading:
@@ -1037,7 +1174,7 @@ def _advance_states(conn: sqlite3.Connection, site_id: str, run_id: str, stamp: 
                 " updated_at) VALUES (?, ?, 'open', ?, ?)",
                 (site_id, fp, run_id, stamp))
         elif fp in about_the_run and row["state"] in ("fixed", "regressed",
-                                                      "withdrawn"):
+                                                      "withdrawn", "set-aside"):
             # A scope statement stands `open` when it is re-raised, and never
             # `regressed`. `regressed` means a defect we had verified gone has
             # come back; a smaller crawl re-raising the statement that it is
@@ -1073,7 +1210,10 @@ def _advance_states(conn: sqlite3.Connection, site_id: str, run_id: str, stamp: 
                 "UPDATE finding_states SET state='regressed', changed_by_run=?, updated_at=?"
                 " WHERE site_id=? AND fingerprint=?",
                 (run_id, stamp, site_id, fp))
-        elif row["state"] == "withdrawn":
+        elif row["state"] in ("withdrawn", "set-aside"):
+            # And a set-aside finding (channel ruling 20261011-0745): the page
+            # answers again and the check raises, so it stands `open` -
+            # nothing was fixed, so nothing relapsed.
             # A withdrawal retracts one audit's claim, not the question. This
             # run is new evidence and it has seen the finding, so it stands
             # again — as `open`, because nothing was ever fixed and therefore
@@ -1136,12 +1276,13 @@ def _advance_states(conn: sqlite3.Connection, site_id: str, run_id: str, stamp: 
             continue
         verdict, _why = measured(reading, row["dimension"], row["check_id"],
                                  json.loads(row["urls"] or "[]"), source=row["source"])
-        if verdict != "clean":
+        if verdict not in ("clean", "inapplicable"):
             continue
         conn.execute(
-            "UPDATE finding_states SET state='fixed', changed_by_run=?, updated_at=?"
+            "UPDATE finding_states SET state=?, changed_by_run=?, updated_at=?"
             " WHERE site_id=? AND fingerprint=?",
-            (run_id, stamp, site_id, row["fingerprint"]))
+            ("fixed" if verdict == "clean" else "set-aside",
+             run_id, stamp, site_id, row["fingerprint"]))
 
 
 def _snapshot_metrics(conn: sqlite3.Connection, site_id: str,
@@ -1343,6 +1484,70 @@ def site_readings(conn: sqlite3.Connection, site_id: str) -> list[dict]:
     verification `d4474b38` as the site's latest run.
     """
     return [r for r in list_runs(conn, site_id) if reads_site(r)]
+
+
+def part_only_runs(conn: sqlite3.Connection, site_id: str) -> dict[str, list[str]]:
+    """The site's readings that measured only some of the parts the reading
+    before them stood on, each with the dimensions it did measure (screen
+    audits round 3, the Critical on five screens).
+
+    A re-check of Links alone over 45 pages is a site-wide audit by kind and
+    by scope, so every picker that asked only those two questions took it as
+    the site's audit: Home said "87.4, good, up 15.99" from a Links score
+    `composite()` had renormalised over one dimension, every Client tab's
+    header printed it under a bar reading the full 71.45, and Reports and
+    the Analyses shop aimed paid runs at it.
+
+    The rule is the Latest View's reference composite's (`latest_view`,
+    amendment 8), replayed over the history: a scored reading becomes the
+    reference when its dimensions cover the reference's, and a reading that
+    does not cover them is part-only. One owner for both, so the header bar
+    and the sentence under it cannot name different audits again."""
+    return dict(_once_in_scope(conn, ("part_only", site_id),
+                               lambda: _part_only_runs(conn, site_id)))
+
+
+def _part_only_runs(conn: sqlite3.Connection, site_id: str) -> dict[str, list[str]]:
+    rows = conn.execute(
+        "SELECT id, dimensions, status, composite_score FROM audit_runs"
+        f" WHERE site_id=? AND {status_in(AUDITED_STATUSES)} AND {kind_is_site_reading()}"
+        " ORDER BY started_at, rowid", (site_id,)).fetchall()
+    held: set[str] | None = None
+    out: dict[str, list[str]] = {}
+    for r in rows:
+        dims = set(json.loads(r["dimensions"] or "[]"))
+        if held is not None and not dims >= held:
+            out[r["id"]] = sorted(dims)
+        elif r["status"] in SCORED_STATUSES and r["composite_score"] is not None:
+            held = dims
+    return out
+
+
+def current_reading_id(conn: sqlite3.Connection, site_id: str) -> str | None:
+    """The newest audited reading of the site that is not a part-only
+    re-check: the run the landing's header sentence reads (screen audits
+    round 3), for any other screen that states the site's current reading."""
+    part_only = part_only_runs(conn, site_id)
+    for r in conn.execute(
+            f"SELECT id FROM audit_runs WHERE site_id=? AND {status_in(AUDITED_STATUSES)}"
+            f" AND {kind_is_site_reading()} ORDER BY started_at DESC, rowid DESC",
+            (site_id,)):
+        if r["id"] not in part_only:
+            return r["id"]
+    return None
+
+
+def part_only_label(dims: list[str] | None) -> str | None:
+    """"Links only", "Links and Security only": the words a screen prints
+    beside a part-only reading's score. Module names where the engine has
+    them loaded, the code otherwise."""
+    if not dims:
+        return None
+    from clauditseo.engine import registry
+    mods = registry.all_modules()
+    names = [mods[d].name if d in mods else d for d in dims]
+    said = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    return f"{said} only"
 
 
 def get_run(conn: sqlite3.Connection, run_id: str) -> dict | None:
@@ -2017,24 +2222,106 @@ def _page_key(url: str) -> str:
     return f"{base}?{query}" if query else base
 
 
+#: Briefs that answered the legacy findings index and have since been
+#: rewritten to the contract (item 278, row 11). Their stored rows carry codes
+#: the new header does not declare and no registry prices; those stay model-
+#: only. A brief added here must have had legacy runs; a contract brief's
+#: undeclared codes are dropped by the reader and never stored.
+REWRITTEN_FROM_LEGACY = frozenset({"local-signals"})
+
+
 def _is_brief_only(dimension: str, check_id: str) -> bool:
     """Whether only a model can raise this check (item 237). Content's model
     rows are stored under `EXP:<brief>` and priced as `CNT/<id>`."""
-    dim = "CNT" if (dimension or "").startswith("EXP:") else dimension
-    return _check_cost(f"{dim}/{check_id}") == "model"
+    if (dimension or "").startswith("EXP:"):
+        # A brief that answers the legacy index (the four local briefs) names
+        # its own codes, which no registry prices and no sweep can raise: it
+        # is brief-only by construction (item 250). An unregistered code
+        # prices as "free", which read every one of them as sweep-raisable.
+        from clauditseo import briefs as _briefs
+        from clauditseo.analysts.expert import EXPERT_TOOLS, conforms
+        from clauditseo.checks import default_severities
+        tool = dimension[4:]
+        if tool in EXPERT_TOOLS and not conforms(tool):
+            return True
+        # Item 278 (row 11): a brief rewritten to the contract keeps its
+        # older rows, stored under the legacy codes it no longer declares
+        # ("unclaimed-listing"). No registry knows such a code, so no sweep
+        # can raise it either.
+        brief = _briefs.by_id().get(tool)
+        if (tool in REWRITTEN_FROM_LEGACY and brief is not None
+                and check_id not in {c.split("/")[-1] for c in brief.checks}
+                and not any(k.split("/")[-1] == check_id for k in default_severities())):
+            return True
+        dimension = "CNT"
+    return _check_cost(f"{dimension}/{check_id}") == "model"
+
+
+def _sweep_dimensions(dimension: str, check_id: str) -> tuple[str, ...]:
+    """The dimensions whose sweep raises this row's check (channel ruling
+    20261011-1050, option 4). A model row stored under `EXP:<brief>` is read
+    against the sweep that owns its check in the registry: `EXP:local-signals`
+    `nap-missing` against `LOC`. Asked under `EXP:...`, no sweep ever matched,
+    so four Local candidates waited for a reading that could never come - 21
+    runs on twenty22. Empty where no sweep raises the check."""
+    if not (dimension or "").startswith("EXP:"):
+        return (dimension,)
+    from clauditseo.checks import default_severities
+    return tuple(sorted({k.split("/", 1)[0] for k in default_severities()
+                         if k.split("/", 1)[1] == check_id}))
+
+
+#: How many site readings must have read a candidate's pages without raising
+#: its check before it waits for the operator rather than for a third (item
+#: 250): the sweep has had two chances to corroborate it and will not.
+UNSEEN_TO_CONFIRM = 2
 
 
 def awaiting_confirmation(conn: sqlite3.Connection, site_id: str) -> set[str]:
-    """The site's analysis findings that wait for the operator (item 237): a
-    candidate on a check only a model can raise. Not in the hold (which reads
-    `open`) and not in a client report until the operator confirms it."""
+    """The site's analysis findings that wait for the operator ("to
+    confirm"). Not in the hold (which reads `open`) and not in a client
+    report until the operator confirms one.
+
+    Two kinds, one answer (items 237 and 250):
+
+    - a candidate on a check only a model can raise: no sweep can ever
+      corroborate it, and a second run of the model is not confirmation;
+    - a candidate on a check the sweep CAN raise, whose pages the sweep has
+      read `UNSEEN_TO_CONFIRM` times since without raising it: it will never
+      be corroborated either. Title & description held five such
+      near-duplicates with no way to answer them.
+
+    The one owner of the rule: `site_states` stamps `to_confirm` from this
+    set, and the screens read that rather than each deciding from a cost."""
     out: set[str] = set()
+    unseen = None
     for r in conn.execute(
-            "SELECT s.fingerprint, f.dimension, f.check_id FROM finding_states s"
+            "SELECT s.fingerprint, f.dimension, f.check_id, f.affected_urls,"
+            # When the run the analysis read finished: readings after it are
+            # the ones that could have corroborated the row.
+            " COALESCE(a.finished_at, a.started_at) AS read_at"
+            " FROM finding_states s"
             f" JOIN findings f ON f.rowid = ({_latest_finding('s.fingerprint', 's.site_id')})"
+            " JOIN audit_runs a ON a.id = f.run_id"
             " WHERE s.site_id=? AND s.state='candidate' AND f.source='model-judgement'",
             (site_id,)):
         if _is_brief_only(r["dimension"], r["check_id"]):
+            out.add(r["fingerprint"])
+            continue
+        urls = json.loads(r["affected_urls"] or "[]")
+        if not urls:
+            continue
+        if unseen is None:
+            unseen = _unseen_by_sweeps(conn, site_id)
+        dims = _sweep_dimensions(r["dimension"], r["check_id"])
+        if not dims:
+            # No sweep raises it under any dimension: brief-only in fact.
+            out.add(r["fingerprint"])
+            continue
+        # `redirect-chain` is registered under LNK and TEC: a silent reading
+        # by either sweep is evidence, so the larger count stands.
+        if r["read_at"] and max(unseen.count(d, r["check_id"], urls, r["read_at"])
+                                for d in dims) >= UNSEEN_TO_CONFIRM:
             out.add(r["fingerprint"])
     return out
 
@@ -2166,7 +2453,13 @@ def recompute_expert_states(conn: sqlite3.Connection, site_id: str,
     The walk per code, over the runs where this tool actually ran:
       first appearance            -> candidate (model output varies a few
                                      percent run to run; once is not a fact)
-      appears again               -> open
+      appears again               -> still a candidate (item 250: a second
+                                     run of the same model over the same
+                                     evidence is not confirmation. Item 237
+                                     said so for the contract walk; the four
+                                     local briefs walk here and were still
+                                     promoted by repetition.) The operator
+                                     confirms one by setting it `open`.
       candidate, then absent      -> dropped entirely (noise, not a fix)
       open/regressed, then absent -> fixed
       fixed, then appears         -> regressed
@@ -2196,11 +2489,20 @@ def recompute_expert_states(conn: sqlite3.Connection, site_id: str,
     if not run_order:
         return
     codes_by_run: dict[str, set[str]] = {}
+    # Item 278 (row 10): the contract walk's corroboration. A code the
+    # automatic checks raised in the same run is measured, not a model's
+    # say-so, and opens on first sight. Local's one row wore "automatic
+    # checks 1" and "candidate" together; the tag's own definition is a row
+    # "the automatic checks have not" raised.
+    swept_by_run: dict[str, set[str]] = {}
     # Item 239 step 4: as the contract walk - a code is cleared only by a
     # run that fetched a page the code named.
     paths_of: dict[str, set[str]] = {}
     fetched = {run: _fetched_paths(conn, run) for run in run_order}
     for run in run_order:
+        swept_by_run[run] = {r["check_id"] for r in conn.execute(
+            "SELECT DISTINCT check_id FROM findings WHERE run_id=? AND source='deterministic'",
+            (run,))}
         codes_by_run[run] = set()
         for r in conn.execute(
                 "SELECT check_id, affected_urls FROM findings WHERE run_id=? AND dimension=?",
@@ -2219,8 +2521,11 @@ def recompute_expert_states(conn: sqlite3.Connection, site_id: str,
                 present = code in codes_by_run[run]
                 if not present and not _saw(paths_of.get(code), fetched[run]):
                     continue
-                if present:
-                    nxt = {None: "candidate", "candidate": "open",
+                if present and code in swept_by_run[run]:
+                    nxt = {None: "open", "candidate": "open", "open": "open",
+                           "fixed": "regressed", "regressed": "regressed"}[state]
+                elif present:
+                    nxt = {None: "candidate", "candidate": "candidate",
                            "open": "open", "fixed": "regressed",
                            "regressed": "regressed"}[state]
                 else:
@@ -2231,8 +2536,14 @@ def recompute_expert_states(conn: sqlite3.Connection, site_id: str,
                 state = nxt
             fp = make_fingerprint(f"EXP:{tool_id}", code, "site")
             existing = conn.execute(
-                "SELECT state FROM finding_states WHERE site_id=? AND fingerprint=?",
-                (site_id, fp)).fetchone()
+                "SELECT state, changed_by_run FROM finding_states WHERE site_id=?"
+                " AND fingerprint=?", (site_id, fp)).fetchone()
+            # The operator's confirmation (item 237, here since item 250):
+            # `open` with no run behind it is not walked back to a candidate
+            # or dropped by a later run of the model.
+            if (existing and existing["state"] == "open"
+                    and existing["changed_by_run"] is None and state in (None, "candidate")):
+                continue
             # `withdrawn` joins `accepted-risk` here for a different reason.
             # This walk replays the STORED history, and for a withdrawn
             # finding that history is the very thing being retracted — the
@@ -2697,8 +3008,16 @@ def page_dossier(conn: sqlite3.Connection, site_id: str, url: str) -> dict:
     its memory state), and every page-scoped brief that read it.
     """
     history = []
+    # How many crawls there are to look in, so the screen can say what it
+    # counted (item 257): it said "seen in 6 crawl(s)" on a site with eleven,
+    # because only the newest `DOSSIER_RUNS` are opened.
+    crawls = conn.execute(
+        "SELECT COUNT(*) FROM audit_runs"
+        f" WHERE site_id=? AND {status_in(SCORED_STATUSES)}"
+        " AND crawl_evidence IS NOT NULL", (site_id,)).fetchone()[0]
     for run in conn.execute(
-            "SELECT id, started_at, crawl_evidence FROM audit_runs"
+            "SELECT id, started_at, crawl_evidence, kind, tier, scan_scope, crawled_paths"
+            " FROM audit_runs"
             f" WHERE site_id=? AND {status_in(SCORED_STATUSES)}"
             " AND crawl_evidence IS NOT NULL"
             " ORDER BY started_at DESC, rowid DESC LIMIT ?",
@@ -2709,6 +3028,9 @@ def page_dossier(conn: sqlite3.Connection, site_id: str, url: str) -> dict:
         if page:
             history.append({
                 "run_id": run["id"], "at": run["started_at"],
+                # Which run it was (item 257): an audit's tier and scope, or
+                # a re-check of one part, so two rows of one day differ.
+                "kind": run["kind"], "tier": run["tier"], "scope": scope_of(run),
                 "source": evidence.get("source", "crawler"),
                 "status": page.get("status"),
                 "title": page.get("title"),
@@ -2722,22 +3044,33 @@ def page_dossier(conn: sqlite3.Connection, site_id: str, url: str) -> dict:
     # memory's verdict attached. LIKE on the JSON is crude but exact: the
     # stored form is a JSON array of full URLs, so quoting the needle avoids
     # matching /page-two when asked about /page.
-    needle = f'%"{url}"%'
-    findings = [dict(r) for r in conn.execute(
-        "SELECT f.dimension, f.check_id, f.severity, f.summary, f.source,"
-        " f.created_at, fs.state, fs.attempted_at"
-        " FROM findings f"
-        " JOIN audit_runs a ON a.id = f.run_id AND a.site_id=?"
-        " LEFT JOIN finding_states fs ON fs.fingerprint = f.fingerprint"
-        "   AND fs.site_id = a.site_id"
-        " WHERE f.affected_urls LIKE ?"
-        " AND f.rowid = (SELECT MAX(f2.rowid) FROM findings f2"
-        "   JOIN audit_runs a2 ON a2.id = f2.run_id AND a2.site_id = a.site_id"
-        "   WHERE f2.dimension = f.dimension AND f2.check_id = f.check_id"
-        "   AND f2.affected_urls LIKE ?)"
-        " ORDER BY CASE f.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1"
-        " WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END",
-        (site_id, needle, needle))]
+    # The Latest View's ledger, and nothing else (item 251). This used to
+    # pick the newest row per check over EVERY run of the site, which is its
+    # own record and not the site's: it revived a check the engine has
+    # retired (`PRF/lcp-poor`) and a row a later reading dropped, each with a
+    # state from the ledger or none. A finding is on this page if the ledger
+    # holds it and it names the page; it carries the state, the date of its
+    # measurement, and whether it waits for the operator, as it does
+    # everywhere else.
+    key = _page_key(url)
+    rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    findings = sorted(
+        ({"dimension": st["dimension"], "check_id": st["check_id"],
+          "severity": st["severity"], "summary": st["summary"], "source": st["source"],
+          "state": st["state"], "attempted_at": st["attempted_at"],
+          "fingerprint": st["fingerprint"], "to_confirm": st["to_confirm"],
+          "measured_at": st.get("measured_at"), "measured_tier": st.get("measured_tier"),
+          "analysed_at": st.get("analysed_at"),
+          # The ledger's two reconciling fields, as the part page reads them
+          # (screen audits round 3, dossier AC-01 and run views IP-05): an
+          # analysis row a later automatic reading cleared, or has not
+          # raised since. Without them the dossier said "open" and "fixed"
+          # for one check on one page, in adjacent rows.
+          "superseded_on": st.get("superseded_on"),
+          "unseen_since": st.get("unseen_since")}
+         for st in site_states(conn, site_id)
+         if any(_page_key(u) == key for u in st["affected_urls"])),
+        key=lambda f: (rank.get((f["severity"] or "").lower(), 4), f["check_id"]))
 
     briefs = [dict(r) for r in conn.execute(
         "SELECT er.tool_id, er.model_id, er.created_at, er.tokens, er.findings"
@@ -2749,6 +3082,15 @@ def page_dossier(conn: sqlite3.Connection, site_id: str, url: str) -> dict:
 
     return {"url": url, "history": history, "findings": findings,
             "page_briefs": briefs,
+            # The crawls the history was looked for in: the newest
+            # `DOSSIER_RUNS` of `crawls`.
+            "crawls": {"looked_in": min(crawls, DOSSIER_RUNS), "total": crawls},
+            # The run that last MEASURED this page, which a page-level
+            # analysis runs against (item 251, channel answer 20261002-1150).
+            # Not the site's newest run: a page the newest crawl did not
+            # fetch was last measured by an older one, and an analysis run
+            # against the newest would read a crawl that never saw the page.
+            "measured_run_id": history[0]["run_id"] if history else None,
             "seen": bool(history or findings or briefs)}
 
 
@@ -2861,18 +3203,38 @@ def monthly_spend(conn: sqlite3.Connection) -> list[dict]:
     frame `_budget_status` carries, for the same reason — one column, two
     aggregations, one rule.
     """
-    rows = conn.execute(
-        "SELECT substr(ce.created_at, 1, 7) AS month, cl.name AS client,"
-        " SUM(ce.quantity) AS tokens, SUM(ce.actual_cost) AS usd,"
-        " COUNT(ce.actual_cost) AS priced,"
-        " COUNT(*) - COUNT(ce.actual_cost) AS unpriced,"
-        " COUNT(*) AS entries"
-        " FROM cost_entries ce"
-        " JOIN audit_runs r ON r.id = ce.run_id"
-        " JOIN sites s ON s.id = r.site_id"
-        " JOIN clients cl ON cl.id = s.client_id"
-        " GROUP BY month, cl.id ORDER BY month DESC, usd DESC").fetchall()
-    return [dict(r) for r in rows]
+    # By the operator's month (item 248's rule), as the month total and the
+    # deleted-spend tally count it, so the rows of a month sum to its total.
+    from .spend import local_month
+    out: dict[tuple, dict] = {}
+    for r in conn.execute(
+            "SELECT ce.created_at, cl.id AS client_id, cl.name AS client,"
+            " ce.quantity, ce.actual_cost"
+            " FROM cost_entries ce"
+            " JOIN audit_runs r ON r.id = ce.run_id"
+            " JOIN sites s ON s.id = r.site_id"
+            " JOIN clients cl ON cl.id = s.client_id"):
+        month = local_month(r["created_at"])
+        row = out.setdefault((month, r["client_id"]), {
+            "month": month, "client": r["client"], "tokens": 0, "usd": None,
+            "priced": 0, "unpriced": 0, "entries": 0})
+        row["tokens"] += r["quantity"] or 0
+        row["entries"] += 1
+        if r["actual_cost"] is None:
+            row["unpriced"] += 1
+        else:
+            row["usd"] = (row["usd"] or 0) + r["actual_cost"]
+            row["priced"] += 1
+    rows = list(out.values())
+    # Spend on runs since deleted, one row a month and named for no client
+    # (channel ruling 20261011-0746), so a month's rows still add up.
+    for d in conn.execute("SELECT * FROM deleted_spend"):
+        rows.append({"month": d["month"], "client": "Deleted runs", "deleted": True,
+                     "tokens": d["tokens"], "usd": d["usd"] if d["priced"] else None,
+                     "priced": d["priced"], "unpriced": d["unpriced"],
+                     "entries": d["entries"]})
+    rows.sort(key=lambda r: (r["month"] or "", r["usd"] or 0), reverse=True)
+    return rows
 
 
 def expert_delta(conn: sqlite3.Connection, site_id: str) -> list[dict]:
@@ -2947,8 +3309,9 @@ def store_expert_report(conn: sqlite3.Connection, run_id: str, tool_id: str,
             "INSERT OR REPLACE INTO expert_reports (run_id, tool_id, model_id,"
             " page_url, report, findings, figures, figures_withheld, tokens,"
             " tokens_in, tokens_out, cache_write, cache_read, cost, truncated,"
-            " created_at, elapsed_ms, pages_crawled, contract, raw)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " created_at, elapsed_ms, pages_crawled, contract, raw,"
+            " brief_version, reader_version)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (run_id, tool_id, envelope.get("model"), page_url or "",
              envelope.get("report") or "",
              json.dumps(envelope.get("findings") or []),
@@ -2971,7 +3334,10 @@ def store_expert_report(conn: sqlite3.Connection, run_id: str, tool_id: str,
              json.dumps(envelope["contract"]) if envelope.get("contract") else None,
              # The model's own text (migration 0055); NULL where it was never
              # captured, which includes a replay of a payload cached before it.
-             envelope.get("raw")))
+             envelope.get("raw"),
+             # The brief it was written under and the reader that read it
+             # (item 249, migration 0071).
+             envelope.get("brief_version"), envelope.get("reader_version")))
         # The newest run of each analysis is the Latest View's (item 239).
         from . import latest_view
         latest_view.apply_analysis(conn, run_id, tool_id)
@@ -3273,6 +3639,90 @@ def expert_estimates(conn: sqlite3.Connection, pages: int | None = None,
     return out
 
 
+#: The depths a scan runs at, in the chooser's order.
+_PACE_DEPTHS = ("quick", "standard", "deep")
+
+
+def scan_pace(conn: sqlite3.Connection, site_id: str) -> dict:
+    """How long this site's own stored runs took, per page, by depth (item
+    255, the audit pane's AC-02).
+
+    The chooser's time column was `pages x {quick 1.8, standard 4.5, deep 11}`
+    seconds and nothing else, under a foot saying the times "get more honest
+    as runs are stored" - which nothing read. twenty22's Quick site audits
+    take about 11 s a page, six times the constant.
+
+    Two populations, because a run is not linear in its pages: a one-page run
+    carries the whole fixed cost (the browser passes start once whatever the
+    page count), so its time is kept as a duration of its own and never
+    divided into a per-page rate. And two kinds: an `audit` is what the
+    chooser starts; a `refresh` is one part's re-check, which reads less per
+    page and is what the part pages' re-check control quotes.
+
+    Medians, so one slow run - a crawl that waited on a rate limit - does not
+    set the figure. A depth with no stored run is None: the screen falls back
+    to its default and says which figures are which."""
+    from datetime import datetime as _dt
+    from statistics import median
+
+    from clauditseo.scanscope import depth_for
+    bucket: dict[str, dict[str, dict[str, list[float]]]] = {
+        k: {d: {"per_page": [], "one_page": []} for d in _PACE_DEPTHS}
+        for k in ("audit", "recheck")}
+    # guard-exempt(site-reading): a duration is a fact about each run, of
+    # whatever kind; the kind is read off the row and decides the bucket.
+    for r in conn.execute(
+            "SELECT kind, started_at, finished_at, crawled_paths, scan_depth, analyst_enabled"
+            f" FROM audit_runs WHERE site_id=? AND {status_in(SCORED_STATUSES)}"
+            " AND finished_at IS NOT NULL", (site_id,)):
+        kind = ("audit" if is_site_reading(r["kind"])
+                else "recheck" if r["kind"] == "refresh" else None)
+        try:
+            pages = len(json.loads(r["crawled_paths"] or "[]"))
+            took = (_dt.fromisoformat(r["finished_at"])
+                    - _dt.fromisoformat(r["started_at"])).total_seconds()
+        except (TypeError, ValueError):
+            continue
+        if kind is None or pages < 1 or took <= 0:
+            continue
+        depth = r["scan_depth"] or depth_for(bool(r["analyst_enabled"]))
+        if depth not in _PACE_DEPTHS:
+            continue
+        cell = bucket[kind][depth]
+        if pages == 1:
+            cell["one_page"].append(took)
+        else:
+            cell["per_page"].append(took / pages)
+
+    def said(values: list[float]) -> dict:
+        return {"secs": round(median(values), 1) if values else None, "runs": len(values)}
+    return {kind: {d: {"per_page": said(c["per_page"]), "one_page": said(c["one_page"])}
+                   for d, c in depths.items()}
+            for kind, depths in bucket.items()}
+
+
+#: Parts with no page of their own: triage ranks the rest and the client plan
+#: is the report's (`analyses.py`, `catalogue.tsx`).
+_PARTLESS = {None, "none", "report"}
+
+
+def _where_read(entry: dict | None, row, drawn: set) -> dict:
+    """The part an analysis row is read on, and whether that page draws THIS
+    row (item 252). `drawn` is the caller's memory of the (tool, page) pairs
+    already met, newest first."""
+    key = (row["tool_id"], row["page_url"])
+    newest = key not in drawn
+    drawn.add(key)
+    part = (entry or {}).get("part")
+    if part in _PARTLESS:
+        part = None
+    return {"part": part,
+            "part_label": (entry or {}).get("part_label") if part else None,
+            # A page-scoped analysis is read on the page's dossier, which
+            # needs no part; a site one needs a part page to be drawn on.
+            "shown": newest and bool(part or row["page_url"])}
+
+
 def site_reports(conn: sqlite3.Connection, site_id: str) -> dict:
     """Every brief ever produced for a site, across every run.
 
@@ -3286,15 +3736,26 @@ def site_reports(conn: sqlite3.Connection, site_id: str) -> dict:
     health report say the same thing last month — and that is invisible when
     the rows are grouped by run.
     """
+    part_only = part_only_runs(conn, site_id)
     rows = conn.execute(
         """SELECT er.run_id, er.tool_id, er.model_id, er.page_url, er.tokens,
                   er.cost, er.truncated, er.created_at, er.findings,
                   r.started_at, r.tier, r.composite_score, r.status, r.kind,
-                  r.scan_scope, r.crawled_paths
+                  r.scan_scope, r.crawled_paths, r.known_paths
            FROM expert_reports er
            JOIN audit_runs r ON r.id = er.run_id
            WHERE r.site_id = ?
            ORDER BY er.created_at DESC""", (site_id,)).fetchall()
+
+    # Where each analysis can be READ (item 252). The row's "open" went to the
+    # run page, which draws no analysis text, and 22 of twenty22's 23 rows
+    # shared that one address. An analysis is drawn on the page of the part it
+    # investigates - or on the page's dossier, for one scoped to a page - and
+    # only the newest per tool (and page) is drawn there, which is what
+    # `shown` says: rows arrive newest first, so the first of each is it.
+    from clauditseo import analyses as _catalogue_of
+    catalogue = _catalogue_of._catalogue()
+    drawn: set[tuple[str, str | None]] = set()
 
     reports = []
     for row in rows:
@@ -3334,7 +3795,9 @@ def site_reports(conn: sqlite3.Connection, site_id: str) -> dict:
             # one-page audit printed that audit's composite as a site score in
             # the same table as a full crawl's.
             "run_scope": scope_of(row),
+            "run_part_only": part_only_label(part_only.get(row["run_id"])),
             "findings": len(found), "worst_severity": worst,
+            **_where_read(catalogue.get(row["tool_id"]), row, drawn),
         })
 
     # Runs with no brief at all still belong here: "we audited and produced
@@ -3343,7 +3806,7 @@ def site_reports(conn: sqlite3.Connection, site_id: str) -> dict:
     runs_with = {r["run_id"] for r in reports}
     bare = conn.execute(
         f"""SELECT id, started_at, tier, composite_score, status, kind,
-                  scan_scope, crawled_paths
+                  scan_scope, crawled_paths, known_paths
            FROM audit_runs WHERE site_id=? AND {status_in(AUDITED_STATUSES)}
            ORDER BY started_at DESC, rowid DESC""", (site_id,)).fetchall()
 
@@ -3399,6 +3862,7 @@ def site_reports(conn: sqlite3.Connection, site_id: str) -> dict:
                   "score": r["composite_score"], "status": r["status"],
                   "kind": r["kind"], "effective_scope": scope_of(r),
                   "site_reading": reads_site(r),
+                  "part_only": part_only_label(part_only.get(r["id"])),
                   "reports": sum(1 for x in reports if x["run_id"] == r["id"])}
                  for r in bare],
         "total_cost": round(sum(priced), 4) if priced else None,
@@ -3431,6 +3895,31 @@ def site_reports(conn: sqlite3.Connection, site_id: str) -> dict:
 _REPLACEMENT_ORDER = "created_at DESC, rowid DESC"
 
 
+def _built_over(raw: str | None) -> dict | None:
+    """A stored report's frozen copy, as the few facts a register row states.
+    None for a report made before the copy was kept, and for a comparison,
+    which is built from two runs and carries none."""
+    if not raw:
+        return None
+    try:
+        copy = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    comp = copy.get("composite") or {}
+    analysed = sorted(a.get("at") for a in (copy.get("analyses") or {}).values()
+                      if isinstance(a, dict) and a.get("at"))
+    return {
+        "taken_at": copy.get("taken_at"),
+        "run_id": comp.get("run_id"), "score": comp.get("score"),
+        "tier": comp.get("tier"), "audit_at": comp.get("at"),
+        "open_findings": len(copy.get("findings") or []),
+        "held_on": (copy.get("hold") or {}).get("count"),
+        "measured_from": copy.get("measured_from"), "measured_to": copy.get("measured_to"),
+        "analyses": len(copy.get("analyses") or {}),
+        "oldest_analysis": analysed[0] if analysed else None,
+    }
+
+
 def client_reports(conn: sqlite3.Connection, site_id: str) -> list[dict]:
     """Deliverables already generated for this site.
 
@@ -3455,7 +3944,7 @@ def client_reports(conn: sqlite3.Connection, site_id: str) -> list[dict]:
 
     stored = list(conn.execute(
         "SELECT id, run_ids, template, audience, path, created_at,"
-        " renderer_version, supersedes FROM reports WHERE site_id=?"
+        " renderer_version, supersedes, latest_view_copy FROM reports WHERE site_id=?"
         f" ORDER BY {_REPLACEMENT_ORDER}", (site_id,)))
 
     # The other direction of `reports.supersedes`, derived rather than stored.
@@ -3489,6 +3978,17 @@ def client_reports(conn: sqlite3.Connection, site_id: str) -> list[dict]:
         # The most recent audit it covers, so a comparison report is judged
         # on its newer half rather than on its baseline.
         since = [position[r] for r in run_ids if r in position]
+        # What the document was built over (item 251): the frozen copy of the
+        # Latest View taken at generation (item 239 step 7), which was written
+        # with every run report and read by nothing. The row's own facts come
+        # from it - the score and its audit, the open findings and the span
+        # they were measured over, the analyses and the oldest of them - so a
+        # row no longer states a run's counts beside the site's.
+        built = _built_over(row["latest_view_copy"])
+        if built and built.get("run_id") in position:
+            # Judged against the audit the copy's score came from, which is
+            # what "still current?" is asking of a run report.
+            since = [position[built["run_id"]]]
         made_by = row["renderer_version"]
         out.append({
             "id": row["id"], "template": row["template"],
@@ -3499,6 +3999,7 @@ def client_reports(conn: sqlite3.Connection, site_id: str) -> list[dict]:
             "on_disk": bool(path and path.exists()),
             "bytes": path.stat().st_size if path and path.exists() else None,
             "audits_since": min(since) if since else None,
+            "built_over": built,
             "renderer_version": made_by,
             # Three states, not two. NULL means the file predates the record,
             # so the app does not know which renderer wrote it — and calling
@@ -3592,6 +4093,37 @@ def expert_report_index(conn: sqlite3.Connection, run_id: str) -> list[dict]:
                                             if any(f.get("severity") == s
                                                    for f in found)), None)})
     return out
+
+
+def page_report_index(conn: sqlite3.Connection, site_id: str, url: str) -> list[dict]:
+    """The newest stored report of each page-level analysis for one page,
+    whichever run produced it (item 251, channel answer 20261002-1150).
+
+    The dossier is the page's running record: an operator opening it wants
+    the latest judgement on the page. Keyed to one run, a page re-crawled
+    since its last analysis showed no report at all. Each entry carries the
+    run it is stored under, which is the run its text is read from."""
+    out: dict[str, dict] = {}
+    for row in conn.execute(
+            "SELECT er.run_id, er.tool_id, er.model_id, er.page_url, er.tokens, er.cost,"
+            " er.truncated, er.created_at, er.findings, er.contract FROM expert_reports er"
+            " JOIN audit_runs a ON a.id = er.run_id"
+            " WHERE a.site_id=? AND er.page_url=? ORDER BY er.created_at DESC, er.rowid DESC",
+            (site_id, url)):
+        if row["tool_id"] in out:
+            continue
+        found = json.loads(row["findings"])
+        contract = json.loads(row["contract"]) if row["contract"] else None
+        out[row["tool_id"]] = {
+            "tool": row["tool_id"], "run_id": row["run_id"], "model": row["model_id"],
+            "page_url": row["page_url"], "tokens": row["tokens"], "cost": row["cost"],
+            "truncated": bool(row["truncated"]), "created_at": row["created_at"],
+            "contract_status": (contract or {}).get("status"),
+            "questions": (contract or {}).get("questions") or [],
+            "findings": len(found),
+            "worst_severity": next((s for s in SEVERITY_ORDER
+                                    if any(f.get("severity") == s for f in found)), None)}
+    return list(out.values())
 
 
 def expert_report_texts(conn: sqlite3.Connection, run_id: str) -> list[str]:
@@ -3776,7 +4308,7 @@ def compare_runs(conn: sqlite3.Connection, run_a: str, run_b: str) -> dict:
     from clauditseo.reporting.render import DIFF_SCOPE_KEY
 
     scope_rows = {r["id"]: r for r in conn.execute(
-        "SELECT id, site_id, status, kind, scan_scope, crawled_paths"
+        "SELECT id, site_id, status, kind, scan_scope, crawled_paths, known_paths"
         " FROM audit_runs WHERE id IN (?, ?)",
         (run_a, run_b)).fetchall()}
     site_a = (scope_rows.get(run_a) or {"site_id": None})["site_id"]
@@ -4551,26 +5083,110 @@ AIS_ROW_PAYLOAD = ("candidates", "required_sections", "profiles", "criteria",
                    "type_delta", "jsonld_delta", "omitted", "lines", "uas")
 
 
+#: How many site readings back "not seen since" looks (item 249).
+UNSEEN_LOOKBACK = 12
+
+
+def _unseen_by_sweeps(conn: sqlite3.Connection, site_id: str):
+    """`f(dimension, check_id, urls) -> date | None`: since when the
+    automatic checks have read every page a model row names without raising
+    its check (item 249, step 4).
+
+    A model row on a check the sweep can raise had no way to retire except a
+    paid re-run: twenty22 kept three HIGH `canonical-loop` cards eight days
+    after the brief was corrected, while every audit since read those pages
+    and raised nothing. This walks the site's readings newest first and
+    stops at the first that did not measure the dimension's page or did
+    raise the check there; the date is the oldest reading in that unbroken
+    run. None where the newest reading raised it, did not read a page the
+    row names, or there is no reading. Nothing is retired here: the row says
+    so and the operator withdraws it (item 237's rule is unchanged)."""
+    sweeps: list[dict] = []
+    for r in conn.execute(
+            "SELECT id, kind, scan_scope, crawled_paths, known_paths, dimensions,"
+            " started_at, finished_at FROM audit_runs WHERE site_id=?"
+            f" AND {kind_is_site_reading()} AND {status_in(SCORED_STATUSES)}"
+            " ORDER BY started_at DESC, rowid DESC", (site_id,)):
+        try:
+            crawled = {_page_key(p) for p in json.loads(r["crawled_paths"] or "[]")}
+            dims = set(json.loads(r["dimensions"] or "[]"))
+        except (TypeError, ValueError):
+            continue
+        sweeps.append({"id": r["id"], "crawled": crawled, "dims": dims,
+                       "at": r["finished_at"] or r["started_at"], "raised": None})
+        if len(sweeps) >= UNSEEN_LOOKBACK:
+            break
+
+    def raised(sweep: dict) -> set:
+        if sweep["raised"] is None:
+            sweep["raised"] = {
+                (f["check_id"], _page_key(u))
+                for f in conn.execute("SELECT check_id, affected_urls FROM findings"
+                                      " WHERE run_id=? AND source='deterministic'", (sweep["id"],))
+                for u in json.loads(f["affected_urls"] or "[]")}
+        return sweep["raised"]
+
+    def walk(dimension: str, check_id: str, urls: list[str], after: str) -> tuple[str | None, int]:
+        pages = {_page_key(u) for u in urls}
+        found, n = None, 0
+        for sweep in sweeps:
+            if sweep["at"] <= after:
+                break           # the reading the analysis was written on, or older
+            if dimension not in sweep["dims"]:
+                continue        # it did not measure this; it says nothing
+            if not pages <= sweep["crawled"]:
+                break
+            if any((check_id, p) in raised(sweep) for p in pages):
+                break
+            found, n = sweep["at"], n + 1
+        return found, n
+
+    def since(dimension: str, check_id: str, urls: list[str], after: str) -> str | None:
+        return walk(dimension, check_id, urls, after)[0]
+
+    # How many readings are in that unbroken run (item 250).
+    since.count = lambda *a: walk(*a)[1]
+    return since
+
+
 def site_states(conn: sqlite3.Connection, site_id: str) -> list[dict]:
     rows = conn.execute(
         "SELECT fs.fingerprint, fs.state, fs.updated_at, fs.changed_by_run,"
         " fs.attempted_at, fs.attempt_note,"
         " f.dimension, f.check_id, f.severity, f.summary, f.affected_urls,"
+        # Item 276 (row 6): what the check found before its own URL cap.
+        " f.affected_total,"
         # Needed by the fix loop: a brief's finding is judged by re-running
         # the brief, so a crawl cannot verify it and it gets no tick.
         " f.source, f.recommendation, f.evidence, f.run_id AS finding_run"
         " FROM finding_states fs"
         f" JOIN findings f ON f.rowid = ({_latest_finding()})"
         " WHERE fs.site_id=?"
+        # Item 258: severity by rank. `f.severity` sorted as a string -
+        # high, info, low, medium - so 216 info and low rows on twenty22 sat
+        # above its 337 medium ones and every medium group after the first
+        # was behind "show 50 more". The final order, with the rows that
+        # wait for the operator placed, is `_RECORD_ORDER` below.
         " ORDER BY CASE fs.state WHEN 'regressed' THEN 0 WHEN 'open' THEN 1"
-        " WHEN 'accepted-risk' THEN 2 ELSE 3 END, f.severity",
+        " WHEN 'accepted-risk' THEN 2 ELSE 3 END,"
+        " CASE lower(f.severity) WHEN 'critical' THEN 0 WHEN 'high' THEN 1"
+        " WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END",
         (site_id,)).fetchall()
     from clauditseo import anatomy
 
     # Item 239 step 4: when the automatic ledger cleared each (check, page),
     # so an analysis row read before that can say it has been overtaken.
-    when = {r["id"]: r["finished_at"] or r["started_at"] for r in conn.execute(
-        "SELECT id, started_at, finished_at FROM audit_runs WHERE site_id=?", (site_id,))}
+    when: dict[str, str] = {}
+    tier_of: dict[str, str] = {}
+    for r in conn.execute(
+            "SELECT id, started_at, finished_at, tier FROM audit_runs WHERE site_id=?", (site_id,)):
+        when[r["id"]] = r["finished_at"] or r["started_at"]
+        tier_of[r["id"]] = r["tier"]
+    # Item 251: when each analysis was written, so a card it wrote carries
+    # that date and not only the date of the audit it read.
+    analysed = {(r["run_id"], r["tool_id"]): r["created_at"] for r in conn.execute(
+        "SELECT er.run_id, er.tool_id, er.created_at FROM expert_reports er"
+        " JOIN audit_runs a ON a.id = er.run_id WHERE a.site_id=?", (site_id,))}
     cleared: dict[tuple[str, str], str] = {}
     for r in rows:
         if r["source"] == "deterministic" and r["state"] == "fixed" and when.get(r["changed_by_run"]):
@@ -4579,8 +5195,12 @@ def site_states(conn: sqlite3.Connection, site_id: str) -> list[dict]:
                 cleared[key] = max(cleared.get(key, ""), when[r["changed_by_run"]])
 
     out = []
+    unseen = None
+    # Item 250: which candidates wait for the operator, from the rule's owner.
+    to_confirm = awaiting_confirmation(conn, site_id)
     for r in rows:
         d = dict(r)
+        d["to_confirm"] = d["fingerprint"] in to_confirm
         d["affected_urls"] = json.loads(d["affected_urls"] or "[]")
         finding_run = d.pop("finding_run", None)
         d["superseded_on"] = None
@@ -4588,6 +5208,20 @@ def site_states(conn: sqlite3.Connection, site_id: str) -> list[dict]:
             since = [cleared.get((d["check_id"], _page_key(u))) for u in d["affected_urls"]]
             if all(s and s > when[finding_run] for s in since):
                 d["superseded_on"] = max(since)
+        # Item 249 step 4: a model row on a check the sweep can raise, which
+        # the readings since have not raised on the pages it names.
+        d["unseen_since"] = None
+        if (d["source"] == "model-judgement" and d["affected_urls"]
+                and d["state"] in ("open", "regressed", "candidate")
+                and d["superseded_on"] is None
+                and _check_cost(f"{d['dimension']}/{d['check_id']}") == "free"):
+            if unseen is None:
+                unseen = _unseen_by_sweeps(conn, site_id)
+            # Only readings AFTER the analysis: one from before it is what
+            # the analysis was written on top of.
+            if when.get(finding_run):
+                d["unseen_since"] = unseen(d["dimension"], d["check_id"],
+                                           d["affected_urls"], when[finding_run])
         # The specialist that judges this check, or None (FEATURES.md F-02).
         # Same decision as `_finding_dict` makes for the run-scoped shape:
         # the server decides, so a row cannot offer a control the server
@@ -4610,6 +5244,15 @@ def site_states(conn: sqlite3.Connection, site_id: str) -> list[dict]:
         # its own evidence (item 145 BG: an AI block the policy chose).
         d["row_blocker"] = ev.get("blocker") if isinstance(ev.get("blocker"), bool) else None
         d["brief"] = ev.get("from_brief")
+        # Item 251: the date and run of the measurement this row draws. A
+        # sweep row was measured by the run that last raised it; an analysis
+        # row was written when its analysis ran, over the crawl of
+        # `measured_at`. A card sat beside an analysis dated "7 audits
+        # older" with no date of its own.
+        d["measured_at"] = when.get(finding_run)
+        d["measured_tier"] = tier_of.get(finding_run)
+        d["analysed_at"] = (analysed.get((finding_run, d["brief"]))
+                            if d["source"] == "model-judgement" else None)
         d["proposed"] = (d.get("recommendation") or None) if ev.get("contract") else None
         d["brief_status"] = ev.get("status") if ev.get("contract") else None
         # A duplicate row's shared string (brief v11 step AH), from either
@@ -4631,6 +5274,16 @@ def site_states(conn: sqlite3.Connection, site_id: str) -> list[dict]:
         # goes in the operator's words (brief v16 steps AS and AT).
         d["block"] = ev.get("block")
         d["where"] = ev.get("where")
+        # Item 279 (row 5): the elements the evidence names, for the card -
+        # axe's instances by selector, else the nameless links' hrefs.
+        d["targets"] = finding_targets(ev)
+        # Items 273 (rows 4 and 5): the string a length row measured and how
+        # far past the cut it ran, so a site-view card says what the page
+        # has rather than the engine's sentence, and orders by the overage.
+        said = ev.get("title") if d.get("check_id", "").startswith("title") else (
+            ev.get("description") if d.get("check_id", "").startswith("meta-desc") else None)
+        d["said"] = said if isinstance(said, str) else None
+        d["over_px"] = ev.get("over_px") if isinstance(ev.get("over_px"), (int, float)) else None
         d["kind"] = ev.get("kind")
         # The URL template a per-template row is about (items 217, 222): the
         # row is filed on that template's traced page, and the card names
@@ -4652,9 +5305,30 @@ def site_states(conn: sqlite3.Connection, site_id: str) -> list[dict]:
             d["rollout"] = {k: ev.get(k) for k in (
                 "domain", "impact", "config", "deploy_risk", "verify", "rollback",
                 "order", "staged")}
-        d.pop("recommendation", None)
+        # An analysis row's recommendation is its `proposed` copy, above. An
+        # automatic check's is its advice, which the card draws as "Do this"
+        # (item 279, row 5).
+        if d["source"] != "deterministic":
+            d.pop("recommendation", None)
         out.append(d)
+    # Item 258: what waits for the operator comes straight after what came
+    # back. The "to confirm" rows (item 237) are in the record's default chip
+    # but were sorted last, behind 50-group paging, so "seen without a
+    # press" did not hold. Stable, so the SQL's severity order stands within
+    # each state.
+    out.sort(key=_record_order)
     return out
+
+
+#: The record's order by state: regressed, then what waits for the operator,
+#: then open, accepted, and the rest; severity by rank within each.
+_STATE_ORDER = {"regressed": 0, "to-confirm": 1, "open": 2, "accepted-risk": 3}
+_SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+
+
+def _record_order(d: dict) -> tuple[int, int]:
+    state = "to-confirm" if d["state"] == "candidate" and d.get("to_confirm") else d["state"]
+    return (_STATE_ORDER.get(state, 4), _SEVERITY_ORDER.get((d.get("severity") or "").lower(), 4))
 
 
 def set_state(conn: sqlite3.Connection, site_id: str, fingerprint: str,
@@ -5364,8 +6038,14 @@ def current_state(conn: sqlite3.Connection, site_id: str) -> dict:
         "open": by_state.get("open", {}).get("n", 0),
         "regressed": by_state.get("regressed", {}).get("n", 0),
         "candidate": by_state.get("candidate", {}).get("n", 0),
+        # Item 250: the candidates that wait for the operator, counted apart
+        # from the ones the automatic checks may still confirm, so the
+        # landing's two figures each open exactly what they count.
+        "to_confirm": min(len(awaiting_confirmation(conn, site_id)),
+                          by_state.get("candidate", {}).get("n", 0)),
         "accepted_risk": by_state.get("accepted-risk", {}).get("n", 0),
         "withdrawn": by_state.get("withdrawn", {}).get("n", 0),
+        "set_aside": by_state.get("set-aside", {}).get("n", 0),
         "fixed": by_state.get("fixed", {}).get("n", 0),
         "oldest_outstanding": oldest,
         "awaiting_a_look": awaiting,
@@ -5464,6 +6144,21 @@ def _contract_marks(evidence: str | dict | None) -> dict:
             "brief": ev.get("from_brief")}
 
 
+def _brief_changed(tool_id: str, stored: str | None) -> bool | None:
+    """Whether an analysis was written under a brief that has since changed
+    (item 249). None where its version was never recorded: not marked,
+    because "changed" would be a guess."""
+    if not stored:
+        return None
+    from clauditseo.analysts.expert import EXPERT_TOOLS, brief_version
+    if tool_id not in EXPERT_TOOLS:
+        return None
+    try:
+        return brief_version(tool_id) != stored
+    except OSError:
+        return None
+
+
 def _audits_since(conn: sqlite3.Connection, site_id: str, run_id: str) -> int | None:
     """Readings of the site completed after the one `run_id` names.
 
@@ -5479,12 +6174,15 @@ def _audits_since(conn: sqlite3.Connection, site_id: str, run_id: str) -> int | 
     # below: this reader wants readings and nothing else, so it has no claim
     # on `site_reports`' exemption, whose `bare` query must keep every kind to
     # feed the runs payload. The scope half stays in Python, where the row is.
-    order = [r["id"] for r in conn.execute(
-        "SELECT id, kind, status, scan_scope, crawled_paths, tier FROM audit_runs"
-        f" WHERE site_id=? AND {status_in(AUDITED_STATUSES)}"
-        f" AND {kind_in_site_reading_kinds()}"
-        " ORDER BY started_at DESC, rowid DESC", (site_id,)) if reads_site(r)]
-    return {rid: i for i, rid in enumerate(order)}.get(run_id)
+    def positions() -> dict[str, int]:
+        order = [r["id"] for r in conn.execute(
+            "SELECT id, kind, status, scan_scope, crawled_paths, known_paths, tier"
+            " FROM audit_runs"
+            f" WHERE site_id=? AND {status_in(AUDITED_STATUSES)}"
+            f" AND {kind_in_site_reading_kinds()}"
+            " ORDER BY started_at DESC, rowid DESC", (site_id,)) if reads_site(r)]
+        return {rid: i for i, rid in enumerate(order)}
+    return _once_in_scope(conn, ("audits_since", site_id), positions).get(run_id)
 
 
 def _read_and_since(conn: sqlite3.Connection, site_id: str, run_id: str,
@@ -5500,6 +6198,116 @@ def _read_and_since(conn: sqlite3.Connection, site_id: str, run_id: str,
             newest = ref["at"]
     return {"crawl_at": crawl_at,
             "checked_since": newest if newest and crawl_at and newest > crawl_at else None}
+
+
+#: Checks whose rows are one per agent or entity, all on the start URL: a
+#: card each, so a count each. The same set as `PER_SUBJECT_CHECKS` in
+#: `part_page.tsx`, which keys its cards by it (item 145).
+#: What a brief writes for "the whole site" where a row names a page: `*`,
+#: nothing, or (item 269, row 3) the word `all`, which the Content analysis wrote
+#: for `cannibalisation`. A
+#: site-wide hold narrowed to one page is still about that page.
+SITE_WIDE_PAGES = ("*", "", "all")
+
+PER_SUBJECT_CHECKS = frozenset({"edge-blocks-ai-ua", "ua-sensitive",
+                                "entity-unnamed", "ai-crawler-blocked"})
+
+
+def _card_key(f: dict) -> tuple:
+    """The card a row is drawn on, as `fixesOf` keys it: the check and the
+    first page it names, and a per-subject sweep row's own fingerprint."""
+    urls = f.get("urls") or []
+    subject = (f["fingerprint"] if f["check_id"] in PER_SUBJECT_CHECKS
+               and f.get("source") == "deterministic" else "")
+    return (f["check_id"], _page_key(urls[0]) if urls else "", subject)
+
+
+def _one_per_card(rows: list[dict]) -> list[dict]:
+    """Item 276. The rows a part counts, one per card the part page draws:
+    keyed as `fixesOf` keys a card - the check and the first page it names,
+    and for a per-subject sweep row its own fingerprint - keeping the
+    automatic checks' row where both sources hold one, and the worse state
+    where the two disagree. Order is kept."""
+    first: dict[tuple, dict] = {}
+    for f in rows:
+        k = _card_key(f)
+        held = first.get(k)
+        state = "regressed" if "regressed" in (f["state"], (held or {}).get("state")) else None
+        if held is None or (held.get("source") != "deterministic"
+                            and f.get("source") == "deterministic"):
+            held = first[k] = dict(f)
+        if state:
+            held["state"] = state
+    return list(first.values())
+
+
+def finding_targets(ev: dict) -> list[str]:
+    """Item 279 (row 5): the elements a finding's evidence names, at most 20 -
+    the selectors of axe's instances, or the hrefs of the links that have no
+    name. Empty where it names none."""
+    sel = [str(i.get("selector") or "").strip() for i in (ev.get("instances") or [])
+           if isinstance(i, dict)]
+    out = ([s for s in sel if s]
+           or [h for h in (ev.get("hrefs") or []) if isinstance(h, str) and h]
+           # Item 274 (row 8): Mobile's rows name elements by tag, class,
+           # box and what they use; the card drew none of it.
+           or [_element_said(e) for e in (ev.get("elements") or []) if isinstance(e, dict)]
+           # Item 275 (row 10): the pages that link to a URL answering an error.
+           or [p for p in (ev.get("linked_from") or []) if isinstance(p, str) and p])
+    return list(dict.fromkeys(o for o in out if o))[:20]
+
+
+def _element_said(e: dict) -> str:
+    """One element from a Mobile row's evidence, as a line: tag and first
+    class, its text, its box, and what it uses."""
+    cls = str(e.get("cls") or "").split()
+    said = str(e.get("tag") or "element") + (f".{cls[0]}" if cls else "")
+    if e.get("text"):
+        said += f' "{str(e["text"])[:40]}"'
+    if e.get("w") is not None and e.get("h") is not None:
+        said += f" ({e['w']} x {e['h']} px)"
+    if e.get("used"):
+        said += " · " + ", ".join(str(u) for u in e["used"])
+    return said
+
+
+def template_verdicts(templates: list[dict], rows: list[dict],
+                      held: list[dict]) -> list[dict]:
+    """Item 274 (row 4): each template's verdict, from the automatic checks'
+    open rows on its pages - any is "defective"; else a check the analysis
+    held there is "partial"; else "clean". The model's own word is kept as
+    `verdict_model`. Mobile printed the brief's word alone: "12 clean" over
+    twelve templates, while `tap-target` was open on all twelve traced pages.
+
+    A template that is not a path (a brief may write a name) matches no page,
+    so its row keeps the model's word and says whose it is."""
+    from clauditseo.analysts.contract import template_page
+    out = []
+    for t in templates:
+        pat = str(t.get("template") or "").strip()
+        if not pat.startswith("/"):
+            out.append({**t, "verdict_model": t.get("verdict"), "verdict_by": "analysis"})
+            continue
+        on = lambda u: bool(u) and template_page(pat, [u]) is not None
+        faults = sorted({f["check_id"] for f in rows if f.get("source") == "deterministic"
+                         and any(on(u) for u in f.get("urls") or [])})
+        holds = sorted({str(h.get("check") or "").split("/")[-1] for h in held
+                        if (h.get("page") or "") in SITE_WIDE_PAGES or on(h.get("page"))})
+        out.append({**t, "verdict": "defective" if faults else "partial" if holds else "clean",
+                    "verdict_model": t.get("verdict"), "verdict_by": "automatic checks",
+                    "verdict_faults": faults, "verdict_holds": holds})
+    return out
+
+
+def _closes_its_check(source: str | None, evidence: str | None) -> bool:
+    """Item 269. An analysis row whose status is PASS-OVERRIDE - the brief's
+    verdict that a flag is not a fault ("No consolidation on present
+    evidence") - is stored as a finding but is not one, so a part's count
+    does not include it. The part page draws it as the verdict it is."""
+    if source != "model-judgement":
+        return False
+    ev = _view_evidence(evidence)
+    return bool(ev.get("contract")) and ev.get("status") == "PASS-OVERRIDE"
 
 
 def anatomy_view(conn: sqlite3.Connection, site_id: str,
@@ -5559,6 +6367,9 @@ def anatomy_view(conn: sqlite3.Connection, site_id: str,
     brief_eligibility: dict[str, list[dict]] = {}
     brief_map: dict[str, list[dict]] = {}
     brief_clusters: dict[str, list[dict]] = {}
+    # Links' hub map (item 271, row 6): the structure the brief is organised
+    # around, paid for on every run and, until now, read by nothing.
+    brief_hubs: dict[str, list[dict]] = {}
     brief_entity: dict[str, dict] = {}
     # Brief v20's block keys (items 147, 148), beside the four above and for
     # the same reason: each is a fact about a GROUP of pages -- a template, a
@@ -5573,6 +6384,10 @@ def anatomy_view(conn: sqlite3.Connection, site_id: str,
     #: The AI surface brief's block beside its rows (item 145 BH), newest run's.
     brief_ai_surface: dict[str, dict] = {}
     brief_run: dict[str, dict] = {}
+    #: Item 269 (row 4): every analysis writing to a part, newest per tool,
+    #: each with its own rows, drops and cost. `brief_run` is the newest of
+    #: them and stays for every reader that wants one.
+    brief_runs: dict[str, list[dict]] = {}
     brief_summary: dict[str, str] = {}
     #: Item 210: the assessment section whole, as the model wrote it, for a
     #: disclosure. `brief_summary` was its first three sentences printed at
@@ -5583,7 +6398,7 @@ def anatomy_view(conn: sqlite3.Connection, site_id: str,
     seen_tools: set[str] = set()
     for er in conn.execute(
             """SELECT er.tool_id, er.contract, er.model_id, er.created_at, er.cost,
-                      er.report, er.run_id FROM expert_reports er
+                      er.report, er.run_id, er.brief_version FROM expert_reports er
                JOIN audit_runs r ON r.id = er.run_id
                WHERE r.site_id = ? AND er.contract IS NOT NULL
                ORDER BY er.created_at DESC, er.rowid DESC""", (site_id,)):
@@ -5595,6 +6410,7 @@ def anatomy_view(conn: sqlite3.Connection, site_id: str,
         except (TypeError, ValueError):
             continue
         part = part_of[er["tool_id"]]
+        dropped_before = brief_dropped.get(part, 0)
         brief_dropped[part] = brief_dropped.get(part, 0) + len(c.get("dropped") or [])
         for d in (c.get("dropped") or []):
             if not isinstance(d, dict):
@@ -5602,7 +6418,8 @@ def anatomy_view(conn: sqlite3.Connection, site_id: str,
             row = d.get("row") if isinstance(d.get("row"), dict) else {}
             brief_dropped_rows.setdefault(part, []).append({
                 "check": str(row.get("check") or ""), "page": row.get("page") or row.get("url"),
-                "reason": str(d.get("reason") or "no reason was recorded")})
+                "reason": str(d.get("reason") or "no reason was recorded"),
+                "tool": er["tool_id"]})
         # Item 211, on read as well as on parse: a contract stored before
         # the rule still holds its variable-name reasons and its passes, and
         # a re-parse is not the only way a reader should see them fixed.
@@ -5615,7 +6432,8 @@ def anatomy_view(conn: sqlite3.Connection, site_id: str,
             brief_dropped[part] = brief_dropped.get(part, 0) + 1
             brief_dropped_rows.setdefault(part, []).append({
                 "check": str((d.get("row") or {}).get("check") or ""),
-                "page": (d.get("row") or {}).get("page"), "reason": d["reason"]})
+                "page": (d.get("row") or {}).get("page"), "reason": d["reason"],
+                "tool": er["tool_id"]})
         brief_not_assessable[part] = brief_not_assessable.get(part, 0) + len(held)
         # `needs` is the input a held check waits on (brief v15 step AQ). The
         # brief v20 schemas write a different shape - `scope` and `reason`,
@@ -5646,9 +6464,23 @@ def anatomy_view(conn: sqlite3.Connection, site_id: str,
             # staleness `test_report_currency` exists to stop, arriving through
             # the part page's door.
             "audits_since": _audits_since(conn, site_id, er["run_id"]),
+            # Item 249: whether the brief has changed since this analysis was
+            # written (None where the version was never recorded), and
+            # whether what is shown was re-read under the current rules.
+            "brief_changed": _brief_changed(er["tool_id"], er["brief_version"]),
+            "reread": bool(c.get("reparsed")),
+            "reread_at": c.get("reparsed_at"),
             # Item 239 step 4: the crawl this analysis read, and the newest
             # automatic measurement of the part's checks after it - "analysis
             # read the crawl of 18 Sept; automatic checks since".
+            **_read_and_since(conn, site_id, er["run_id"], brief_checks.get(part) or [])})
+        # Item 269 (row 4): this tool's own line. "Rows returned" is its rows
+        # and its drops, never a sum across tools.
+        brief_runs.setdefault(part, []).append({
+            "tool": er["tool_id"], "model": er["model_id"], "at": er["created_at"],
+            "run_id": er["run_id"], "rows": len(c.get("rows") or []),
+            "dropped": brief_dropped.get(part, 0) - dropped_before,
+            "cost": er["cost"], "audits_since": _audits_since(conn, site_id, er["run_id"]),
             **_read_and_since(conn, site_id, er["run_id"], brief_checks.get(part) or [])})
         # The two verdicts that are not findings (brief v16 step AS):
         # eligibility per (page, rich result), and the site's own entity
@@ -5662,7 +6494,7 @@ def anatomy_view(conn: sqlite3.Connection, site_id: str,
         # rows the way eligibility and the entity verdict do.
         for name, into in (("map", brief_map), ("clusters", brief_clusters),
                            ("templates", brief_templates),
-                           ("fixes", brief_fixes)):
+                           ("fixes", brief_fixes), ("hubs", brief_hubs)):
             into.setdefault(part, []).extend(
                 x for x in (c.get(name) or []) if isinstance(x, dict))
         # The schema version the block declared. Carried so a screen can tell
@@ -5751,12 +6583,22 @@ def anatomy_view(conn: sqlite3.Connection, site_id: str,
     #: Findings this page filter set aside because they are about the site as
     #: one subject rather than any page (audit F15). Zero in site mode.
     site_only = 0
+    # Which checks those site rows are, per part (screen audits round 3,
+    # Speed AC-01): page mode drops them, and a dropped check then read
+    # "clean on every page" there while site mode said "not measured".
+    site_level: dict[str, set[str]] = {}
     # Which check ids were raised by both a sweep and a brief. The two answer
     # different questions and are meant to differ; shown side by side with no
     # label, they read as one number contradicting itself.
     sources_per_check: dict[str, set[str]] = {}
 
+    # Item 270: an analysis row the automatic checks have since cleared on
+    # every page it names is theirs to answer, and they cleared it; the part
+    # page folds it into one line, and the part's count leaves it out with it.
+    overtaken = {d["fingerprint"] for d in site_states(conn, site_id) if d.get("superseded_on")}
     for r, urls_stored in zip(rows, affected):
+        if _closes_its_check(r["source"], r["evidence"]) or r["fingerprint"] in overtaken:
+            continue
         urls = _canonical(urls_stored)
         all_pages |= set(urls)
         # By key, not by string: the narrow carries one spelling and the
@@ -5772,6 +6614,9 @@ def anatomy_view(conn: sqlite3.Connection, site_id: str,
             # audit crawled, with nothing to explain the three.
             if not urls and not is_coverage_note(r["check_id"], r["severity"]):
                 site_only += 1
+            if not urls:
+                site_level.setdefault(an.categorise(r["check_id"], r["dimension"]),
+                                      set()).add(r["check_id"])
             continue
         sources_per_check.setdefault(r["check_id"], set()).add(r["source"])
         cat = an.categorise(r["check_id"], r["dimension"])
@@ -5805,6 +6650,16 @@ def anatomy_view(conn: sqlite3.Connection, site_id: str,
             # clean. Found by the rendered guard, which is what a browser
             # assertion is for: nothing about the source said so.
             "block": _evidence_key(ev, "block"),
+            # Item 270 (row 4): what an automatic structured-data row names
+            # where it names no block - the @ids it found twice, or the type
+            # it found repeated. Read by `_graph_anchors`.
+            # Read from the stored text: `ev` is the view's cut-down parse,
+            # which skips evidence naming none of its five fields - these two
+            # rows' among them. Two small rows, so the full parse is cheap.
+            "node_ids": (_evidence_key(r["evidence"], "properties")
+                         if r["check_id"] == "schema-duplicate-id" else None),
+            "node_type": (_evidence_key(r["evidence"], "type")
+                          if r["check_id"] == "schema-redundant-block" else None),
             "pages": len(urls), "urls": urls[:10],
             # What the check found before its own cap, or None where the row
             # predates the column (migration 0030). Three numbers rather than
@@ -5844,16 +6699,51 @@ def anatomy_view(conn: sqlite3.Connection, site_id: str,
     # counts into open, anywhere; but a bare 0 on a part whose analysis has
     # filed rows nobody has confirmed yet is a lie of omission, so the figure
     # carries its companion. Coverage notes are set aside as they are above.
+    #
+    # Item 270 (row 5): at page scope too, over the rows naming the page in
+    # hand. Page mode had no companion, so Structured data's strip read 3
+    # over four cards. The page's candidates are kept, shaped as the picture
+    # reads a row, so its checklist numbers them after the open ones.
     seen_once: dict[str, int] = {}
-    if not page_url:
-        for r in conn.execute(
-                f"""SELECT f.check_id, f.dimension, f.severity FROM finding_states fs
-                    JOIN findings f ON f.rowid = ({_latest_finding()})
-                    WHERE fs.site_id = ? AND fs.state = 'candidate'""", (site_id,)):
-            if is_coverage_note(r["check_id"], r["severity"]):
-                continue
-            key = an.categorise(r["check_id"], r["dimension"])
+    to_confirm: dict[str, int] = {}
+    page_candidates: dict[str, list[dict]] = {}
+    # Every mode now (screen audits round 3, shop IP-02): "seen once" is a
+    # candidate the automatic checks may still open, and "to confirm" one
+    # that waits for the operator (item 250). The part's count lumped the two
+    # under the first word, hiding the operator's queue.
+    awaiting = _once_in_scope(conn, ("awaiting", site_id),
+                              lambda: awaiting_confirmation(conn, site_id))
+    for r in conn.execute(
+            f"""SELECT f.check_id, f.dimension, f.severity, f.summary, f.source,
+                       f.affected_urls, f.evidence, fs.fingerprint
+                FROM finding_states fs
+                JOIN findings f ON f.rowid = ({_latest_finding()})
+                WHERE fs.site_id = ? AND fs.state = 'candidate'""", (site_id,)):
+        if is_coverage_note(r["check_id"], r["severity"]):
+            continue
+        if _closes_its_check(r["source"], r["evidence"]) or r["fingerprint"] in overtaken:
+            continue
+        if page_url and _page_key(page_url) not in {
+                _page_key(u) for u in _canonical(json.loads(r["affected_urls"] or "[]"))}:
+            continue
+        key = an.categorise(r["check_id"], r["dimension"])
+        if r["fingerprint"] in awaiting:
+            to_confirm[key] = to_confirm.get(key, 0) + 1
+        else:
             seen_once[key] = seen_once.get(key, 0) + 1
+        if page_url:
+            ev = _view_evidence(r["evidence"])
+            page_candidates.setdefault(key, []).append({
+                "check_id": r["check_id"], "dimension": r["dimension"],
+                "severity": r["severity"], "summary": r["summary"],
+                "source": r["source"], "state": "candidate",
+                "to_confirm": r["fingerprint"] in awaiting,
+                "block": _evidence_key(ev, "block"),
+                "node_ids": (_evidence_key(r["evidence"], "properties")
+                             if r["check_id"] == "schema-duplicate-id" else None),
+                "node_type": (_evidence_key(r["evidence"], "type")
+                              if r["check_id"] == "schema-redundant-block" else None),
+            })
     categories = []
     for c in an.CATEGORIES:
         items = sorted(buckets[c.key],
@@ -5862,6 +6752,10 @@ def anatomy_view(conn: sqlite3.Connection, site_id: str,
         # table shows them - but never counted (brief v5 step S): the
         # total, and so the sidebar's badge, is what the record counts.
         counted = [f for f in items if not is_coverage_note(f["check_id"], f["severity"])]
+        # Item 276: one per card. Where the automatic checks and an analysis
+        # both hold a row on one (check, page), the part page draws one card
+        # and the count read two: Security's chip said 25 over 13 cards.
+        cards = _one_per_card(counted)
         categories.append({
             "key": c.key, "label": c.label, "group": c.group, "blurb": c.blurb,
             # Whether the catalogue lists any analysis for this part (the
@@ -5888,12 +6782,13 @@ def anatomy_view(conn: sqlite3.Connection, site_id: str,
             # coverage notes not counted", which is a sentence about the
             # badge's own number rather than a figure of its own. A population
             # on it would be a fourth field nothing renders.
-            "open": count(sum(1 for f in counted if f["state"] == "open"),
+            "open": count(sum(1 for f in cards if f["state"] == "open"),
                           "record"),
             "regressed": count(
-                sum(1 for f in counted if f["state"] == "regressed"), "record"),
-            "total": count(len(counted), "record"),
+                sum(1 for f in cards if f["state"] == "regressed"), "record"),
+            "total": count(len(cards), "record"),
             "seen_once": count(seen_once.get(c.key, 0), "record"),
+            "to_confirm": count(to_confirm.get(c.key, 0), "record"),
             "notes": len(items) - len(counted),
             # A count over the RECORD, said so (item 155). This is the pages
             # carrying an open finding across every run, not the pages this
@@ -5920,6 +6815,12 @@ def anatomy_view(conn: sqlite3.Connection, site_id: str,
             # `http-status-error`, Indexability's `canonical-missing` on
             # twenty22 - had no card when those parts moved to three blocks.
             "filed_checks": sorted({f["check_id"] for f in counted}),
+            # Item 279 (row 7): every check registered to the part that
+            # measures something, so a check that ran and filed nothing can
+            # be said clean. Accessibility's nine were silent: the table only
+            # knew checks with a row.
+            "registered_checks": sorted(k for k, v in an.CHECK_CATEGORY.items()
+                                        if v == c.key and not is_note_name(k)),
             # The prefixes whose dynamically-named checks belong to this part
             # (item 136o). `axe-<rule>` is minted from axe-core's rule set at
             # run time, so no enumeration can list them - the ENGINE already
@@ -5945,7 +6846,11 @@ def anatomy_view(conn: sqlite3.Connection, site_id: str,
                 for ch in brief_checks.get(c.key, [])
                 if ch.split("/")[-1] in _onp.HELD_ONLY_NEEDS],
             "brief_dropped": brief_dropped.get(c.key, 0),
+            # Page mode only: checks whose rows name no page, so this page
+            # cannot be clean or open on them (screen audits round 3).
+            "site_level_checks": sorted(site_level.get(c.key, ())),
             "brief_dropped_rows": brief_dropped_rows.get(c.key, [])[:200],
+            "brief_runs": brief_runs.get(c.key, []),
             "brief_not_assessable": brief_not_assessable.get(c.key, 0),
             # Brief v13 step AO: the held rows themselves, the run that
             # produced them, and the brief's own verdict sentence.
@@ -5957,16 +6862,18 @@ def anatomy_view(conn: sqlite3.Connection, site_id: str,
             # read as passing on the home page while the brief was saying
             # site-wide that it could not judge it.
             "brief_held": [h for h in brief_held.get(c.key, [])
-                           if not page_url or h["page"] in ("*", "")
+                           if not page_url or h["page"] in SITE_WIDE_PAGES
                            or _page_key(h["page"]) == _page_key(page_url)],
             "brief_eligibility": brief_eligibility.get(c.key, []),
             "brief_map": brief_map.get(c.key, []),
             "brief_clusters": brief_clusters.get(c.key, []),
+            "brief_hubs": brief_hubs.get(c.key, []),
             # Brief v20 (items 147, 148). `brief_fixes` is shared by both
             # parts and is why the fix is stored once and pointed at by
             # `fix_id` on each row: one change repeated per row is how a
             # single markup fix came to read as six on the Images part.
-            "brief_templates": brief_templates.get(c.key, []),
+            "brief_templates": template_verdicts(brief_templates.get(c.key, []), counted,
+                                                brief_held.get(c.key, [])),
             "brief_locales": brief_locales.get(c.key),
             "brief_fixes": brief_fixes.get(c.key, []),
             "brief_schema": brief_schema.get(c.key),
@@ -6012,11 +6919,24 @@ def anatomy_view(conn: sqlite3.Connection, site_id: str,
             # The page's own eligibility rows (item 242). The part's list is
             # every page the analysis judged; handed over whole, the page view
             # drew ~55 unnamed rows under `/` that read as one line repeated.
+            # Item 270 (row 5): the page's candidates follow its open rows,
+            # so they number after them; the checklist says which they are.
+            order = {sev: i for i, sev in enumerate(
+                ("critical", "high", "medium", "low", "info"))}
             c["graph"] = schema_graph_payload(
-                facts, c["findings"],
+                facts, c["findings"] + sorted(page_candidates.get("schema", []),
+                                              key=lambda f: order.get(f["severity"], 9)),
                 [e for e in c["brief_eligibility"]
                  if page_url and _path_of(str(e.get("page") or "")) == _path_of(page_url)],
                 _page_type_of(conn, site_id, page_url) if page_url else "")
+        # Item 271 (row 6): Links' site picture - how body inlinks and click
+        # depth fall across the live pages of the links reference crawl.
+        if c["key"] == "links" and not page_url:
+            c["links_site"] = links_site_payload(conn, site_id)
+        # Item 278 (row 8): a part no crawl moves is read against the signals
+        # its provider supplies, not against crawled pages.
+        if (c.get("refresh") or {}).get("crawl_blind"):
+            c["signal_coverage"] = signal_coverage_payload(conn, site_id)
         # Item 224: the site view has no page in hand, so the Headings card
         # diffed the brief's corrected outline against nothing and tagged all
         # 38 lines of /website-seo/ `[proposed]`. The outline the crawl kept
@@ -6102,17 +7022,54 @@ def _graph_anchors(row: dict, inventory: list[dict]) -> list[str]:
     Organization nodes on all three.
     """
     ref = row.get("block")
+
+    def node(entry: dict) -> list[str]:
+        return [entry["id"]] if entry.get("id") else []
+
+    def types(entry: dict) -> list[str]:
+        return [t.strip() for t in str(entry.get("type") or "").split(",") if t.strip()]
+
+    # Item 270 (row 4): an automatic row whose subject is named rather than
+    # indexed. A duplicate @id is about every node carrying it; a redundant
+    # block is about every node of the type it found repeated (the finding
+    # is the repetition, so all of them are its subject, which is not the
+    # same as pinning a one-node finding by type).
+    ids = row.get("node_ids")
+    if isinstance(ids, list) and ids:
+        want = {str(i) for i in ids}
+        return list(dict.fromkeys(e["id"] for e in inventory if e.get("id") in want))
+    typ = row.get("node_type")
+    if isinstance(typ, str) and typ and ref is None:
+        return list(dict.fromkeys(e["id"] for e in inventory if e.get("id") and typ in types(e)))
+    # Item 270 (row 4): an automatic check's row names its node by its index
+    # in this same inventory (`onp`'s `evidence.block`, from 0), and pinned to
+    # nothing because only the string form was read.
+    if isinstance(ref, int) and not isinstance(ref, bool):
+        return node(inventory[ref]) if 0 <= ref < len(inventory) else []
     if not isinstance(ref, str) or "#" not in ref:
         return []
+    kind, _, num = ref.rpartition("#")
     try:
-        n = int(ref.rsplit("#", 1)[1])
+        n = int(num)
     except ValueError:
         return []
-    if not 1 <= n <= len(inventory):
-        return []
-    entry = inventory[n - 1]
-    node_id = entry.get("id")
-    return [node_id] if node_id else []
+    # A node of several types is written with all of them ("LocalBusiness,
+    # Organization#3"); it is that node where it has every type named.
+    kinds = [k.strip() for k in kind.split(",") if k.strip()]
+
+    def of_kind(entry: dict) -> bool:
+        return all(k in types(entry) for k in kinds)
+    # `Type#n` is the n-th node OF THAT TYPE - the prompt's own example,
+    # `Organization#1`. Read as an index into the whole inventory, a row about
+    # the second Organization on twenty22's `/` was pinned to the SearchAction
+    # at index 2 while both Organization cards read clean. The flattened
+    # index is the fallback, and only where the node there is of that type.
+    same = [e for e in inventory if of_kind(e)]
+    if 1 <= n <= len(same):
+        return node(same[n - 1])
+    if 1 <= n <= len(inventory) and (not kinds or of_kind(inventory[n - 1])):
+        return node(inventory[n - 1])
+    return []
 
 
 #: The keys a registered identifier arrives under in schema.org markup, in the
@@ -6273,6 +7230,10 @@ def schema_graph_payload(facts: dict | None, items: list[dict],
                        if row.get("check_id") and row.get("dimension")
                        else [row["check_id"]] if row.get("check_id") else []),
             "src": "analysis" if row.get("source") == "model-judgement" else "free",
+            # Item 270 (row 5): a candidate on the page is numbered too, and
+            # the checklist names its state rather than passing it as open.
+            "state": row.get("state") or "open",
+            "to_confirm": bool(row.get("to_confirm")),
             "anchors": _graph_anchors(row, inventory),
         })
     model = _sg.build_model(
@@ -6511,8 +7472,13 @@ def fix_order_payload(conn: sqlite3.Connection, site_id: str,
         rolled.append(r)
 
     for st in rolled:
-        st["label"] = _fix_label(st["check"], st.get("selectors", 1),
-                                 st.get("landmarks") or [], st["kind"])
+        # Item 279 (row 10): the count the bar shows. A merged step with one
+        # selector on several pages is that many instances: "Rewrite the 1
+        # generic link text" stood over a bar of 2.
+        n = st.get("selectors", 1)
+        if n == 1 and st.get("instances", 1) > 1:
+            n = st["instances"]
+        st["label"] = _fix_label(st["check"], n, st.get("landmarks") or [], st["kind"])
     rolled.sort(key=lambda st: (-st["instances"], st["check"], st["selector"]))
 
     # Cap, with the tail rolled into one so the sum still holds.
@@ -6721,7 +7687,8 @@ def security_headers_payload(conn: sqlite3.Connection,
                      if 300 <= int(p.get("status") or 0) < 400])
     if not pages:
         return {"recorded": False, "pages": 0, "redirects": redirects,
-                "groups": [], "rows": [], "fanned": False}
+                "groups": [], "rows": [], "fanned": False,
+                "transport": evidence.get("transport")}
     if not any(p.get("headers") for p in pages):
         # The contract's absent-data state, not an empty grid: a run that
         # stored no headers is a different answer from a site that sets none.
@@ -6765,6 +7732,8 @@ def security_headers_payload(conn: sqlite3.Connection,
         rows.append({
             "key": key, "label": label, "agree": agree,
             "covered_by_check": key in sh.COVERED_BY_CHECK,
+            # Item 276 (row 9): a disclosure row is not a header in place.
+            "inverted": key in sh.INVERTED,
             "cells": {g: cells[g] for g in groups},
             "value": next((cells[f"{g}\u0000value"] for g in groups
                            if cells[f"{g}\u0000value"]), ""),
@@ -6785,7 +7754,11 @@ def security_headers_payload(conn: sqlite3.Connection,
                     + [""] if fanned else []) if fanned else [],
         "rows": rows,
         "odd": _odd_route(fanned, groups, by_group),
-        "in_place": len([r for r in rows if all(v == sh.SET for v in r["cells"].values())]),
+        "in_place": len([r for r in rows if not r["inverted"]
+                         and all(v == sh.SET for v in r["cells"].values())]),
+        # What the connection negotiated (item 276, row 9): one fact about the
+        # origin, read here so the part draws it with no page in hand.
+        "transport": evidence.get("transport"),
         "absent_everywhere": [r["label"] for r in rows
                               if all(v == sh.ABSENT for v in r["cells"].values())],
     }
@@ -6937,6 +7910,16 @@ def indexability_now_payload(conn: sqlite3.Connection, run_id: str | None) -> di
     # Redirects: exact from the stored chains; per-hop shapes are the brief's.
     with_redirect = [p for p in pages if p.get("redirect_chain")]
     chains = [p for p in with_redirect if len(p.get("redirect_chain") or []) >= 2]
+    # Item 277 (row 8): the crawl stores each hop's status (`redirect_statuses`)
+    # on evidence written since it learned to, so `temporary` and `to_404` are
+    # counted where every redirected page carries it, and stay None (said as
+    # not stored) where any does not.
+    per_hop = bool(with_redirect) and all(
+        isinstance(p.get("redirect_statuses"), list) for p in with_redirect)
+    temporary = (sum(1 for p in with_redirect
+                     if set(p["redirect_statuses"]) & {302, 303, 307}) if per_hop else None)
+    to_404 = (sum(1 for p in with_redirect if (p.get("status") or 0) >= 400)
+              if per_hop else None)
 
     # URL convention: the scheme/host/slash the majority of reached 200s use.
     oks = [p for p in reached if p.get("status") == 200]
@@ -6955,9 +7938,9 @@ def indexability_now_payload(conn: sqlite3.Connection, run_id: str | None) -> di
         "redirects": {
             "total": len(with_redirect),
             "chains": len(chains),
-            # Not decidable from a stored crawl — the brief's over a live log.
-            "temporary": None,
-            "to_404": None,
+            "temporary": temporary,
+            "to_404": to_404,
+            "per_hop": per_hop,
         },
         "convention": {"scheme": scheme, "host": host,
                        "trailing_slash": bool(slash)},
@@ -7000,8 +7983,17 @@ def _page_outlines(conn: sqlite3.Connection, site_id: str, checks: list[str]) ->
     for u in urls:
         facts = page_facts(conn, site_id, u)
         if facts and (facts.get("outline") or facts.get("headings")):
-            out[u] = {"outline": facts.get("outline"), "headings": facts.get("headings")}
+            # Item 268 (row 4): and when the crawl read it, so the card can
+            # say which crawl its "Now" is.
+            out[u] = {"outline": facts.get("outline"), "headings": facts.get("headings"),
+                      "captured_at": outline_read_at(facts)}
     return out
+
+
+def outline_read_at(facts: dict) -> str | None:
+    """When the crawl read a page's outline: its own date where the newest
+    measurement of the page did not carry it, else the page's."""
+    return (facts.get("dated") or {}).get("outline") or facts.get("captured_at")
 
 
 def crawl_now_payload(conn: sqlite3.Connection, run_id: str | None) -> dict | None:
@@ -7068,6 +8060,11 @@ def crawl_now_payload(conn: sqlite3.Connection, run_id: str | None) -> dict | No
     render_only = conn.execute(
         "SELECT COUNT(*) c FROM findings WHERE run_id=? AND check_id='render-only'",
         (run_id,)).fetchone()["c"]
+    # Item 275: what the count is OF. `render-only` is read only on the pages
+    # the rendered pass visited (`tec._render_only` reads their text blocks),
+    # so a bare 0 under the crawl's own counts read as "no page on the site".
+    # None where the pass rendered nothing: then it was not measured at all.
+    render_read = len(_text_blocks_for_run(conn, run_id)) or None
 
     sitemap_files = len([s for s in (evidence.get("sitemaps") or [])])
 
@@ -7082,6 +8079,7 @@ def crawl_now_payload(conn: sqlite3.Connection, run_id: str | None) -> dict | No
         "in_sitemap": len(in_sitemap),
         "reached": len(reached),
         "render_only": render_only,
+        "render_read": render_read,
         "sitemap_files": sitemap_files,
         "venn": {
             # reached, on this host, that the sitemap does not list.
@@ -8036,13 +9034,31 @@ def open_severe(conn: sqlite3.Connection, site_id: str) -> dict:
     yet a finding the record stands behind."""
     marks = ",".join("?" * len(INTEGRITY_SEVERITIES))
     by: dict[str, int] = {s: 0 for s in INTEGRITY_SEVERITIES}
+    # Item 276: one per card, as the part counts are. Where the automatic
+    # checks and an analysis both hold one (check, page), the part page draws
+    # one card and this counted two - on twenty22 the held report's "95
+    # Critical or High" counted every analysis row the sweep's card carries.
+    # An analysis verdict (PASS-OVERRIDE, item 269) is not a finding at all.
+    # A card counts at its worst severity, which is the pill it wears.
+    order = list(INTEGRITY_SEVERITIES)
+    cards: dict[tuple, str] = {}
     for r in conn.execute(
-            "SELECT lower(f.severity) sev, COUNT(*) n FROM finding_states fs"
+            "SELECT f.check_id, lower(f.severity) sev, f.source, f.affected_urls,"
+            " f.evidence, fs.fingerprint FROM finding_states fs"
             f" JOIN findings f ON f.rowid = ({_latest_finding()})"
             " WHERE fs.site_id=? AND fs.state IN ('open','regressed')"
-            f" AND NOT {coverage_note_sql()} AND lower(f.severity) IN ({marks})"
-            " GROUP BY lower(f.severity)", (site_id, *INTEGRITY_SEVERITIES)):
-        by[r["sev"]] = r["n"]
+            f" AND NOT {coverage_note_sql()} AND lower(f.severity) IN ({marks})",
+            (site_id, *INTEGRITY_SEVERITIES)):
+        if _closes_its_check(r["source"], r["evidence"]):
+            continue
+        k = _card_key({"check_id": r["check_id"], "source": r["source"],
+                       "fingerprint": r["fingerprint"],
+                       "urls": json.loads(r["affected_urls"] or "[]")[:1]})
+        held = cards.get(k)
+        if held is None or order.index(r["sev"]) < order.index(held):
+            cards[k] = r["sev"]
+    for sev in cards.values():
+        by[sev] += 1
     return {"count": sum(by.values()), **by}
 
 def run_fingerprints(conn: sqlite3.Connection, run_id: str) -> list[str]:
@@ -8265,6 +9281,24 @@ def crawled_paths(evidence: dict) -> list[str]:
     return sorted(keys)
 
 
+def fetched_not_eligible_paths(evidence: dict) -> list[str]:
+    """The on-host paths this run fetched and left out of the eligible set -
+    pages that answered an error (item 275, row 7). The prevalence cell said
+    "3 more in the record" of them, which is the sentence for pages the run
+    never fetched."""
+    from clauditseo.crawler.types import stored_page_is_eligible
+    from urllib.parse import urlsplit
+    host = urlsplit(evidence.get("start_url") or "").netloc
+    keys = set()
+    for p in (evidence.get("pages") or []):
+        if not p.get("url") or stored_page_is_eligible(p):
+            continue
+        k = _host_path(p["url"], host)
+        if k is not None:
+            keys.add(k)
+    return sorted(keys)
+
+
 def populations_payload(conn: sqlite3.Connection, run_id: str | None, *,
                         record_pages: int, page_url: str | None = None) -> dict:
     """The three populations a count may be counted over, and the page's own
@@ -8275,6 +9309,7 @@ def populations_payload(conn: sqlite3.Connection, run_id: str | None, *,
     population covers exactly that much has nothing to disambiguate.
     """
     crawled: list[str] = []
+    errored: list[str] = []
     site_pages: int | None = None
     have_run = False
     if run_id:
@@ -8287,10 +9322,12 @@ def populations_payload(conn: sqlite3.Connection, run_id: str | None, *,
             if ev:
                 have_run = True
                 crawled = crawled_paths(ev)
+                errored = fetched_not_eligible_paths(ev)
                 site_pages = site_size(ev)["size"]
     return {
         "crawl": {"size": len(crawled) if have_run else None,
-                  "basis": POPULATION_BASIS["crawl"], "paths": crawled},
+                  "basis": POPULATION_BASIS["crawl"], "paths": crawled,
+                  "errored_paths": errored},
         # No size, by construction — see POPULATION_BASIS.
         "site": {"size": None, "basis": POPULATION_BASIS["site"], "paths": []},
         "record": {"size": record_pages, "basis": POPULATION_BASIS["record"],
@@ -8491,7 +9528,7 @@ def crawl_depth_payload(conn: sqlite3.Connection, run_id: str | None) -> dict | 
     if not run_id:
         return None
     row = conn.execute(
-        "SELECT id, kind, scan_scope, crawled_paths"
+        "SELECT id, kind, scan_scope, crawled_paths, known_paths"
         " FROM audit_runs WHERE id=?", (run_id,)).fetchone()
     evidence_raw = evidence_text(conn, run_id)
     if row is None or not evidence_raw:
@@ -8507,13 +9544,19 @@ def crawl_depth_payload(conn: sqlite3.Connection, run_id: str | None) -> dict | 
     from clauditseo.crawler.evidence import home_of
     start = evidence.get("start_url") or ""
     home = home_of(start, pages)
-    stored = {p["url"]: p.get("click_depth") for p in pages}
+    # Item 275 (row 6): one population for the chart and the card. The
+    # depth check leaves a page that answered an error out (item 227), and
+    # the chart drew it: 19 past three clicks against the check's 17 on
+    # twenty22. The bars are drawn over the pages that answered.
+    live = [p for p in pages if (p.get("status") or 0) < 400]
+    stored = {p["url"]: p.get("click_depth") for p in live}
     base = {"run_id": row["id"], "scope": scope_of(row),
             "entry": home or start or None, "crawled": len(pages),
             # Item 229: the chart counts every stored page, error pages too,
             # so its population is not the "reached" beside it. Said, not
             # hidden: the note names both.
             "errored": sum(1 for p in pages if (p.get("status") or 0) >= 400),
+            "drawn": len(live),
             "deep_from": DEEP_CLICKS + 1}
     if not any(isinstance(d, int) for d in stored.values()):
         return {**base, "recorded": False, "bars": [], "at": {}}
@@ -8605,9 +9648,18 @@ def heading_shapes_payload(conn: sqlite3.Connection,
         return norm(a) == norm(b)
 
     elsewhere = [p["url"] for p in pages if not _own(p)]
-    read = [p for p in pages if _own(p)
+    # Item 268 (row 5): a page that answered an error is not a page the
+    # checks read (item 227), and the picture read it. On twenty22 the two
+    # 404s (`/on-page-seo/`, `/post-seo/on-page-seo/image-optimization/`)
+    # carried a skip, so the picture counted 14 pages and the record 12. The
+    # outline and the heading list agreed on every page; the population did
+    # not. Left out here and named, as a canonical elsewhere is.
+    errored = [p["url"] for p in pages
+               if isinstance(p.get("status"), int) and p["status"] >= 400]
+    read = [p for p in pages if _own(p) and p["url"] not in errored
             and (p.get("outline") is not None or p.get("headings") is not None)]
-    base["not_checked"] = elsewhere
+    base["not_checked"] = [u for u in elsewhere if u not in errored]
+    base["errored"] = errored
     if not read:
         return {**base, "recorded": False, "pages": 0, "at": {}, "labels": {}}
 
@@ -8860,8 +9912,8 @@ def image_state(record: dict, budget: dict) -> dict:
     from clauditseo.modules.onp import image_weight_state
     # The widest box the page was measured at, taken the way the check
     # takes it, so a dot's x is the x the finding measured against.
-    shown = max(((v[0], v[1]) for v in (record.get("rendered") or {}).values()),
-                default=(0, 0))
+    shown, at = max((((v[0], v[1]), k) for k, v in (record.get("rendered") or {}).items()),
+                    default=((0, 0), None))
     pixels = shown[0] * shown[1]
     weight = record.get("weight_kb")
     state, per_pixel = image_weight_state(weight, pixels, budget["image_kb"],
@@ -8870,6 +9922,9 @@ def image_state(record: dict, budget: dict) -> dict:
     missing = alt is None or not str(alt).strip()
     return {
         "drawn_w": shown[0] or None, "drawn_h": shown[1] or None,
+        # Item 272 (row 7): the viewport width that box was measured at, so
+        # "256 × 176" says "at 768" - the widest box is often a tablet's.
+        "drawn_at": int(at) if at and str(at).isdigit() else None,
         "kb": weight if state != "unmeasured" else None,
         "bytes_per_pixel": per_pixel,
         "alt_missing": missing,
@@ -8916,7 +9971,7 @@ def image_budget_payload(conn: sqlite3.Connection, run_id: str | None) -> dict |
     if not run_id:
         return None
     row = conn.execute(
-        "SELECT id, site_id, kind, scan_scope, crawled_paths, tier, started_at"
+        "SELECT id, site_id, kind, scan_scope, crawled_paths, known_paths, tier, started_at"
         " FROM audit_runs WHERE id=?", (run_id,)).fetchone()
     evidence_raw = evidence_text(conn, run_id)
     if row is None or not evidence_raw:
@@ -8938,20 +9993,31 @@ def image_budget_payload(conn: sqlite3.Connection, run_id: str | None) -> dict |
     groups: dict[tuple, dict] = {}
     total = unmeasured = unplaced = capped = placed = 0
     weighed_pages: set[str] = set()
+    # Item 272 (row 7): each page's own reconciliation, so page mode says
+    # what site mode says - recorded, drawn, and why the rest are not.
+    per_page: dict[str, dict] = {}
+    lcp_found = False
     for page in pages:
         path = urlsplit(page["url"]).path or "/"
+        tally = per_page.setdefault(path, {"total": 0, "unmeasured": 0, "unplaced": 0,
+                                           "placed": 0})
         for record in (page.get("image_inventory") or []):
             total += 1
+            tally["total"] += 1
+            lcp_found = lcp_found or bool(record.get("lcp_candidate"))
             if record.get("rendered"):
                 weighed_pages.add(path)
             got = image_state(record, budget)
             if got["state"] == "unmeasured":
                 unmeasured += 1
+                tally["unmeasured"] += 1
                 continue
             if not (got["drawn_w"] and got["drawn_h"]):
                 unplaced += 1
+                tally["unplaced"] += 1
                 continue
             placed += 1
+            tally["placed"] += 1
             # The file, absolute (item 246): `resolved` is what the browser
             # loaded, and for a lazy image it never swapped in - weighed by
             # its header - that is the shared `data:` placeholder, which put
@@ -8978,7 +10044,7 @@ def image_budget_payload(conn: sqlite3.Connection, run_id: str | None) -> dict |
                            "page": page["url"],
                            "paths": [path], "placements": 1,
                            "weight_source": record.get("weight_source"),
-                           "w": got["drawn_w"], "h": got["drawn_h"],
+                           "w": got["drawn_w"], "h": got["drawn_h"], "at": got["drawn_at"],
                            "kb": got["kb"], "bytes_per_pixel": got["bytes_per_pixel"],
                            "alt_missing": got["alt_missing"],
                            "decorative": got["decorative"], "state": got["state"]}
@@ -8991,6 +10057,11 @@ def image_budget_payload(conn: sqlite3.Connection, run_id: str | None) -> dict |
         # looked at all - "78 placements of 1 distinct image; weighed on 40
         # of 45 pages".
         "placements": placed, "weighed_pages": len(weighed_pages),
+        "per_page": per_page,
+        # Item 272 (row 4): whether a browser saw any image as a page's
+        # largest paint. Where none did, `img-lcp-lazy` judged the first
+        # image in the main region instead, and its clean line says so.
+        "lcp_found": lcp_found,
         # Whether the crawl found images at all, and whether any of them can
         # be drawn. Two questions, because "this site has no images" and
         # "nobody weighed this site's images" are different sentences and
@@ -9089,6 +10160,36 @@ def brief_assessment(report: str | None, cap: int = 8000) -> str | None:
     rest = report[m.end():]
     stop = re.search(r"^#{1,%d}\s" % level, rest, re.M)
     body = (rest[:stop.start()] if stop else rest).strip()
+    # Item 268 (row 9): where the brief's Patterns are a section of their own
+    # beside the assessment (Headings writes them at the assessment's level),
+    # they are the one change the reader is after, and the verdict - the
+    # assessment's last sentence, after a paragraph of counts - is what it
+    # says. Verdict first, then Patterns, then the counts.
+    pm = re.search(r"^(#{1,6})\s*Patterns\s*$", report, re.M)
+    if pm and not (m.end() <= pm.start() < m.end() + len(body) + 2):
+        prest = report[pm.end():]
+        pstop = re.search(r"^#{1,%d}\s" % len(pm.group(1)), prest, re.M)
+        patterns = (prest[:pstop.start()] if pstop else prest).strip()
+        tail = body.rstrip()
+        cut = max(tail.rfind(". ", 0, len(tail) - 1), tail.rfind("\n"))
+        verdict = tail[cut + 1:].strip() if cut >= 0 else ""
+        if verdict and not verdict.startswith(("|", "-", "*")):
+            body = tail[:cut + 1].strip()
+            lead = f"**{verdict}**"
+        else:
+            lead = ""
+        # Item 270 (row 13): and the brief's "Corrected ... - patterns only"
+        # section, where it writes one (Structured data's corrected JSON-LD,
+        # Headings' corrected outlines): the change, said once per pattern.
+        cm = re.search(r"^(#{1,6})\s*(Corrected[^\n]*patterns only)\s*$", report, re.M | re.I)
+        corrected = ""
+        if cm:
+            crest = report[cm.end():]
+            cstop = re.search(r"^#{1,%d}\s" % len(cm.group(1)), crest, re.M)
+            corrected = (crest[:cstop.start()] if cstop else crest).strip()
+        parts = [lead, f"### Patterns\n\n{patterns}" if patterns else "",
+                 f"### {cm.group(2)}\n\n{corrected}" if corrected else "", body]
+        body = "\n\n".join(p for p in parts if p)
     return body[:cap] or None
 
 
@@ -9123,6 +10224,90 @@ def _links_out(links: list) -> list[dict]:
     """This page's own links, body first."""
     return sorted((link for link in links if isinstance(link, dict)),
                   key=lambda link: link.get("region") != "body")[:LINKS_SHOWN]
+
+
+def signal_coverage_payload(conn: sqlite3.Connection, site_id: str) -> dict | None:
+    """Which backlink signals the latest reading measured (item 278, row 8).
+
+    OFP's coverage is signal-based (`ofp.SIGNALS`, `1 - dark/signals`), and
+    the part header stated crawl coverage for a part that reads no page. Read
+    from the open `backlinks-not-assessed` row's own evidence, which is what
+    the score reads: no open row means every signal was measured.
+    """
+    from clauditseo.modules.ofp import SIGNALS
+    row = conn.execute(
+        f"""SELECT f.evidence FROM finding_states fs
+            JOIN findings f ON f.rowid = ({_latest_finding()})
+            WHERE fs.site_id = ? AND fs.state IN ('open', 'regressed')
+              AND f.check_id = 'backlinks-not-assessed'
+            ORDER BY f.created_at DESC LIMIT 1""", (site_id,)).fetchone()
+    try:
+        ev = json.loads(row["evidence"] or "{}") if row else {}
+    except (TypeError, ValueError):
+        ev = {}
+    dark = [s for s in (ev.get("unmeasured") or []) if s in SIGNALS]
+    return {"total": len(SIGNALS), "measured": [s for s in SIGNALS if s not in dark],
+            "unmeasured": dark, "providers": ev.get("providers_answering") or [],
+            "needs": ev.get("needs") or []}
+
+
+#: The body-inlink bands Links' site picture counts pages into (item 271).
+_INLINK_BANDS = (("0", 0, 0), ("1", 1, 1), ("2", 2, 2), ("3 to 4", 3, 4), ("5 or more", 5, None))
+
+
+def links_site_payload(conn: sqlite3.Connection, site_id: str) -> dict | None:
+    """How body inlinks and click depth fall across the site (item 271, row 6).
+
+    Counted by `modules.links`' own rule over the links reference crawl:
+    live HTML pages only (an error page is not a page to link to), and a
+    link in a navigation or footer region is not a body link. The start URL
+    is left out of the inlink bands, as `inlinks-low` leaves it out. Each
+    page's stored links are capped at `LINK_DETAIL_CAP`, so a page with more
+    links than that can count a little lower here than in the module.
+    """
+    from clauditseo.crawler.evidence import LINK_DETAIL_CAP
+    from clauditseo.modules.links import MIN_INLINKS, TEMPLATE_REGIONS
+    from . import latest_view
+
+    run = latest_view.reference_run(conn, site_id, "LNK", "TEC")
+    blob = (get_evidence(conn, run) or {}) if run else {}
+    pages = [p for p in (blob.get("pages") or [])
+             if isinstance(p, dict) and p.get("url")
+             and str(p.get("content_type") or "").startswith("text/html")
+             and int(p.get("status") or 0) < 400]
+    if not pages:
+        return None
+    body: dict[str, int] = {}
+    for p in pages:
+        for link in (p.get("links") or []):
+            if not isinstance(link, dict) or not link.get("url"):
+                continue
+            if (link.get("region") or "body") in TEMPLATE_REGIONS:
+                continue
+            body[link["url"]] = body.get(link["url"], 0) + 1
+    start = blob.get("start_url")
+    counted = [p for p in pages if p["url"] != start]
+    bands = []
+    for label, lo, hi in _INLINK_BANDS:
+        n = sum(1 for p in counted
+                if body.get(p["url"], 0) >= lo and (hi is None or body.get(p["url"], 0) <= hi))
+        bands.append({"band": label, "pages": n})
+    depths: dict[str, int] = {}
+    for p in pages:
+        d = p.get("click_depth")
+        key = str(d) if d is not None else "not reached by links"
+        depths[key] = depths.get(key, 0) + 1
+    order = sorted((k for k in depths if k.isdigit()), key=int) + [
+        k for k in depths if not k.isdigit()]
+    # The cap is applied to the first anchors in document order, before any
+    # region split, so a page with a large menu keeps few body links: the
+    # bands can undercount by much more than a little on such sites, and
+    # the screen says so wherever a page reached it.
+    capped = sum(1 for p in pages if len(p.get("links") or []) >= LINK_DETAIL_CAP)
+    return {"run_id": run, "pages": len(pages), "counted": len(counted),
+            "cap": LINK_DETAIL_CAP, "capped": capped,
+            "minimum": MIN_INLINKS, "inlinks": bands,
+            "depth": [{"depth": k, "pages": depths[k]} for k in order]}
 
 
 def _links_in(blob: dict, url: str) -> list[dict]:
@@ -9212,8 +10397,11 @@ def page_facts(conn: sqlite3.Connection, site_id: str, url: str) -> dict | None:
         return default if cell is None or cell.get("value") is None else cell["value"]
 
     def reference_blob(*keys: str) -> dict:
+        # Read-only here, so the shared parse: `get_evidence` parsed the
+        # 1.8 MB blob afresh twice per call, thirty times per anatomy load.
         run = latest_view.reference_run(conn, site_id, *keys)
-        return (get_evidence(conn, run) or {}) if run else {}
+        raw = evidence_text(conn, run) if run else None
+        return (parsed_evidence(raw) or {}) if raw else {}
 
     tec = reference_blob("TEC")
     lnk = reference_blob("LNK", "TEC")
@@ -9221,7 +10409,9 @@ def page_facts(conn: sqlite3.Connection, site_id: str, url: str) -> dict | None:
                      if isinstance(p, dict) and p.get("url") == url), {})
 
     def pick_site(field: str, default=None):
-        return tec.get(field) if tec.get(field) is not None else default
+        # A copy: `tec` is the shared parse, and the caller owns what it gets.
+        import copy as _copy
+        return _copy.deepcopy(tec.get(field)) if tec.get(field) is not None else default
 
     # The markup half of each image and what the image pass weighed, rejoined.
     weights = pick("image_weights", {}) or {}
@@ -9232,8 +10422,18 @@ def page_facts(conn: sqlite3.Connection, site_id: str, url: str) -> dict | None:
     levels = pick("heading_levels", []) or []
     headers = pick("headers", {}) or {}
     links = pick("links", []) or []
+    # Item 269: which content checks read a page of this type at all, so the
+    # part page certifies only those (the site record's own word for the page).
+    from types import SimpleNamespace as _NS
+    from clauditseo.modules import cnt as _cnt
+    from clauditseo.modules.onp import _page_type_for
+    from . import repo as _repo
+    _record = _repo.site_record(_repo.get_site(conn, site_id)) or {}
+    _type = _page_type_for(_NS(page_types=_record.get("page_types") or {}), url)
     return {
         "from_run": latest_run, "captured_at": latest_at, "url": url,
+        "page_type": _type,
+        "content_not_run": _cnt.not_run_on(_type),
         # Item 243: dimension -> the date its reference crawls last fetched
         # this page, where the page has since left the site.
         "gone": (latest_view._get(conn, site_id, "presence", path) or {}).get("gone") or {},
@@ -9289,7 +10489,7 @@ def page_facts(conn: sqlite3.Connection, site_id: str, url: str) -> dict | None:
         "link_header_canonical": pick("link_header_canonical"),
         "indexability": pick("indexability"),
         "status": pick("status"), "redirect_chain": pick("redirect_chain"),
-        "discovered_via": tec_page.get("discovered_via"),
+        "discovered_via": __import__("copy").deepcopy(tec_page.get("discovered_via")),
         "elapsed_ms": pick("elapsed_ms"), "cache_control": headers.get("cache-control"),
         "security_headers": {h: headers.get(h) for h in
                              ("strict-transport-security", "content-security-policy",

@@ -90,7 +90,10 @@ def test_the_part_page_reads_two_sections_free_first():
     # And both readers of that list draw on it rather than on their own
     # copy - the checks table and, since step AV3's other half, the fix
     # cards, which is where an operator actually acts.
-    assert src.count("SECTIONS.map(") == 2, (
+    # Item 266 (row 3): the fix cards read it through `sectionsByWorst`,
+    # which reorders a copy of that list and nothing else.
+    assert src.count("SECTIONS.map(") == 1 and "sectionsByWorst(shownFixes, sectionOf)" in src \
+        and "return [...SECTIONS].sort(" in src, (
         "the checks table and the fix cards do not both read one ordered "
         "list of sections")
     table = src[src.index('<section className="part-checks">'):]

@@ -31,11 +31,12 @@ import { SpendButton, SpendTarget } from "./spend";
 import { ContractAccount, DerivedFigures, StoredBrief } from "./expert";
 import { ReportView } from "./markdown";
 import { catalogueOnlyFromHash, goHandler, hashWithout, type CatalogueOnly } from "./nav";
-import { unreadParts } from "./client_lanes";
+import { unmeasuredParts, unreadParts } from "./client_lanes";
 import { LookDot } from "./panels";
 import { narrowPickNote } from "./api";
 import { useSelection } from "./selection";
 import { Pill } from "./pill";
+import { day } from "./dates";
 
 const SCOPE_WORD: Record<string, string> = {
   site: "site", page: "one page", report: "report", monitor: "monitor", triage: "scoreboard",
@@ -96,10 +97,24 @@ export function catalogueGroups(parts: Part[] | undefined, rows: Row[],
  *  reached from Reports (audit F4). Same filter as `analyses` below, which is
  *  the list itself. */
 export function notRunCount(lanes: { available: Analysis[] } | null | undefined): number | null {
-  return lanes
-    ? lanes.available.filter((x) => x.type !== "triage"
-                                    && x.part !== "none" && x.part !== "report").length
-    : null;
+  return lanes ? notRunList(lanes).length : null;
+}
+
+/** The analyses that figure counts, as a list (item 252): one predicate for
+ *  every "N not run" and every control that offers to run them. The landing's
+ *  primary action read 24 against a catalogue of 23, and a retired part's
+ *  "Run the 1 not run" offered the client plan, because each filtered
+ *  `available` for itself. */
+export function notRunList(lanes: { available: Analysis[] }): Analysis[] {
+  return lanes.available.filter((x) => x.type !== "triage"
+                                       && x.part !== "none" && x.part !== "report");
+}
+
+/** Of those, what a batch can run now: not scoped to one page, and not
+ *  waiting on context a crawl cannot supply. "Run the N" is this many, and it
+ *  is never more than "N not run". */
+export function runnableNow(rows: Analysis[]): Analysis[] {
+  return rows.filter((x) => x.type !== "page" && x.state === "not_run");
 }
 
 export function CatalogueFab({ a, onOpen }: { a: AnatomyScreen; onOpen: () => void }) {
@@ -228,10 +243,19 @@ export function CatalogueList({ siteId, a, onClose, ask = null, onRerun }: {
       console.warn(`catalogue: part ${c.key} is counted unread and has no lane`);
     }
   }
+  /** Item 252: the parts the landing counts as not fully measured. */
+  const unmeasured = unmeasuredParts(a.data?.categories ?? []);
+  const unmeasuredKeys = new Set(unmeasured.map((c) => c.key));
+  if (only === "unmeasured") {
+    for (const c of unmeasured.filter((x) => !listedKeys.has(x.key))) {
+      console.warn(`catalogue: part ${c.key} is counted unmeasured and has no lane`);
+    }
+  }
+  const partOnly = only === "unread" ? unreadKeys : only === "unmeasured" ? unmeasuredKeys : null;
   const shownGroups: { part: Part; rows: Row[]; elsewhere?: boolean }[] = !only ? groups
     : [...groups
         .map((g) => ({ ...g, rows: only === "not-run" ? g.rows.filter((r) => r.a.state !== "ready") : g.rows }))
-        .filter((g) => (only === "unread" ? unreadKeys.has(g.part.key) : g.rows.length > 0)),
+        .filter((g) => (partOnly ? partOnly.has(g.part.key) : g.rows.length > 0)),
        ...elsewhere];
   const shownRows = shownGroups.reduce((n, g) => n + g.rows.length, 0);
   const readN = analyses.filter((x) => x.state === "ready").length;
@@ -242,7 +266,7 @@ export function CatalogueList({ siteId, a, onClose, ask = null, onRerun }: {
    *  There were three, and they summed to 22 under a total of 23 (audit F4):
    *  `migration-redirects` is `needs_input`, so it is in none of the three and
    *  the reader was left to find the difference. It is the fourth now. */
-  const canRunNow = analyses.filter((x) => x.state === "not_run" && x.type !== "page");
+  const canRunNow = runnableNow(analyses);
   const needPage = analyses.filter((x) => x.type === "page" && x.state !== "ready").length;
   const needsInput = analyses.filter((x) => x.type !== "page"
                                             && x.state === "needs_input").length;
@@ -336,7 +360,7 @@ export function CatalogueList({ siteId, a, onClose, ask = null, onRerun }: {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [open?.tool]);
-  const batchN = lanes ? analyses.filter((x) => x.type !== "page" && x.state === "not_run").length : 0;
+  const batchN = lanes ? canRunNow.length : 0;
 
   return (
     <>
@@ -414,7 +438,7 @@ export function CatalogueList({ siteId, a, onClose, ask = null, onRerun }: {
                     <td className="muted crow-est">{estCell(x)}</td>
                     <td className="muted batch-note">
                       {pageScoped ? <span className="crow-page">one page — narrow first; not in this batch</span>
-                        : read ? `already read ${x.ran_at?.slice(0, 10) ?? ""} · tick to re-run`
+                        : read ? `already read ${day(x.ran_at)} · tick to re-run`
                         : x.state === "needs_input" ? "needs context a crawl cannot supply"
                         : x.state === "running" ? "running now" : ""}
                     </td>
@@ -464,7 +488,9 @@ export function CatalogueList({ siteId, a, onClose, ask = null, onRerun }: {
         <p className="muted catalogue-only">
           {only === "unread"
             ? `Showing only the ${shownGroups.length} part${shownGroups.length === 1 ? "" : "s"} not read on this audit.`
-            : `Showing only the ${shownRows} analys${shownRows === 1 ? "is" : "es"} not run.`}{" "}
+            : only === "unmeasured"
+            ? `Showing only the ${shownGroups.length} part${shownGroups.length === 1 ? "" : "s"} this audit did not fully measure.`
+            :`Showing only the ${shownRows} analys${shownRows === 1 ? "is" : "es"} not run.`}{" "}
           <a href={hashWithout(["only"])} onClick={goHandler(hashWithout(["only"]))}>Show every part</a>
         </p>
       )}
@@ -516,6 +542,11 @@ export function CatalogueList({ siteId, a, onClose, ask = null, onRerun }: {
                           {/* Item 180 (e2): a 0 carries what is waiting to be confirmed. */}
                           {!a.cost && (cat.seen_once?.value ?? 0) > 0 && (
                             <> · <Counted count={cat.seen_once!} pops={a.data?.populations ?? null} /> seen once</>
+                          )}
+                          {/* Screen audits round 3 (shop IP-02): the rows that
+                              wait for the operator, in the word that says so. */}
+                          {!a.cost && (cat.to_confirm?.value ?? 0) > 0 && (
+                            <> · <Counted count={cat.to_confirm!} pops={a.data?.populations ?? null} /> to confirm</>
                           )}
                         </span>
                         {a.cost && split.model > 0 && (
@@ -594,14 +625,25 @@ export function CatalogueList({ siteId, a, onClose, ask = null, onRerun }: {
                     <td>
                       <LookDot state={state} />{" "}
                       {x.state === "ready"
-                        ? `read ${x.ran_at?.slice(0, 10) ?? ""}`
+                        ? `read ${day(x.ran_at)}`
                         : x.state === "running" || a.queued.includes(x.tool) ? "running now"
                         : x.state === "needs_input" && x.questions?.length
                           ? <span className="crow-asked" title={x.questions.join(" / ")}>
                               asked instead of answering: {x.questions[0]}
                             </span>
                         : x.state === "needs_input" ? "needs context a crawl cannot supply"
-                        : pageScoped ? <span className="muted">needs a page</span> : NOT_READ}
+                        : pageScoped ? <span className="muted">needs a page</span>
+                        // Read against an earlier audit (screen audits round
+                        // 3, shop IP-03): the header's dot said "analysed"
+                        // over a row saying "not read". The glossary's own
+                        // "not read" asks for how many audits ago.
+                        : (() => {
+                            const earlier = a.data?.categories.flatMap((c) => c.analysed ?? [])
+                              .find((r) => r.tool === x.tool);
+                            return earlier && (earlier.audits_since ?? 0) > 0
+                              ? `read ${day(earlier.at)}, ${earlier.audits_since} audit${earlier.audits_since === 1 ? "" : "s"} ago`
+                              : NOT_READ;
+                          })()}
                     </td>
                     <td className="crow-act">
                       {pageScoped && x.state !== "ready" ? (
@@ -617,7 +659,7 @@ export function CatalogueList({ siteId, a, onClose, ask = null, onRerun }: {
                         </SecondaryButton>{" "}
                         {/* Item 178: priced on the control, held with its reason in
                             text, confirmed. */}
-                        <SpendButton price={x.est_cost ?? x.est_cost_default ?? null}
+                        <SpendButton price={x.est_cost_default ?? x.est_cost ?? null}
                                      busy={busy === x.tool}
                                      why={narrowNote ? "this audit is too narrow for it" : null}
                                      confirm={{ title: `Re-run ${x.name}?`,
@@ -628,7 +670,7 @@ export function CatalogueList({ siteId, a, onClose, ask = null, onRerun }: {
                           re-run
                         </SpendButton>
                       </>) : x.state === "not_run" ? (
-                        <SpendButton price={x.est_cost ?? x.est_cost_default ?? null}
+                        <SpendButton price={x.est_cost_default ?? x.est_cost ?? null}
                                      busy={busy === x.tool}
                                      why={narrowNote ? "this audit is too narrow for it" : null}
                                      confirm={{ title: `Run ${x.name}?`,

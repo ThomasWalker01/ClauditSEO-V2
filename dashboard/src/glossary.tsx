@@ -15,15 +15,32 @@
  *  No block carries its own copy of a definition: a block names registry ids
  *  and `Legend` draws the words.
  */
+import { useEffect, useRef, useState } from "react";
 import registry from "../../clauditseo/glossary.json";
 
 export type Entry = {
   id: string; kind: "tone" | "term"; vocabulary: string; word: string;
   full: string; engine?: string; class?: string; matches?: string[];
+  /** One word drawn in a second place (item 263): this id keeps its group,
+   *  tone class and engine name, and takes its word and definition from the
+   *  entry named. */
+  same_as?: string;
 };
 
-export const ENTRIES: Entry[] = (registry as { entries: Entry[] }).entries;
+type Stored = Omit<Entry, "word" | "full"> & { word?: string; full?: string };
+const RAW = (registry as { entries: Stored[] }).entries;
+const RAW_BY_ID = new Map(RAW.map((e) => [e.id, e]));
+
+/** Every id, each with its word and definition - a `same_as` entry's taken
+ *  from the entry it names, as `glossary.entries()` does on the engine side. */
+export const ENTRIES: Entry[] = RAW.map((e) => {
+  if (!e.same_as) return e as Entry;
+  const t = RAW_BY_ID.get(e.same_as)!;
+  return { ...(t.engine ? { engine: t.engine } : {}), ...e, word: t.word!, full: t.full! };
+});
 const BY_ID = new Map(ENTRIES.map((e) => [e.id, e]));
+/** One entry per word: what the glossary route lists (item 263). */
+export const DEFINITIONS: Entry[] = ENTRIES.filter((e) => !e.same_as);
 
 /** The same expression as `glossary.FIRST_SENTENCE`; a test holds them
  *  together. `robots.txt` carries a stop with no space after it, so it does
@@ -60,20 +77,70 @@ export const NOT_READ: string = entry("not-read").word;
 
 export const glossaryHref = (id?: string) => `#/glossary${id ? `?term=${encodeURIComponent(id)}` : ""}`;
 
-/** The disclosure. Placed at the top of the block, before its first chip. */
-export function Legend({ ids, label = "what these mean" }: { ids: string[]; label?: string }) {
+/** Whether a registry entry is drawn in `scope`, outside the legend itself:
+ *  a tone by its class, a term by its word (items 268 row 8, 270 row 16). */
+function drawnIn(scope: Element, legend: Element, id: string): boolean {
+  const e = entry(id);
+  if (e.kind === "tone" && e.class) {
+    return [...scope.querySelectorAll(`.${e.class}`)].some((el) => !legend.contains(el));
+  }
+  // The legend's own text is one run inside the block's, so cut it out.
+  const text = (scope.textContent ?? "").replace(legend.textContent ?? "", "");
+  return text.toLowerCase().includes(e.word.toLowerCase());
+}
+
+/** The disclosure. Placed at the top of the block, before its first chip.
+ *
+ *  `ifDrawn` names entries the block draws only on some subjects - the
+ *  severities and states of the rows it holds (items 268 row 8, 270 row
+ *  16). Each is defined only where the block draws it: Structured data
+ *  listed Critical, "seen once" and "not measured" with none on screen. Read
+ *  off the block as it renders, since the rows come from several renderers
+ *  and some arrive after the legend does. */
+export function Legend({ ids, label = "what these mean", ifDrawn = [] }: {
+  ids: string[]; label?: string; ifDrawn?: string[];
+}) {
+  const ref = useRef<HTMLDetailsElement>(null);
+  const [drawn, setDrawn] = useState<string[]>([]);
+  const want = ifDrawn.join(" ");
+  useEffect(() => {
+    const legend = ref.current;
+    const scope = legend?.parentElement;
+    if (!legend || !scope || !want) { setDrawn([]); return; }
+    const read = () => {
+      const now = want.split(" ").filter((id) => drawnIn(scope, legend, id));
+      setDrawn((was) => (was.join(" ") === now.join(" ") ? was : now));
+    };
+    read();
+    const watch = new MutationObserver(read);
+    watch.observe(scope, { childList: true, subtree: true, characterData: true,
+                           attributes: true, attributeFilter: ["class"] });
+    return () => watch.disconnect();
+  }, [want]);
+  // One row per definition (item 263): two ids that are one word - a
+  // measurement band and a check state that both say "not measured" - drew
+  // the same sentence twice once they shared it. The first id names the row.
+  const seen = new Set<string>();
+  const shown = [...ids.filter((id) => !ifDrawn.includes(id) || drawn.includes(id)),
+                 ...drawn.filter((id) => !ids.includes(id))];
+  const rows = shown.filter((id) => {
+    const def = entry(id).same_as ?? id;
+    if (seen.has(def)) return false;
+    seen.add(def);
+    return true;
+  });
   return (
-    <details className="legend" data-legend={ids.join(" ")}>
+    <details className="legend" data-legend={shown.join(" ")} ref={ref}>
       <summary>{label}</summary>
       <dl className="legend-list">
-        {ids.map((id) => {
+        {rows.map((id) => {
           const e = entry(id);
           return (
             <div key={id} className="legend-row" data-term={id}>
               <dt>{e.word}</dt>
               <dd>
                 <span className="legend-short">{short(e)}</span>{" "}
-                <a className="legend-full" href={glossaryHref(id)}
+                <a className="legend-full" href={glossaryHref(e.same_as ?? id)}
                    aria-label={`full definition of ${e.word}`}>full definition</a>
               </dd>
             </div>
@@ -87,9 +154,11 @@ export function Legend({ ids, label = "what these mean" }: { ids: string[]; labe
 /** The glossary route: the whole registry, each entry once, in full. Reference
  *  rather than a step in the loop, so it is not one of the four destinations;
  *  it is also where every term can be reviewed in one place. */
-export function GlossaryView({ term }: { term?: string }) {
+export function GlossaryView({ term: asked }: { term?: string }) {
+  // A link that names a `same_as` id lands on the word's one definition.
+  const term = asked ? (BY_ID.get(asked)?.same_as ?? asked) : asked;
   const groups = new Map<string, Entry[]>();
-  for (const e of ENTRIES) {
+  for (const e of DEFINITIONS) {
     if (!groups.has(e.vocabulary)) groups.set(e.vocabulary, []);
     groups.get(e.vocabulary)!.push(e);
   }

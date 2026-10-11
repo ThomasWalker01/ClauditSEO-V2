@@ -50,7 +50,11 @@ SETS = {
     "fixed": lambda s: s["state"] == "fixed",
     "accepted-risk": lambda s: s["state"] == "accepted-risk",
     "withdrawn": lambda s: s["state"] == "withdrawn",
-    "candidate": lambda s: s["state"] == "candidate",
+    # "Seen once" is a candidate that does not wait for the operator (item
+    # 250). The fixture's one candidate, `EXP:crawl sitemap-stale`, is a code
+    # no sweep registers, so it waits: to confirm (channel ruling
+    # 20261011-1050, option 4).
+    "candidate": lambda s: s["state"] == "candidate" and not s.get("to_confirm"),
     "all": lambda s: True,
 }
 

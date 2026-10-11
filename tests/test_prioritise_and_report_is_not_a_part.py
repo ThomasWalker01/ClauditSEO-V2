@@ -152,3 +152,45 @@ def test_the_strip_has_no_prioritise_and_report_and_its_route_opens_no_part(serv
             b.close()
     assert "Prioritise & report" not in got["text"], "the part is still named on screen"
     assert not got["partPage"], "?part=workflow rendered a part page"
+
+
+@needs_build
+@pytest.mark.parametrize("key", ["workflow", "no-such-part"])
+def test_a_retired_or_unknown_part_is_resolved_once_and_said(served, key):
+    """Item 261 (shop UX-01). Item 238 resolved `?part=workflow` to the shop
+    in the body only; the screen kept the key as the part in hand, so the
+    strip drew the part-page variant ("open the catalogue"), the floating
+    catalogue tab stood over the shop, and the title read "Analyses ·
+    workflow". The address is rewritten without the key, and the screen says
+    so once."""
+    from playwright.sync_api import sync_playwright
+    base, site_id = served
+    with sync_playwright() as p:
+        b = p.chromium.launch(headless=True)
+        try:
+            pg = b.new_page(viewport={"width": 1568, "height": 1080})
+            pg.goto(f"{base}/#/sites/{site_id}?tab=findings&part={key}",
+                    wait_until="load", timeout=30_000)
+            pg.wait_for_selector(ANATOMY_READY, timeout=30_000)
+            pg.wait_for_function("() => !location.hash.includes('part=')", timeout=15_000)
+            pg.wait_for_timeout(500)
+            got = pg.evaluate("""() => ({
+              hash: location.hash, title: document.title,
+              note: document.querySelector('.pane-unknown')?.textContent.trim() || '',
+              fab: document.querySelectorAll('.catalogue-fab').length,
+              opener: document.querySelectorAll('.anat-catalogue-open').length,
+            })""")
+            pg.go_back()
+            pg.wait_for_timeout(500)
+            back = pg.evaluate("() => location.hash")
+        finally:
+            b.close()
+    assert got["hash"] == f"#/sites/{site_id}?tab=findings", got
+    # The title names the pane and the site, and no part (the fixture's
+    # domain is `noworkflow.fixture`, so the key is looked for as a segment).
+    assert got["title"].startswith("Analyses · noworkflow.fixture"), got["title"]
+    assert f"· {key} ·" not in got["title"], got["title"]
+    assert got["note"] == f"There is no part called “{key}” — showing the catalogue.", got
+    assert got["fab"] == 0 and got["opener"] == 0, (
+        f"the screen still believes a part is open: {got}")
+    assert f"part={key}" not in back, "Back returned to the address that named no part"

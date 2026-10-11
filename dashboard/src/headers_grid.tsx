@@ -27,6 +27,9 @@ export type CellState = "set" | "missing" | "weak" | "absent" | "n/a";
 export type HeaderRow = {
   key: string; label: string; agree: boolean; covered_by_check: boolean;
   cells: Record<string, CellState>; value: string;
+  /** A disclosure row, where SET means "not disclosed" (`Server`): not a
+   *  header to have in place, so not counted as one (item 276, row 9). */
+  inverted?: boolean;
 };
 
 export type HeadersGrid = {
@@ -37,6 +40,9 @@ export type HeadersGrid = {
   odd: { group: string; lacks: string[]; pages: number; form: boolean } | null;
   in_place: number;
   absent_everywhere: string[];
+  /** Whether any page uses a feature Permissions-Policy restricts. Not yet
+   *  measured, so absent: the "do not spend" clause waits on it. */
+  restricted_features_used?: boolean;
 };
 
 /** One token per state (item 140's rule). `absent` is mute and not bad on
@@ -62,7 +68,10 @@ const WORD: Record<CellState, string> = {
 
 /** `Permissions-Policy` is the one row the brief lets this block say is not
  *  worth spending on, and only when nothing on the site uses a restricted
- *  feature. No other row generates the clause and none is invented here. */
+ *  feature. No other row generates the clause and none is invented here.
+ *  Item 276 (row 9, round-1 #3): said only where the payload measured that
+ *  (`restricted_features_used === false`). Unconditioned, it told twenty22
+ *  not to spend on a header the analysis's Order 8 card adds. */
 const DO_NOT_SPEND = "Permissions-Policy";
 
 export function HeadersGridBlock({ grid }: { grid: HeadersGrid | null | undefined }) {
@@ -175,9 +184,13 @@ function Row({ row, cols, fanned }: {
       </th>
       {cols.map((c) => {
         const state = row.cells[c] ?? first(row);
+        // Item 276 (row 9, round-1 #10): a bare vendor name (`Server:
+        // cloudflare`) is what `cell_state` reads as not disclosing a
+        // version. SET in the good tone read as a header put in place.
+        const bare = row.inverted && state === "set" && Boolean(row.value);
         return (
-          <td key={c || "all"} className={`hg-cell tone-${TONE[state]}`}>
-            <span className="hg-word">{WORD[state]}</span>
+          <td key={c || "all"} className={`hg-cell tone-${bare ? "mute" : TONE[state]}`}>
+            <span className="hg-word">{bare ? "BARE" : WORD[state]}</span>
           </td>
         );
       })}
@@ -188,14 +201,14 @@ function Row({ row, cols, fanned }: {
 
 function Summary({ grid }: { grid: HeadersGrid }) {
   const absent = grid.absent_everywhere;
-  const spend = absent.includes(DO_NOT_SPEND)
+  const spend = absent.includes(DO_NOT_SPEND) && grid.restricted_features_used === false
     ? "do not spend on Permissions-Policy — no restricted feature is used here"
-    : "worth doing";
+    : null;
   return (
     <p className="muted hg-summary">
-      {grid.in_place} of {grid.rows.length} in place on every route
+      {grid.in_place} of {grid.rows.filter((r) => !r.inverted).length} in place on every route
       {absent.length > 0 && <> · {absent.length} absent everywhere</>}
-      {" — "}{spend}.
+      {spend && <>{" — "}{spend}</>}.
     </p>
   );
 }

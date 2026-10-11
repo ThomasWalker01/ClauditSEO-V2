@@ -25,13 +25,13 @@ from pydantic import BaseModel, Field
 import clauditseo.modules  # noqa: F401  (register dimensions)
 from clauditseo import APP_NAME, ENGINE_VERSION, __version__, anatomy
 from clauditseo.analysts.layer import provider_from_settings, run_analyst_layer
-from clauditseo.api import chat as chat_module
 from clauditseo.config import (PREFIX as config_prefix, ROOT,
                                STALE_TOKEN_DETAIL, settings,
                                stale_legacy_token)
 from clauditseo.crawler.crawl import crawl as crawl_site
 from clauditseo.scanscope import (
-    DEPTHS, SCOPES, crawl_kwargs, depth_settings, tier_for_scope)
+    DEPTHS, SCOPES, crawl_kwargs, depth_for, depth_settings, scope_for_tier,
+    tier_for_scope)
 from clauditseo.crawler.crawl import crawl_start_url, site_host
 from clauditseo.db.connection import connect
 from clauditseo.db.migrate import is_current, migrate, migration_names
@@ -214,13 +214,17 @@ def _next_pass(schedule: str | None, last_run_at: str | None, now,
         return {"schedule_state": "waiting", "next_pass_at": None,
                 "why": "never audited; the first run is yours to start, so the "
                        "scheduler will not pick this up yet"}
-    try:
-        started = _dt.fromisoformat(last_run_at.replace("Z", "+00:00")).replace(
-            tzinfo=None)
-    except ValueError:
+    # As moments (item 248): the run's stamp is UTC and `now` is the machine's
+    # clock. With the offset stripped from one, a pass read as due ten hours
+    # early on a UTC+10 machine. `due` is local, so the screen's day and the
+    # sentence below are the operator's.
+    from clauditseo.scheduler import instant
+    started = instant(last_run_at)
+    if started is None:
         return {"schedule_state": "manual", "next_pass_at": None,
                 "why": "last run has an unreadable timestamp"}
-    due = started + interval
+    now = instant(now)
+    due = (started + interval).astimezone()
     overdue_by = (now - due).days
     return {
         "schedule_state": "overdue" if due <= now else "scheduled",
@@ -233,6 +237,20 @@ def _next_pass(schedule: str | None, last_run_at: str | None, now,
 def _renderer_available() -> bool:
     from clauditseo.renderer import Renderer
     return Renderer().available()
+
+
+def _local_month_utc(now: _dt | None = None) -> tuple[str, str]:
+    """The machine's current calendar month as two UTC stamps, in the shape
+    SQLite's `datetime()` returns: its first instant and the next month's."""
+    from datetime import timezone
+    here = now or _dt.now()
+    # Each boundary takes the offset in force on its own date, so a month
+    # that crosses a daylight-saving change still starts at local midnight.
+    first = _dt(here.year, here.month, 1).astimezone()
+    nxt = (_dt(here.year + 1, 1, 1) if here.month == 12
+           else _dt(here.year, here.month + 1, 1)).astimezone()
+    fmt = lambda d: d.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")  # noqa: E731
+    return fmt(first), fmt(nxt)
 
 
 def _budget_status(conn, cfg) -> dict:
@@ -261,8 +279,12 @@ def _budget_status(conn, cfg) -> dict:
         "SELECT SUM(quantity) AS tokens, SUM(actual_cost) AS usd,"
         " COUNT(actual_cost) AS priced,"
         " COUNT(*) - COUNT(actual_cost) AS unpriced"
-        " FROM cost_entries WHERE substr(created_at, 1, 7) ="
-        " substr(datetime('now'), 1, 7)").fetchone()
+        # "This month" is the operator's month (item 248), not UTC's: on a
+        # UTC+10 machine the first ten hours of a month were counted in the
+        # month before. `datetime()` reads both stamp shapes the column
+        # holds - `now_iso()`'s and SQLite's own - as UTC.
+        " FROM cost_entries WHERE datetime(created_at) >= ?"
+        " AND datetime(created_at) < ?", _local_month_utc()).fetchone()
     tokens = int(row["tokens"] or 0)
     priced = int(row["priced"] or 0)
     unpriced = int(row["unpriced"] or 0)
@@ -270,6 +292,15 @@ def _budget_status(conn, cfg) -> dict:
     # a cap can only ever under-warn — which is the safe direction, and the
     # reason the frame is rendered rather than the warning being suppressed.
     usd = float(row["usd"] or 0)
+    # And what was spent this month on runs since deleted (channel ruling
+    # 20261011-0746): billed money stays in the total and the cap.
+    from clauditseo.persistence.spend import deleted_in
+    gone = deleted_in(conn, _dt.now().strftime("%Y-%m"))
+    if gone:
+        tokens += int(gone["tokens"] or 0)
+        usd += float(gone["usd"] or 0)
+        priced += int(gone["priced"] or 0)
+        unpriced += int(gone["unpriced"] or 0)
     warn = None
     # Which cap wrote the sentence, and it travels with it — UX-78. The two
     # branches below produce one string counting two different quantities, and
@@ -961,6 +992,12 @@ class SitePatch(BaseModel):
     #: named here is classified as known rather than unexplained.
     stack: str | None = None
     third_party_map: dict[str, str] | None = None
+    #: Item 277 (row 4): the Indexability brief's three inputs (migration
+    #: 0050), stored since brief v18 step BA and settable nowhere until now.
+    #: Each gates a held analysis check until it is set.
+    intended_noindex: list[str] | None = None
+    migration_map: dict[str, str] | None = None
+    parameter_rules: list[str] | None = None
     #: Held-domain inputs (brief v20 step BD); recorded, never acted on.
     active_probing_authorised: str | None = None
     #: Item 145 step BG: 'allow', 'block' or empty (not stated), and where the
@@ -969,6 +1006,9 @@ class SitePatch(BaseModel):
     ai_field_data_source: str | None = None
     #: Comma-separated tokens, each one of `repo.edge_agents()`.
     ai_edge_blocked_agents: str | None = None
+    #: Comma-separated BCP 47 tags ("en-AU, en-GB"), edited on the
+    #: International part page (migration 0074). Empty clears it.
+    target_locales: str | None = None
     #: Item 145 step BH: the entity record the AI surface brief reads. Empty
     #: until the operator sets them, including when they accept a suggestion
     #: read off the site's own schema — a field filled from the markup it is
@@ -1144,11 +1184,6 @@ class AdviseIn(BaseModel):
     check_id: str | None = None
 
 
-class ChatIn(BaseModel):
-    site_id: str
-    question: str = Field(min_length=1)
-
-
 class StateIn(BaseModel):
     state: str  # open | accepted-risk
 
@@ -1187,6 +1222,14 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     # not sit at 'running' forever.
     _boot = connect(path)
     migrate(_boot)
+    # Item 249: an analysis read by rules that have since changed is re-read
+    # here, with no model call, so a rule change reaches what is stored.
+    try:
+        from clauditseo.analysts.expert import reparse_stale
+        reparse_stale(_boot, site_of)
+    except Exception:                                       # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).exception("re-reading stored analyses failed")
     recovered = runs.recover_interrupted(_boot)
     _boot.close()
     if recovered:
@@ -1472,7 +1515,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
             "LLM analyst": {
                 "configured": llm is not None,
                 "detail": (f"{llm.name} · {llm.model_id}" if llm
-                           else "enables the analyst layer, expert analyses and chat"),
+                           else "enables the analyst layer and expert analyses"),
                 "env": "ANTHROPIC_API_KEY"},
             "PageSpeed": {"configured": bool(c.pagespeed_api_key),
                           "detail": "Core Web Vitals lab data",
@@ -1689,7 +1732,9 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         states = runs.site_states(conn, site_id)
         site["states"] = states
         site["regressions"] = [s for s in states if s["state"] == "regressed"]
-        site["runs"] = runs.list_runs(conn, site_id)
+        part_only = runs.part_only_runs(conn, site_id)
+        site["runs"] = [{**r, "part_only": runs.part_only_label(part_only.get(r["id"]))}
+                        for r in runs.list_runs(conn, site_id)]
         site["trend"] = runs.site_trend(conn, site_id)
         site["expert_delta"] = runs.expert_delta(conn, site_id)
         site["watch"] = runs.watch_changes(conn, site_id)
@@ -1743,6 +1788,15 @@ def create_app(db_path: Path | None = None) -> FastAPI:
             raise HTTPException(status_code=422,
                                 detail=f"ai_edge_blocked_agents names agents the UA matrix "
                                        f"does not send: {unknown_agents}")
+        # Each tag as typed, in the refusal, so the operator finds their own word.
+        bad_locales = [raw.strip() for raw in (body.target_locales or "").replace(";", ",").split(",")
+                       if raw.strip() and not repo.LOCALE_TAG.match(repo.locale_tags(raw)[0])]
+        if bad_locales:
+            raise HTTPException(status_code=422,
+                                detail=f"target_locales are BCP 47 tags such as en-AU or "
+                                       f"x-default: {bad_locales}")
+        if body.target_locales is not None:
+            body.target_locales = ", ".join(repo.locale_tags(body.target_locales))
         if body.title_strategy not in (None, "", *repo.TITLE_STRATEGIES):
             raise HTTPException(status_code=422,
                                 detail=f"title_strategy must be one of {list(repo.TITLE_STRATEGIES)}")
@@ -1907,30 +1961,33 @@ def create_app(db_path: Path | None = None) -> FastAPI:
                 # the only narrow kind and nothing looked.
                 # And site-wide (brief v3 step I, WF-08): a one-page scan is
                 # an audit by kind, and Home showed its 94.2 as the site.
-                scored = conn.execute(
-                    "SELECT composite_score, tier FROM audit_runs"
+                # And not part-only (screen audits round 3): a re-check of
+                # Links alone read "87.4, good, up 15.99" against a full 71.45.
+                part_only = runs.part_only_runs(conn, site["id"])
+                readings = [r for r in conn.execute(
+                    "SELECT id, composite_score, tier, started_at FROM audit_runs"
                     f" WHERE site_id=? AND {runs.status_in(runs.SCORED_STATUSES)}"
                     f" AND {runs.kind_is_site_reading()}"
                     f" AND {runs.scope_is_site_wide()}"
-                    " ORDER BY started_at DESC, rowid DESC LIMIT 1",
-                    (site["id"],)).fetchall()
+                    " ORDER BY started_at DESC, rowid DESC",
+                    (site["id"],)).fetchall()]
+                scored = [r for r in readings if r["id"] not in part_only][:1]
+                # The part-only re-check newer than the score, said beside it.
+                recheck = (readings[0] if readings and scored
+                           and readings[0]["id"] != scored[0]["id"] else None)
                 # The delta is against the previous audit of the SAME tier
                 # (item 180, UI audit 01-3). Against whatever ran before, Home
                 # read "up 63.03" for a T2 measured against a T3 that scored
                 # 0.0 - a tier change and a broken reading, not an
                 # improvement. A 0.0 is no baseline: no site-wide audit that
                 # measured anything scores nothing.
-                previous = (conn.execute(
-                    "SELECT composite_score FROM audit_runs"
-                    f" WHERE site_id=? AND {runs.status_in(runs.SCORED_STATUSES)}"
-                    f" AND {runs.kind_is_site_reading()}"
-                    f" AND {runs.scope_is_site_wide()}"
-                    " AND tier=? AND composite_score > 0"
-                    # OFFSET 1 skips the newest, which is in this list: it
-                    # scored above 0 or this query is not reached.
-                    " ORDER BY started_at DESC, rowid DESC LIMIT 1 OFFSET 1",
-                    (site["id"], scored[0]["tier"])).fetchone()
-                    if scored and scored[0]["composite_score"] else None)
+                # Earlier than the score, same tier, not part-only either.
+                previous = (next((r for r in readings
+                                  if r["id"] not in part_only
+                                  and r["started_at"] < scored[0]["started_at"]
+                                  and r["tier"] == scored[0]["tier"]
+                                  and (r["composite_score"] or 0) > 0), None)
+                            if scored and scored[0]["composite_score"] else None)
                 # What the newest scored reading was when it was not
                 # site-wide, so Home can show a page or navigation scan as
                 # what it is rather than as nothing.
@@ -1942,7 +1999,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
                 # own screen said "scored 72.77".
                 site_kinds = ", ".join(f"'{k}'" for k in runs.SITE_READING_KINDS)
                 newest = conn.execute(
-                    "SELECT composite_score, scan_scope, crawled_paths, started_at FROM audit_runs"
+                    "SELECT composite_score, scan_scope, crawled_paths, known_paths, started_at FROM audit_runs"
                     f" WHERE site_id=? AND {runs.status_in(runs.SCORED_STATUSES)}"
                     f" AND kind IN ({site_kinds})"
                     " ORDER BY started_at DESC, rowid DESC LIMIT 1",
@@ -1973,6 +2030,13 @@ def create_app(db_path: Path | None = None) -> FastAPI:
                     "narrow_scope": runs.scope_of(narrow) if narrow else None,
                     # When the narrow reading ran, for Home's order and its tag.
                     "narrow_at": narrow["started_at"] if narrow else None,
+                    # A part-only re-check newer than the score: what it
+                    # measured and when, so the card can say the score is
+                    # older than the newest run and why.
+                    "recheck_label": (runs.part_only_label(part_only.get(recheck["id"]))
+                                      if recheck else None),
+                    "recheck_at": recheck["started_at"] if recheck else None,
+                    "score_at": scored[0]["started_at"] if scored else None,
                     "delta": (round(scored[0]["composite_score"]
                                     - previous["composite_score"], 2)
                               if scored and previous is not None
@@ -1994,6 +2058,13 @@ def create_app(db_path: Path | None = None) -> FastAPI:
                     "notes": counts.get("_notes", 0),
                     "regressed": counts.get("regressed", 0),
                     "candidate": counts.get("candidate", 0),
+                    # Item 250: how many of those wait for the operator.
+                    "to_confirm": min(len(runs.awaiting_confirmation(conn, site["id"])),
+                                      counts.get("candidate", 0)),
+                    # Item 252: what holds the client report, the same count
+                    # the landing and Reports state (`open_severe`), so Home
+                    # can say it and open the same rows.
+                    "severe_open": runs.open_severe(conn, site["id"])["count"],
                     "watch": runs.watch_changes(conn, site["id"]),
                     **_next_pass(site.get("schedule"),
                                  latest[0]["started_at"] if latest else None,
@@ -2108,21 +2179,30 @@ def create_app(db_path: Path | None = None) -> FastAPI:
                 detail="an audit is already running against this site - wait "
                        "for it to finish rather than paying for it twice; its "
                        f"run is {running['id']}")
+        # What the run is recorded as (item 253). The chooser names its scope
+        # and depth. A by-hand run names neither, and used to be recorded as
+        # `full` whatever its tier - so a one-page T1 stood as a reading of
+        # the site, replaced the Latest View's blocks and cleared cross-page
+        # findings it never looked for. Its tier is its page budget, so the
+        # tier says what it read; an adaptive run has not chosen yet, and
+        # `runs.set_tier` records the scope with the tier it executed at.
+        stored_scope = body.scope or scope_for_tier(tier_name, body.nav_only)
+        from clauditseo import tiers as _tiers
+        stored_depth = body.depth or depth_for(
+            analyst, "deep" if model and model == _tiers.settings_for(conn).llm_model_deep
+            else None)
         run_id = runs.create_run(conn, site_id, dims,
                                  "T1" if tier_name == "auto" else tier_name,
                                  analyst_enabled=analyst,
-                                 # Always written (brief v3 step I): the
-                                 # chooser names its scope; the by-hand
-                                 # launcher is a full crawl unless it asked
-                                 # for the navigation set.
-                                 scan_scope=body.scope
-                                            or ("nav" if body.nav_only else "full"),
-                                 scan_depth=body.depth,
+                                 scan_scope=stored_scope or runs.SCOPE_NOT_YET,
+                                 scope_source=(runs.SCOPE_POSTED if body.scope
+                                               else runs.SCOPE_DERIVED),
+                                 scan_depth=stored_depth,
                                  # Only a page scope is *about* one URL. On any
                                  # other scope this is the entry point, not the
                                  # subject, and storing it there would read as
                                  # "this run was about the homepage".
-                                 scan_url=(start_url if body.scope == "page"
+                                 scan_url=(start_url if stored_scope == "page"
                                             else None))
         thread = threading.Thread(
             target=_execute_run,
@@ -2261,7 +2341,19 @@ def create_app(db_path: Path | None = None) -> FastAPI:
             # alone returns either row. Insertion order is the only thing here
             # that is always true about which ran last.
             " ORDER BY checked_at DESC, rowid DESC LIMIT 1", (site_id,)).fetchone()
-        return _json.loads(row["payload_json"]) if row else None
+        if not row:
+            return None
+        out = _json.loads(row["payload_json"])
+        # The site's size as the current reading measured it - what the
+        # sitemap declares and what the crawl found besides - so the scan
+        # grid's Site and Full rows and this tile say one size (screen audits
+        # round 3, launch IP-02 to IP-04: 74, 68, 53, 49 and 45 for one site).
+        # Read here rather than stored: it is the crawl's, not the precheck's.
+        reading = runs.current_reading_id(conn, site_id)
+        head = runs.headline_numbers(conn, reading) if reading else None
+        out["site_size"] = head["site_size"] if head else None
+        out["audited"] = head["audited"] if head else None
+        return out
 
     @app.get("/api/sites/{site_id}/precheck/compare")
     def compare_site_precheck(site_id: str, conn=dep, operator=op_dep):
@@ -2276,7 +2368,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         """
         import json as _json
 
-        from clauditseo.precheck_compare import compare
+        from clauditseo.precheck_compare import compare, later
 
         check_site(conn, operator, site_id)
         rows = conn.execute(
@@ -2288,25 +2380,47 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         audits = [r for r in runs.site_readings(conn, site_id)
                   if r["status"] in runs.SCORED_STATUSES]
         started = lambda r: r.get("started_at") or r["created_at"]  # noqa: E731
+        # The newest audit of any scope: a check older than it is stale
+        # whatever that audit read.
+        any_audit = conn.execute(
+            "SELECT MAX(COALESCE(started_at, created_at)) FROM audit_runs"
+            f" WHERE site_id=? AND {runs.kind_in_site_reading_kinds()}"
+            f" AND {runs.status_in(runs.AUDITED_STATUSES)}",
+            (site_id,)).fetchone()
+        newest_at = any_audit[0] if any_audit else None
         if len(rows) > 1:
             prior = _json.loads(rows[1]["payload_json"])
             prior_at = rows[1]["checked_at"]
-            after = [r for r in audits if started(r) > prior_at and started(r) <= now["checked_at"]]
+            # As moments, not text: a check is stamped in local time and a
+            # run in UTC (item 254).
+            after = [r for r in audits if later(started(r), prior_at)
+                     and not later(started(r), now["checked_at"])]
             nxt = min(after, key=started) if after else None
             before = ({"id": nxt["id"], "started_at": started(nxt), "tier": nxt["tier"]}
                       if nxt else None)
             return compare(now, prior, prior_kind="precheck", prior_at=prior_at,
-                           before_audit=before)
+                           before_audit=before, newest_audit_at=newest_at)
         crawled = [r for r in audits if r.get("crawled_paths")]
         if crawled:
             newest = max(crawled, key=started)
+            # Only a crawl OLDER than the check is a prior (item 254). The
+            # newest crawl after it made "now" the older of the two: the
+            # table then ran backwards, and four live pages the crawl read
+            # and the sitemap does not list were filed as removed.
+            if later(started(newest), now["checked_at"]):
+                from clauditseo.precheck_compare import CRAWL_IS_NEWER
+                return compare(now, None, prior_kind=None, prior_at=None,
+                               before_audit=None, prior_reason=CRAWL_IS_NEWER,
+                               newest_audit_at=newest_at)
             try:
                 paths = _json.loads(newest["crawled_paths"])
             except (TypeError, ValueError):
                 paths = []
             return compare(now, None, prior_kind="crawl", prior_at=started(newest),
-                           before_audit=None, audit_paths=paths)
-        return compare(now, None, prior_kind=None, prior_at=None, before_audit=None)
+                           before_audit=None, audit_paths=paths,
+                           newest_audit_at=newest_at)
+        return compare(now, None, prior_kind=None, prior_at=None, before_audit=None,
+                       newest_audit_at=newest_at)
 
     @app.post("/api/sites/{site_id}/notes", status_code=201)
     def add_note(site_id: str, body: AttemptIn, conn=dep, operator=op_dep):
@@ -2795,6 +2909,14 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         check_site(conn, operator, site_id)
         return runs.site_reports(conn, site_id)
 
+    @app.get("/api/sites/{site_id}/scan-pace")
+    def site_scan_pace(site_id: str, conn=dep, operator=op_dep):
+        """How long this site's stored runs took per page, by depth (item
+        255): what the chooser's time column and the re-check controls quote
+        instead of a constant."""
+        check_site(conn, operator, site_id)
+        return runs.scan_pace(conn, site_id)
+
     @app.get("/api/sites/{site_id}/anatomy")
     def site_anatomy_response(site_id: str, page: str | None = None, conn=dep,
                               operator=op_dep):
@@ -2840,12 +2962,16 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         # populations and not-assessed lines, until step 6) reads the newest
         # reading of the site. A run's own record is the Audits tab's
         # history view, which reads the run itself.
-        latest = conn.execute(
+        # Not a part-only re-check (screen audits round 3): the header bar
+        # reads the Latest View's reference composite, and this sentence,
+        # the shop's run target and the open-audit door read the same audit.
+        part_only = runs.part_only_runs(conn, site_id)
+        latest = next((r for r in conn.execute(
             f"SELECT id FROM audit_runs WHERE site_id=?"
             f" AND {runs.status_in(runs.AUDITED_STATUSES)}"
             f" AND {runs.kind_is_site_reading()}"
-            " ORDER BY started_at DESC, rowid DESC LIMIT 1",
-            (site_id,)).fetchone()
+            " ORDER BY started_at DESC, rowid DESC",
+            (site_id,)).fetchall() if r["id"] not in part_only), None)
         status = an.tool_status()
         from clauditseo.persistence import latest_view as _lvs
         # The header's plain text (item 239 step 5, amendment 8): the current
@@ -2965,11 +3091,23 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         # fire on this install now", which is the workbench's question and is
         # config-derived; on a stored run it would carry the same rewriting
         # problem as above. Same vocabulary, two call sites, different inputs.
+        # Per part, from the audit that last measured that part (its
+        # `sweep_run`, the one its provenance line names), not from the
+        # site's newest reading. A Links-only re-check is the newest reading
+        # and ran LNK alone, so on twenty22 every other part read "TEC did not
+        # run in this audit" over checks its own reference crawl had measured
+        # the day before (found on 3 October, after a re-check for item 271).
+        # One read per distinct run; a part with no reference falls back to
+        # the newest reading, as before.
         checks_by_part = {c["key"]: c.get("brief_checks") or []
                           for c in view["categories"]}
-        not_assessed = runs.not_assessed_payload(
-            conn, latest["id"] if latest else None,
-            checks_by_part=checks_by_part)
+        by_run: dict[str | None, dict[str, list[str]]] = {}
+        for c in view["categories"]:
+            part_run = (c.get("sweep_run") or {}).get("run_id") or (latest["id"] if latest else None)
+            by_run.setdefault(part_run, {})[c["key"]] = c.get("brief_checks") or []
+        not_assessed: dict[str, dict[str, str]] = {}
+        for part_run, parts in by_run.items():
+            not_assessed.update(runs.not_assessed_payload(conn, part_run, checks_by_part=parts))
         # Imported under another name on purpose: this module has a route
         # function called `playbook` (the /api/playbook handler), so the bare
         # name here would be that function, not the module.
@@ -3007,10 +3145,15 @@ def create_app(db_path: Path | None = None) -> FastAPI:
                 # the whole anatomy payload down with a KeyError, not just the
                 # gate. No gate is the honest answer there.
                 if isinstance(_ev, dict) and _ev.get("start_url"):
-                    _refusal = _hreflang_applies(_ev, {"TARGET_LOCALES": _ABSENT})
+                    # The operator's stated locales lift it, as the brief's
+                    # own inputs do (migration 0074).
+                    _stated = (repo.get_site(conn, site_id) or {}).get("target_locales")
+                    _refusal = _hreflang_applies(_ev, {"TARGET_LOCALES": _stated or _ABSENT})
                     if isinstance(_refusal, dict):
                         gate_state = {"state": _refusal.get("state"),
-                                      "reason": _refusal.get("reason") or ""}
+                                      "reason": _refusal.get("reason") or "",
+                                      "why": _refusal.get("why"),
+                                      "evidence": _refusal.get("evidence")}
         # Which of each part's checks were measured only on TRACED pages, and
         # how many pages that is (item 155, brief 160). A clean line that lumps
         # them with the parse checks under "every page this run fetched (45
@@ -3021,36 +3164,72 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         from clauditseo.modules import prf as _prf_mod
         from clauditseo.modules import tec as _tec_mod
         _trace_bare = _prf_mod.TRACE_DERIVED_CHECKS | _tec_mod.TRACE_DERIVED_CHECKS
-        traced_pages = None
-        # Whether the page in scope was itself traced. None with no page in
-        # scope, or where the stored evidence does not list it.
-        page_traced = None
-        if latest:
-            _raw = runs.evidence_text(conn, latest["id"])
+        def _was_traced(_p):
+            return (isinstance(_p.get("perf"), dict)
+                    and _p["perf"].get("traced") is not False
+                    and bool(_p["perf"].get("device_profile")))
+        # Read per audit, like `not_assessed` above: a part's traced pages are
+        # its own reference audit's. Read off the newest reading, a Links-only
+        # re-check put "0 traced of 45 crawled" on Mobile (3 October).
+        # (traced pages, whether the page in scope was itself traced - None
+        # with no page in scope or where the evidence does not list it.)
+        _trace_reads: dict[str | None, tuple[int | None, bool | None]] = {}
+
+        def _trace_read(run_id):
+            if run_id in _trace_reads:
+                return _trace_reads[run_id]
+            got: tuple[int | None, bool | None] = (None, None)
+            _raw = runs.evidence_text(conn, run_id) if run_id else None
             if _raw:
                 try:
                     _pgs = (runs.parsed_evidence(_raw).get("pages") or [])
                 except (TypeError, ValueError):
                     _pgs = []
-                def _was_traced(_p):
-                    return (isinstance(_p.get("perf"), dict)
-                            and _p["perf"].get("traced") is not False
-                            and bool(_p["perf"].get("device_profile")))
-                traced_pages = sum(1 for _p in _pgs if _was_traced(_p))
-                if page:
-                    _hit = next((_p for _p in _pgs if _p.get("url") == page), None)
-                    if _hit is not None:
-                        page_traced = _was_traced(_hit)
+                _hit = (next((_p for _p in _pgs if _p.get("url") == page), None)
+                        if page else None)
+                got = (sum(1 for _p in _pgs if _was_traced(_p)),
+                       _was_traced(_hit) if _hit is not None else None)
+            _trace_reads[run_id] = got
+            return got
+        def _ais_samples(run_id):
+            """Item 267: each AI-surface check's own population - the URLs
+            the crawler access test probed, the pages the rendered pass read,
+            or the site as one subject - from that audit's evidence."""
+            from clauditseo.modules import ais as _ais_mod
+            ev = {}
+            _raw = runs.evidence_text(conn, run_id) if run_id else None
+            if _raw:
+                try:
+                    ev = runs.parsed_evidence(_raw) or {}
+                except (TypeError, ValueError):
+                    ev = {}
+            probed = set()
+            for _row in (ev.get("ua_matrix") or []):
+                if isinstance(_row, dict):
+                    probed |= set((_row.get("bodies") or {}).keys())
+            n = {"probed": len(probed),
+                 "rendered": len(runs._text_blocks_for_run(conn, run_id)) if run_id else 0}
+            out = {c: {"n": n[basis], "basis": basis}
+                   for c, basis in _ais_mod.SAMPLED.items() if n[basis]}
+            out.update({c: {"n": None, "basis": "site"} for c in _ais_mod.SITE_ROWS})
+            return out
         for cat in view["categories"]:
             cat["trace_derived"] = [c for c in (cat.get("brief_checks") or [])
                                     if c.split("/")[-1] in _trace_bare]
+            traced_pages, page_traced = _trace_read(
+                (cat.get("sweep_run") or {}).get("run_id") or (latest["id"] if latest else None))
             cat["traced_pages"] = traced_pages
+            if cat["key"] == "ai-surface":
+                cat["samples"] = _ais_samples(
+                    (cat.get("sweep_run") or {}).get("run_id") or (latest["id"] if latest else None))
             cat["not_assessed"] = dict(not_assessed.get(cat["key"], {}))
             if cat["key"] == "security":
                 # The layer cards (143 addendum): each domain's layer and
                 # checks, from the one constant the sweep's checks are filed by.
                 from clauditseo.modules.sec import DOMAINS as _sec_domains
+                from clauditseo.modules.sec import PARTLY_MEASURED as _sec_partly
                 cat["sec_domains"] = _sec_domains
+                cat["partly_measured"] = _sec_partly
             # Page mode (brief v23 step BK) and item 157 together. Rung 2
             # is RUN-level: a run that traced any page leaves the trace
             # checks measured. On one page that is false wherever the trace
@@ -3064,6 +3243,8 @@ def create_app(db_path: Path | None = None) -> FastAPI:
                                "traced, which is what these are measured from")
             if cat["key"] == "intl":
                 cat["gate"] = gate_state
+                # The stated locales the part page edits (migration 0074).
+                cat["target_locales"] = (repo.get_site(conn, site_id) or {}).get("target_locales")
                 # Where the gate says `na` the brief will NEVER run here, so
                 # "no brief has run for this part yet" is false -- the "yet"
                 # promises a run the gate refuses. The checks take the gate's
@@ -3152,6 +3333,10 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         hg = runs.security_headers_payload(conn, ref["SEC"])
         for cat in view["categories"]:
             if cat["key"] == "security":
+                # The transport facts beside it (item 276, row 9): the TLS
+                # floor and certificate are the site's, and were read from a
+                # page's facts, which site scope does not have.
+                cat["transport"] = hg.pop("transport", None) if hg else None
                 cat["headers_grid"] = hg
         budget = runs.image_budget_payload(
             conn, _lv.reference_run(conn, site_id, "images", "ONP"))
@@ -3564,10 +3749,20 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         out["budget"] = _budget_status(conn, cfg)
         return out
 
+    @app.get("/api/sites/{site_id}/page-reports")
+    def page_reports(site_id: str, url: str, conn=dep, operator=op_dep):
+        """The newest stored report of each page-level analysis for one page,
+        across the site's runs (item 251): what the dossier's panel lists."""
+        check_site(conn, operator, site_id)
+        return {"results": runs.page_report_index(conn, site_id, url)}
+
     @app.get("/api/runs/{run_id}/expert/{tool_id}")
-    def stored_expert(run_id: str, tool_id: str, conn=dep, operator=op_dep):
+    def stored_expert(run_id: str, tool_id: str, url: str | None = None,
+                      conn=dep, operator=op_dep):
         check_run(conn, operator, run_id)
-        stored = runs.expert_report(conn, run_id, tool_id)
+        # `url` names which page's report, for a page-level analysis a run
+        # holds for several pages (item 251); without it, the most recent.
+        stored = runs.expert_report(conn, run_id, tool_id, page_url=url)
         if not stored:
             raise HTTPException(status_code=404,
                                 detail="this analysis has not been run against this audit")
@@ -3740,6 +3935,14 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         refusal = runs.narrow_run_refusal(run)
         if refusal and not (EXPERT_TOOLS[tool_id].get("scope") == "page" and body and body.url):
             raise HTTPException(status_code=409, detail=refusal)
+        # The plan speaks for the whole site, so not from a part-only
+        # re-check (screen audits round 3, Reports AC-01).
+        if tool_id == "plan":
+            only = runs.part_only_runs(conn, run["site_id"]).get(run_id)
+            if only:
+                raise HTTPException(status_code=409, detail=(
+                    f"This audit measured {runs.part_only_label(only)}; a plan "
+                    "is written from a full audit of the site."))
         # Item 178: the client report's guard, before anything is claimed or
         # spent. The document generator refuses a held client report; without
         # this the Reports screen paid for the plan first and was refused
@@ -4428,15 +4631,6 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         with conn:
             conn.execute("DELETE FROM model_prices WHERE model=?", (model,))
         return {"ok": True}
-
-    # -- history chat -------------------------------------------------------
-
-    @app.post("/api/chat")
-    def history_chat(body: ChatIn, conn=dep, operator=op_dep):
-        if not repo.get_site(conn, body.site_id):
-            raise HTTPException(status_code=404, detail="site not found")
-        check_site(conn, operator, body.site_id)
-        return chat_module.answer(conn, body.site_id, body.question)
 
     if DASHBOARD_DIST.exists():
         app.mount("/", StaticFiles(directory=DASHBOARD_DIST, html=True), name="dashboard")

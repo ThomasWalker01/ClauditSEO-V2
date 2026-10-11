@@ -223,6 +223,10 @@ class AccessibilityModule:
         screens: dict[str, dict] = {}
         rendered: dict[str, list] = {}
         text_blocks: dict[str, list] = {}
+        # Item 247: what each rendered page's own scripts did, and how many
+        # images the walk left unloaded, for `TEC/scripts-blocked-by-csp`
+        # and its two siblings.
+        script_errors: dict[str, dict] = {}
         for f in sample:
             shot = (axe.screens_dir(run_id) / f"{axe.page_hash(f.url)}.png"
                     if run_id else None)
@@ -261,6 +265,11 @@ class AccessibilityModule:
                 blk["excerpt"] = _block_excerpt(raw)
                 blk["hash"] = _block_hash(raw)
             text_blocks[f.url] = blocks
+            if result.get("script_errors") is not None:
+                settle = result.get("settle") or {}
+                script_errors[f.url] = {
+                    **result["script_errors"],
+                    "unloaded_images": int(settle.get("unloaded_images") or 0)}
             shot_meta = result.get("screenshot") or {}
             if shot_meta.get("path"):
                 # The page's own dimensions, from the same evaluate that
@@ -289,6 +298,7 @@ class AccessibilityModule:
             # Item 136o Part A: the page's text blocks, for the Content
             # overlay to read back and classify.
             context["text_blocks"] = text_blocks
+            context["script_errors"] = script_errors
             note = axe.coverage_note(tested, engine)
             if screens or text_blocks:
                 note.evidence = {**(note.evidence or {}),

@@ -3,6 +3,7 @@ import React, { useEffect, useState } from "react";
 import { api, ApiError } from "./api";
 import { Card } from "./components";
 import { Markdown } from "./markdown";
+import { day } from "./dates";
 
 type Deliverable = {
   id: string; template: string; audience: string; created_at: string;
@@ -44,7 +45,7 @@ export function DeliverableView({ reportId }: { reportId: string }) {
       <h2>Client report</h2>
       <p className="muted">
         {doc.template} · for the {doc.audience} · generated{" "}
-        {doc.created_at.slice(0, 10)}
+        {day(doc.created_at)}
         {/* Not the absolute path. It reads
             C:\\Users\\owner\\...\\reports\\out — a home directory and an
             operator's name on a screen that gets screenshotted for a

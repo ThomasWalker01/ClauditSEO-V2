@@ -118,6 +118,7 @@ def _cmd_audit_run(args) -> int:
     from clauditseo.engine.types import Site, Tier
     from clauditseo.persistence import runs
     from clauditseo.providers.base import ProviderHub
+    from clauditseo.scanscope import depth_for, scope_for_tier
 
     cfg = settings()
     dims = [d.strip().upper() for d in args.dims.split(",") if d.strip()]
@@ -157,8 +158,14 @@ def _cmd_audit_run(args) -> int:
 
     run_id = runs.create_run(conn, site_row["id"], dims, tier.value,
                              analyst_enabled=args.analyst or adaptive_mode,
-                             # The CLI crawls the site (brief v3 step I).
-                             scan_scope="full")
+                             # What the tier reads (item 253): a T1 from
+                             # the CLI is a page scan, not a reading of the
+                             # site. An adaptive run records its scope with
+                             # the tier it executed at (`runs.set_tier`).
+                             scan_scope=(runs.SCOPE_NOT_YET if adaptive_mode
+                                         else scope_for_tier(tier.value)),
+                             scope_source=runs.SCOPE_DERIVED,
+                             scan_depth=depth_for(args.analyst or adaptive_mode))
     mode = "adaptive" if adaptive_mode else tier.value
     print(f"run {run_id}: crawling {start_url} ({mode}, dims {','.join(dims)})")
     try:
@@ -219,6 +226,41 @@ def _cmd_audit_run(args) -> int:
         for s in states[:10]:
             print(f"  [{s['severity']}] {s['dimension']}/{s['check_id']}: {s['summary']}")
     conn.close()
+    return 0
+
+
+def _cmd_reparse(args) -> int:
+    """Re-read every stored analysis under the reader as it now stands, with
+    no model call, and rebuild the Latest View (item 249)."""
+    from clauditseo.analysts.expert import reparse_site
+    from clauditseo.api.app import site_of
+
+    conn = connect(settings().db_path)
+    migrate(conn)
+    sites = conn.execute(
+        "SELECT * FROM sites WHERE archived_at IS NULL"
+        + (" AND lower(domain)=lower(?)" if args.site else ""),
+        ((args.site,) if args.site else ())).fetchall()
+    if not sites:
+        print(f"no site {args.site!r}" if args.site else "no sites")
+        return 2
+    for row in sites:
+        site = site_of(repo.site_record(repo.get_site(conn, row["id"])))
+        results = reparse_site(conn, row["id"], site)
+        print(f"{row['domain']}: {len(results)} stored analyses re-read")
+        for r in results:
+            if r.get("error"):
+                print(f"  {r['tool_id']:26} could not be re-read: {r['error']}")
+                continue
+            moved = len(r["gone"]) + len(r["new"]) + len(r["changed"])
+            print(f"  {r['tool_id']:26} from {r['source']:4}  rows {r['rows'][0]:3} -> {r['rows'][1]:3}"
+                  f"  dropped {r['dropped'][0]:2} -> {r['dropped'][1]:2}"
+                  f"  held {r['not_assessable'][0]:2} -> {r['not_assessable'][1]:2}"
+                  f"  {'rows unchanged' if not moved else str(moved) + ' row(s) differ'}")
+            if args.verbose:
+                for label in ("gone", "new", "changed"):
+                    for line in r[label]:
+                        print(f"      {label}: {line}")
     return 0
 
 
@@ -288,6 +330,13 @@ def main(argv: list[str] | None = None) -> int:
     run_p.add_argument("--model", default=None,
                        help="analyst model override, e.g. claude-fable-5")
 
+    reparse_p = sub.add_parser(
+        "reparse-contracts",
+        help="re-read every stored analysis under the current rules (no model call)")
+    reparse_p.add_argument("--site", help="one site's domain; every site where omitted")
+    reparse_p.add_argument("--verbose", action="store_true",
+                           help="list each row that is gone, new or changed")
+
     op_parser = sub.add_parser("operator", help="manage operator accounts")
     op_sub = op_parser.add_subparsers(dest="operator_command", required=True)
     op_add = op_sub.add_parser("add", help="create an operator and print their token once")
@@ -311,6 +360,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_report(args)
     if args.command == "operator":
         return _cmd_operator(args)
+    if args.command == "reparse-contracts":
+        return _cmd_reparse(args)
     if args.command == "migrate":
         return _cmd_migrate()
     if args.command == "seed":

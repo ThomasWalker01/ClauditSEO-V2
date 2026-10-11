@@ -21,6 +21,7 @@ from __future__ import annotations
 from clauditseo import BOT_NAME
 
 import json
+import re
 from pathlib import Path
 
 from clauditseo.engine.types import Finding, Severity
@@ -97,6 +98,170 @@ def page_hash(url: str) -> str:
     return hashlib.sha256(url.encode("utf-8")).hexdigest()[:32]
 
 
+#: How long the walk down the page may take before axe runs, in ms. A page
+#: that has not settled by then is judged as it stands, and the count of
+#: images still unloaded is kept with the result.
+SETTLE_MS = 8_000
+
+
+def _settle(pg, budget_ms: int = SETTLE_MS) -> dict:
+    """Do what a visitor does before the page is judged and pictured.
+
+    Move the mouse, because script-delay plugins hold a page's scripts until
+    the first input. Then walk down the page a viewport at a time, because
+    lazy loaders fill an image only once it scrolls into view and a full-page
+    screenshot does not scroll. Finally go back to the top and wait, within
+    the budget, for the images that started loading. Before axe rather than
+    just before the screenshot: content a loader adds is content axe judges,
+    and a box measured before images take their height is in the wrong place.
+    """
+    try:
+        pg.mouse.move(40, 40)
+        pg.mouse.move(320, 240, steps=4)
+    except Exception:                                      # noqa: BLE001
+        pass
+    return pg.evaluate("""async (budget) => {
+        const t0 = performance.now();
+        const left = () => budget - (performance.now() - t0);
+        const pause = (ms) => new Promise(r => setTimeout(r, ms));
+        const step = Math.max(200, Math.floor(window.innerHeight * 0.8));
+        let y = 0;
+        while (y < document.documentElement.scrollHeight && left() > 1500) {
+            window.scrollTo(0, y);
+            await pause(150);
+            y += step;
+        }
+        window.scrollTo(0, 0);
+        await pause(150);
+        const waiting = [...document.images].filter(i => !i.complete);
+        await Promise.race([
+            Promise.all(waiting.map(i => new Promise(r => {
+                i.addEventListener('load', r, { once: true });
+                i.addEventListener('error', r, { once: true });
+            }))),
+            pause(Math.max(300, left())),
+        ]);
+        // Unloaded: still fetching, or still showing a loader's placeholder
+        // (a `data:` src while the real file waits in a data- attribute).
+        // The second is what a failed lazy loader leaves, and `complete`
+        // is true of it.
+        const waitingOn = (i) => i.dataset.src || i.dataset.lazySrc
+            || i.dataset.lazyload || i.dataset.original;
+        const unloaded = [...document.images].filter(i => !i.complete
+            || (waitingOn(i) && (i.currentSrc || i.src || '').startsWith('data:')));
+        return {
+            ms: Math.round(performance.now() - t0),
+            images: document.images.length,
+            unloaded_images: unloaded.length,
+        };
+    }""", budget_ms)
+
+
+#: Item 247: how many of each kind of script failure one page keeps. A page
+#: that fails more than this fails the same way, and the count is kept.
+SCRIPT_ERRORS_CAP = 20
+
+#: Installed before the page's own scripts run, so the browser's CSP report
+#: for each blocked script is caught rather than only printed to the console.
+_CSP_LISTENER = """
+window.__clauditCsp = [];
+document.addEventListener('securitypolicyviolation', (e) => {
+    if (window.__clauditCsp.length >= 200) return;
+    window.__clauditCsp.push({
+        directive: e.effectiveDirective || e.violatedDirective || '',
+        blocked: String(e.blockedURI || '').slice(0, 60),
+        source: String(e.sourceFile || '').slice(0, 200),
+    });
+});
+"""
+
+_STACK_FRAME = re.compile(r"((?:https?|blob|data):[^\s()]+?):\d+:\d+")
+
+
+def _frame_url(stack: str) -> str:
+    """The script a stack's first frame names, or '' when it names none.
+
+    V8 writes a frame as `at fn (url:line:col)` or `at url:line:col`; the
+    URL is what matters here, since a finding is about the script that
+    threw, not the function."""
+    for line in (stack or "").splitlines():
+        line = line.strip()
+        if not line.startswith("at "):
+            continue
+        m = _STACK_FRAME.search(line)
+        if m:
+            return m.group(1)[:200]
+    return ""
+
+
+class _ScriptErrors:
+    """Item 247: what the page's own scripts did while it loaded and settled.
+
+    Three lists, each capped, with the count of everything seen. Collection
+    stops before axe's script is added, so axe's own errors - and the page's
+    reaction to a script it did not ship - are never charged to the page.
+    """
+
+    def __init__(self) -> None:
+        self.exceptions: list[dict] = []
+        self.failed_loads: list[dict] = []
+        self.seen = {"exceptions": 0, "failed_loads": 0}
+        self.open = True
+
+    def on_pageerror(self, err) -> None:
+        if not self.open:
+            return
+        self.seen["exceptions"] += 1
+        if len(self.exceptions) >= SCRIPT_ERRORS_CAP:
+            return
+        stack = getattr(err, "stack", "") or ""
+        message = getattr(err, "message", None) or str(err)
+        self.exceptions.append({"message": str(message)[:300],
+                                "source": _frame_url(stack)})
+
+    def on_requestfailed(self, req) -> None:
+        if not self.open or req.resource_type != "script":
+            return
+        failure = req.failure
+        why = (failure if isinstance(failure, str)
+               else getattr(failure, "error_text", str(failure)))
+        # A script the policy refused is a CSP block, and the CSP list has
+        # it. Counted here as well, twenty22's home page read "5 scripts
+        # blocked" and "5 scripts fail to load" about the same five.
+        if str(why).strip().lower() == "csp":
+            return
+        self._failed(req.url, why)
+
+    def on_response(self, resp) -> None:
+        if not self.open or resp.request.resource_type != "script":
+            return
+        if resp.status >= 400:
+            self._failed(resp.url, f"HTTP {resp.status}")
+
+    def _failed(self, url: str, why) -> None:
+        # Once per script: a 4xx/5xx answers `response` and then, since the
+        # browser abandons the body, `requestfailed` too.
+        if any(f["url"] == url[:200] for f in self.failed_loads):
+            return
+        self.seen["failed_loads"] += 1
+        if len(self.failed_loads) < SCRIPT_ERRORS_CAP:
+            self.failed_loads.append({"url": url[:200], "why": str(why)[:120]})
+
+    def close(self, pg) -> dict:
+        """Read the CSP reports the init script collected, and stop listening."""
+        self.open = False
+        try:
+            csp = pg.evaluate("() => window.__clauditCsp || []")
+        except Exception:                                  # noqa: BLE001
+            csp = []
+        return {
+            "exceptions": list(self.exceptions),
+            "csp_blocked": [c for c in csp[:SCRIPT_ERRORS_CAP]],
+            "failed_loads": list(self.failed_loads),
+            "seen": {**self.seen, "csp_blocked": len(csp)},
+        }
+
+
 def run_page(url: str, timeout_ms: int = 30_000,
              screenshot_to: Path | None = None) -> dict:
     """Load one URL, inject axe, and return its raw result object.
@@ -119,10 +284,30 @@ def run_page(url: str, timeout_ms: int = 30_000,
         try:
             ctx = browser.new_context(
                 user_agent=f"{BOT_NAME}/1.0 (+accessibility audit)")
+            # Item 247: listening from before the page's first script, and
+            # closed before axe's is added.
+            ctx.add_init_script(_CSP_LISTENER)
             pg = ctx.new_page()
+            errors = _ScriptErrors()
+            pg.on("pageerror", errors.on_pageerror)
+            pg.on("requestfailed", errors.on_requestfailed)
+            pg.on("response", errors.on_response)
             pg.goto(url, timeout=timeout_ms, wait_until="load")
             pg.wait_for_timeout(1_200)     # hydration frameworks paint late
-            pg.add_script_tag(content=_script())
+            try:
+                settled = _settle(pg)
+            except Exception as exc:                        # noqa: BLE001
+                # Judged as loaded rather than not at all: the walk is how
+                # the picture is completed, not what the audit is.
+                settled = {"error": f"{type(exc).__name__}: {exc}"[:200]}
+            script_errors = errors.close(pg)
+            # Through the debugging channel, not a <script> element (item
+            # 247). A page whose CSP has no 'unsafe-inline' refused the
+            # element, and that failed the whole pass on exactly the pages
+            # whose policy is strict. The channel is outside the policy;
+            # the page's own scripts stay inside it, which is what the
+            # listeners above are measuring.
+            pg.evaluate(_script())
             # runOnly keeps us to the WCAG rulesets; axe's "best-practice"
             # tags are opinions worth reading but not worth scoring a client
             # against without saying so.
@@ -252,6 +437,8 @@ def run_page(url: str, timeout_ms: int = 30_000,
                     })(),
                 };
             })""")
+            result["settle"] = settled
+            result["script_errors"] = script_errors
             # After the evaluate, so the picture is of the page axe judged
             # rather than of one that carried on hydrating afterwards.
             if screenshot_to is not None:

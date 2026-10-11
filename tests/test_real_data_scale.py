@@ -145,6 +145,13 @@ RENDERED_NOWHERE = {
         "`SchemaNow` in `part_page.tsx`, which renders the blocks and the "
         "two verdicts and not this"
     ),
+    "content_not_run": (
+        "computed by `page_facts` and declared in `type Facts`, and read, not "
+        "mapped: `ContentNow` and the Fixes pass line ask `.includes(check)` "
+        "of it to hold a badge or a pass back (item 269). It is never drawn "
+        "as a list, and it holds at most the three gated content checks "
+        "(`cnt.not_run_on`), so no crawl can grow it"
+    ),
     "redirect_chain": (
         "rendered, but not through `.map(` and so not as a collection: "
         "`anatomy.tsx:1208-1209` joins it with an arrow into a single `Row` "

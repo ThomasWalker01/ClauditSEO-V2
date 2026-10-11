@@ -19,11 +19,15 @@ import { SecondaryButton } from "./buttons";
 import { ReactNode, useEffect, useState } from "react";
 import { RunStatus, api, completedAudits } from "./api";
 import { Pill } from "./pill";
+import { day } from "./dates";
+import { candidateWord } from "./to_confirm";
 
 /** The least a row must carry to take part. */
 export type Markable = {
   fingerprint: string;
   state: string;
+  /** A candidate that waits for the operator (item 250). */
+  to_confirm?: boolean;
   summary: string;
   /** "deterministic" | "model-judgement". A brief's finding is judged by
    *  re-running the brief, so a crawl cannot verify it. */
@@ -302,8 +306,9 @@ export function FixTick({ f, marked, onMark }: {
  */
 export const STATE_MEANING: Record<string, string> = {
   "withdrawn": "The audit that raised this could not see the site, so the finding was never true. Not a fix — nothing was repaired. A later audit that does see it will reopen it.",
-  "candidate": "Seen once. Model output varies run to run, so a single sighting is not yet treated as a fact — it opens if it appears again.",
+  "candidate": "An analysis reported this and nothing has confirmed it yet. It opens if the automatic checks raise it too; a second run of the same model does not confirm it.",
   "accepted-risk": "Excluded by your own decision; never reinstated automatically.",
+  "set-aside": "Every page this names answered an error on the audit that set it aside, so the check no longer applies there. Not a fix - nothing was repaired. If the page answers again and the check still fires, it reopens.",
 };
 
 
@@ -373,10 +378,18 @@ export function FixState({ f, marked, outcome, judged }: {
       </>
     );
   }
+  if (f.state === "set-aside") {
+    return (
+      <>
+        <Pill tone="state-set-aside">on an error page</Pill>
+        <StateNote state="set-aside" />
+      </>
+    );
+  }
   if (f.state === "candidate") {
     return (
       <>
-        <span className="muted">seen once</span>
+        <span className="muted">{candidateWord(f.to_confirm)}</span>
         <StateNote state="candidate" />
       </>
     );
@@ -384,7 +397,7 @@ export function FixState({ f, marked, outcome, judged }: {
   if (judged(f)) {
     return (
       <span className="state st-still"
-            title={`Marked fixed on ${f.attempted_at?.slice(0, 10)}, but an
+            title={`Marked fixed on ${day(f.attempted_at)}, but an
                     audit has run since and it is still open — the change did
                     not take`}>still there</span>
     );
@@ -563,7 +576,7 @@ export function MarkBar({ here, pages, pagesExact = true, pageCap, elsewhere,
         <>
           {/* UX-66. Stable caption, state on `aria-busy`, words in the
               unconditionally-mounted region below — the convention
-              `views.tsx`'s `ReportView` states in full. */}
+              `reports.tsx`'s `GenerateCard` states in full. */}
           <SecondaryButton className="mark-verify" disabled={verifying}
                   aria-busy={verifying} onClick={onVerify}>
             {verified ? `look again at ${scope}` : `verify ${scope} now`}

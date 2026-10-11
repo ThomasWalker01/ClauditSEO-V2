@@ -153,6 +153,9 @@ Rules for the block:
 - `rows`: one per Missing or Partial node worth filling. `page` is the page
   to extend, or null for a new page (then `replacement` names the proposed
   URL). `node` is `service › node`.
+- Every Missing node in `map` gets a row, or a named skip: an `assumptions`
+  entry `skip: service › node: <why it is not worth a page>`. A Missing node
+  with neither is a gap the map draws and nothing answers.
 - `fields` carry what Triage scores: `demand` (null unless supplied by
   content-benchmark), `business_value` (high/med/low from priority order),
   `difficulty` (low/med/high), `effort` (S/M/L), `horizon` (Now/Next/Later).

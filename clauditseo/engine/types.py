@@ -273,6 +273,9 @@ class Site:
     #: Agents refused at the edge on purpose, comma-separated tokens (item 145
     #: BG, migration 0062). `edge-blocks-ai-ua` reads it for its severity.
     ai_edge_blocked_agents: str | None = None
+    #: The operator's stated target locales, comma-separated BCP 47 tags
+    #: (migration 0074). The hreflang gate and brief read it as TARGET_LOCALES.
+    target_locales: str | None = None
 
 
 def evidence_hash(payload: Any) -> str:

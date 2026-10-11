@@ -141,6 +141,23 @@ def _categories():
     return CATEGORIES
 
 
+_READ_ONLY = re.compile(r"^\s+([A-Z]+/[a-z0-9-]+)\s+\(free, read only\)", re.M)
+
+
+def read_only_checks(tool_id: str) -> frozenset[str]:
+    """The free checks a brief's prompt marks "(free, read only)" (item 269,
+    row 7): it may set the automatic checks' verdict aside with a
+    PASS-OVERRIDE and may raise nothing of its own on them. Read from the
+    prompt the model reads, so the rule and the instruction cannot part."""
+    brief = by_id().get(tool_id)
+    if brief is None or not getattr(brief, "path", None):
+        return frozenset()
+    try:
+        return frozenset(_READ_ONLY.findall(Path(brief.path).read_text(encoding="utf-8")))
+    except OSError:
+        return frozenset()
+
+
 def load(prompt_dir: Path = PROMPT_DIR, categories: tuple | None = None) -> list[Brief]:
     """Every brief under `prompt_dir`, validated, in the sidebar's order."""
     cats = categories if categories is not None else _categories()

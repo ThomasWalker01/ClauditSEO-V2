@@ -64,10 +64,12 @@ TESTS = Path("tests")
 DEADLINE = "must resolve by round 113"
 
 #: A formatter that answers with a date and nothing else, found by what it
-#: does rather than by what it is called. `const trendDay = (iso: string) =>
-#: (iso || "").slice(0, 10);` is the one in the tree today.
+#: does rather than by what it is called. `const trendDay = day;` is the one
+#: in the tree today: `day` is `dates.ts`'s local day (item 248), which
+#: replaced `(iso || "").slice(0, 10)` - the first alternative still finds a
+#: sliced one, should a later edit bring it back.
 DATE_ONLY = re.compile(
-    r"^(?:const|let)\s+(\w+)\s*=\s*\([^)]*\)\s*=>.*\.slice\(0,\s*10\)",
+    r"^(?:const|let)\s+(\w+)\s*=\s*(?:\([^)]*\)\s*=>.*\.slice\(0,\s*10\)|day\s*;)",
     re.M)
 
 

@@ -43,7 +43,7 @@ DEFECT = {
                     "scripts": [{"url": "https://cdn.ads.com/t.js", "ms": 180}]}],
     "resources": [
         {"url": "https://x.test/theme.css", "type": "css", "bytes": 180000,
-         "transfer": 190000, "blocking": True, "compression": "none",
+         "transfer": 190000, "blocking": True, "duration_ms": 320, "compression": "none",
          "cache_control": None, "whitespace_ratio": 0.35,
          "coverage": {"used": 20000, "total": 180000}},
         {"url": "https://cdn.ads.com/t.js", "type": "script", "bytes": 400000,
@@ -51,7 +51,7 @@ DEFECT = {
          "cache_control": "max-age=60", "whitespace_ratio": 0.02,
          "coverage": "unavailable"},
     ],
-    "fonts": [{"family": "Inter", "display": None, "preloaded": False,
+    "fonts": [{"family": "Inter", "display": "block", "preloaded": False,
                "swap_observed": "unavailable"}],
     "head_rendered": "<head></head>", "frames": "unavailable",
 }
@@ -81,6 +81,25 @@ def test_every_free_trace_check_fires_on_a_defect_trace():
                   "no-cache-headers", "unminified", "third-party-weight",
                   "font-blocking"):
         assert check in fired, check
+
+
+def test_neither_blocking_check_fires_on_what_holds_nothing():
+    """Screen audits round 3 (Speed AC-02, AC-03): a stylesheet that blocked
+    for 2 ms put a Medium on twelve pages, and a font not preloaded, or one
+    whose display the trace could not read, was a fault however it loaded."""
+    import copy
+    trace = copy.deepcopy(CLEAN)
+    trace["resources"][0].update({"blocking": True, "duration_ms": 2})
+    trace["fonts"] = [{"family": "Inter", "display": "swap", "preloaded": False},
+                      {"family": "Lora", "display": None, "preloaded": False}]
+    fired = _fired(trace)
+    assert "render-blocking" not in fired
+    assert "font-blocking" not in fired
+
+
+def test_an_unread_blocking_size_is_not_a_zero():
+    row = next(f for f in _run(DEFECT) if f.check_id == "render-blocking")
+    assert "320 ms" in row.summary and "185 KB" in row.summary, row.summary
 
 
 def test_third_party_weight_attributes_main_thread_ms_by_host():

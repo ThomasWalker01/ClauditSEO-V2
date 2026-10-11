@@ -144,7 +144,7 @@ export function SchemaAuditPanel({ runId, url, onBusy }: {
         {error && <ErrorNote error={error} />}
         {/* UX-66. Stable caption, state on `aria-busy`, words in the
             unconditionally-mounted region below — the convention
-            `views.tsx`'s `ReportView` states in full. */}
+            `reports.tsx`'s `GenerateCard` states in full. */}
         {/* Item 178: priced in words and confirmed. */}
         <SpendButton price={null} busy={busy} onSpend={request}
                      confirm={{ title: "Audit this page's structured data?",
@@ -400,7 +400,7 @@ export function PageAdvice({ runId, url, scope, checkId, onBusy }: {
           raised against it. One page, one call, budget-capped.
         </p>
         {error && <ErrorNote error={error} />}
-        {/* UX-66, the convention `views.tsx`'s `ReportView` states in full. */}
+        {/* UX-66, the convention `reports.tsx`'s `GenerateCard` states in full. */}
         <SpendButton price={null} busy={busy} onSpend={request}
                      confirm={{ title: "Ask the page advisor about this page?",
                               body: <><SpendTarget page={url} />
@@ -589,7 +589,7 @@ export function PageAdvice({ runId, url, scope, checkId, onBusy }: {
           the operator who edits the page in response to the advice needs to
           ask again about what they just changed. Replaces the stored row for
           this page in this run rather than adding to it. */}
-      {/* UX-66, the convention `views.tsx`'s `ReportView` states in full. */}
+      {/* UX-66, the convention `reports.tsx`'s `GenerateCard` states in full. */}
       <SpendButton price={null} busy={busy} onSpend={request}
                    confirm={{ title: "Ask the page advisor about this page?",
                               body: <><SpendTarget page={url} />

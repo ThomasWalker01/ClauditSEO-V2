@@ -120,7 +120,9 @@ def test_the_launch_route_writes_a_scope_on_every_insert(tmp_path, monkeypatch):
     site = client.post(f"/api/clients/{c['id']}/sites", json={"domain": "launch.fixture"}).json()
     cases = [
         ({"scope": "site", "depth": "quick"}, "site"),
-        ({"dims": ["TEC"], "tier": "T2"}, "full"),
+        # Item 253: a by-hand run is what its tier read, not `full`.
+        ({"dims": ["TEC"], "tier": "T2"}, "site"),
+        ({"dims": ["TEC"], "tier": "T1"}, "page"),
         ({"dims": ["TEC"], "tier": "T2", "nav_only": True}, "nav"),
     ]
     conn = connect(db)

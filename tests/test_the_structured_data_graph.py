@@ -308,3 +308,22 @@ def test_eligibility_is_passed_through_and_can_say_none_targeted():
                            [], elig)
     assert model.eligibility == elig, model.eligibility
     assert "none targeted" in sg.ELIGIBILITY_VERDICTS
+
+
+def test_an_entity_declared_twice_at_the_top_is_not_consolidated():
+    """Screen audits round 3 (Structured data AC-01): twenty22's home page
+    declares `/#organization` in two top-level blocks. Counting only inline
+    copies, the ladder read "CONSOLIDATED · one @id" beside an inventory
+    listing it twice."""
+    org = {"@type": "Organization", "@id": "https://x.test/#organization", "name": "X"}
+    page = {"@type": "WebPage", "@id": "https://x.test/#webpage",
+            "about": {"@id": "https://x.test/#organization"}}
+    site = {"@type": "WebSite", "@id": "https://x.test/#website",
+            "publisher": {"@id": "https://x.test/#organization"}}
+    blocks = [{"@context": "https://schema.org", "@graph": [site, page, org]},
+              {"@context": "https://schema.org", **{**org, "url": "https://x.test/"}}]
+    model = sg.build_model([{"source": "inline", "json": b} for b in blocks], None,
+                           {"host": "x.test", "page": "/", "page_type": "home"}, [])
+    assert model.verdict["entity"] == "FRAGMENTED", model.verdict
+    assert "declared by 2 top-level nodes" in model.verdict["why"], model.verdict
+    assert model.verdict["declared"] == 2

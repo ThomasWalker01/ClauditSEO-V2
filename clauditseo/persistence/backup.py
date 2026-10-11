@@ -16,7 +16,11 @@ from pathlib import Path
 
 COUNTED_TABLES = ("operators", "clients", "sites", "audit_runs", "findings",
                   "finding_states", "metric_snapshots", "cost_entries",
-                  "analyst_cache", "reports")
+                  "analyst_cache", "reports",
+                  # Spend on deleted runs (migration 0075): not derived from
+                  # any row that still exists, so a backup that lost it
+                  # could never rebuild it.
+                  "deleted_spend")
 
 
 def backup_dir(db_path: Path) -> Path:

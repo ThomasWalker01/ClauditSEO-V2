@@ -21,6 +21,7 @@ over a capped list is a diff over its first 500, and the payload says
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
 from clauditseo.precheck import _diff_key
@@ -31,6 +32,28 @@ SUGGEST_MIN_SHARE = 0.10
 #: ... and never for fewer pages than this, whatever the share: on a
 #: ten-page site one page is ten per cent.
 SUGGEST_MIN_PAGES = 3
+
+
+def instant(iso: str | None) -> datetime | None:
+    """A stored stamp as a moment, so two can be ordered (item 254).
+
+    A precheck is stamped in local time with its offset and a run in UTC, so
+    ordering the two as text is wrong by the offset: on a UTC+10 machine a
+    check made nine hours before an audit sorted after it. A stamp with no
+    offset is read as UTC, which is what the run columns hold."""
+    if not iso:
+        return None
+    try:
+        at = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return at if at.tzinfo else at.replace(tzinfo=timezone.utc)
+
+
+def later(a: str | None, b: str | None) -> bool:
+    """Whether `a` is a later moment than `b`; False where either is unread."""
+    x, y = instant(a), instant(b)
+    return bool(x and y and x > y)
 
 
 def path_key(u: str) -> str:
@@ -69,7 +92,7 @@ def diff(now: set[str] | None, prior: set[str] | None) -> dict:
 
 def suggest(full_added: int, full_removed: int, prior_full: int | None,
             nav_changed: int, *, min_share: float = SUGGEST_MIN_SHARE,
-            min_pages: int = SUGGEST_MIN_PAGES) -> dict:
+            min_pages: int = SUGGEST_MIN_PAGES, basis: str = "precheck") -> dict:
     """Which scan the difference calls for.
 
     Full · Quick when the sitemap gained or lost at least `min_share` of
@@ -79,6 +102,15 @@ def suggest(full_added: int, full_removed: int, prior_full: int | None,
     """
     changed = full_added + full_removed
     share = (changed / prior_full) if prior_full else None
+    if (basis == "crawl" and prior_full and share is not None
+            and share >= min_share and changed >= min_pages):
+        # Against a crawl nothing is "added or removed" (item 254): the
+        # sitemap declares pages the last crawl did not read.
+        return {"cell": "full:quick", "changed": changed, "share": share,
+                "reason": f"{changed} page{'s' if changed != 1 else ''} the sitemap "
+                          f"declares {'were' if changed != 1 else 'was'} not in the last "
+                          f"crawl, {round(share * 100)}% of the {prior_full} it read, "
+                          f"over the {round(min_share * 100)}% line"}
     if prior_full and share is not None and share >= min_share and changed >= min_pages:
         return {"cell": "full:quick", "changed": changed, "share": share,
                 "reason": f"{changed} page{'s' if changed != 1 else ''} added or removed "
@@ -95,14 +127,31 @@ def suggest(full_added: int, full_removed: int, prior_full: int | None,
                 if changed else "nothing published moved since the prior check"))}
 
 
+#: Why a first check has nothing beside it when a crawl exists (item 254).
+CRAWL_IS_NEWER = "the last crawl is newer than this check; re-run the precheck"
+
+
 def compare(now: dict, prior: dict | None, *, prior_kind: str,
             prior_at: str | None, before_audit: dict | None,
-            audit_paths: list[str] | None = None) -> dict:
+            audit_paths: list[str] | None = None,
+            prior_reason: str | None = None,
+            newest_audit_at: str | None = None) -> dict:
     """The comparison payload the pane renders.
 
     `prior` is the previous precheck's payload, or None when the prior is
     an audit's crawl (`audit_paths`) - the first check has no predecessor
     and diffs against the newest audit's `crawled_paths`, labelled `crawl`.
+
+    **A crawl prior is not a prior check (item 254).** Its two lists are
+    "declared, not crawled" and "crawled, not declared": a page the crawl
+    read and the sitemap does not list is live, not removed. The payload
+    keeps the `added` / `removed` keys so one shape serves both kinds, the
+    pane words them by `prior.kind`, and only a `precheck` prior's `removed`
+    may mark findings "on pages gone". The suggestion counts the first list
+    alone, since nothing in the second calls for a scan.
+
+    `stale` names the newest audit where it started after this check: the
+    counts are then older than a crawl of the same site, and the pane says so.
     """
     now_nav, now_full = sets_of(now)
     if prior is not None:
@@ -113,15 +162,22 @@ def compare(now: dict, prior: dict | None, *, prior_kind: str,
     nav = diff(now_nav, prior_nav)
     full = diff(now_full, prior_full)
     prior_full_n = len(prior_full) if prior_full is not None else None
-    sug = suggest(len(full["added"]), len(full["removed"]), prior_full_n,
-                  len(nav["added"]) + len(nav["removed"]))
+    crawl = prior_kind == "crawl"
+    sug = suggest(len(full["added"]), 0 if crawl else len(full["removed"]), prior_full_n,
+                  len(nav["added"]) + len(nav["removed"]),
+                  basis="crawl" if crawl else "precheck")
+    checked = now.get("checked_at")
+    stale = {"audit_at": newest_audit_at} if later(newest_audit_at, checked) else None
     return {
         "now": {"checked_at": now.get("checked_at"), "nav": len(now_nav),
                 "full": len(now_full) if now_full is not None else None,
                 "full_capped": bool(now.get("page_urls_capped")),
                 "sitemap_files": now.get("sitemap_files"),
                 "sitemap_state": now.get("sitemap_state")},
+        "stale": stale,
         "prior": {"kind": prior_kind, "at": prior_at,
+                  # Why there is no prior where one might be expected.
+                  "reason": prior_reason,
                   "before_audit": before_audit,
                   "nav": len(prior_nav) if prior_nav is not None else None,
                   "full": prior_full_n,

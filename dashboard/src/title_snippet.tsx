@@ -265,7 +265,8 @@ export function LengthStrips({ lengths, total, onPick, pops = null }: {
           so rather than leaving it inferred (item 146). Once, beneath both
           strips, because both read by it. */}
       <p className="strip-unit muted">
-        over: pixel width · short: characters · missing: no value on the page
+        over: pixel width past the cut · fit: within it · short: characters ·
+        missing: no value on the page
       </p>
     </div>
   );
@@ -363,6 +364,8 @@ function Strip({ name, cut, viewport, bars, total, pick, selected, onPreview, on
   const over = bars.filter((b) => stateOf(b) === "bad").length;
   const short = bars.filter((b) => stateOf(b) === "warn").length;
   const missing = bars.filter((b) => stateOf(b) === "mute").length;
+  // Item 273 (row 9): the pages that fit, so the four counts sum to the strip.
+  const fit = bars.length - over - short - missing;
   /** Item 181 (05-6): one tab stop per strip, not one per page - two strips of
    *  100 bars put 200 stops between the actions and the checks table. The
    *  selected bar, else the first, holds the stop; arrows, Home and End move. */
@@ -388,6 +391,14 @@ function Strip({ name, cut, viewport, bars, total, pick, selected, onPreview, on
         {/* The viewport the cut is measured at (item 152): on a mobile-first
             index it has to be said rather than assumed. */}
         <span className="muted strip-cut">cut at {cut} px · {viewport}</span>
+      </div>
+      {/* Item 273 (row 9): the cut drawn where it falls, with its figure,
+          over the bars rather than only named above them. Outside the list,
+          so the list holds only its pages. */}
+      <div className="strip-plot">
+      <div className="strip-cutline" aria-hidden="true"
+           style={{ bottom: `${Math.min(100, Math.round((cut / max) * 100))}%` }}>
+        <span>{cut} px</span>
       </div>
       <div className="strip-bars" role="list" onKeyDown={move}
            aria-label={`${name} width per page, arrow keys move between pages`}>
@@ -415,6 +426,7 @@ function Strip({ name, cut, viewport, bars, total, pick, selected, onPreview, on
           );
         })}
       </div>
+      </div>
       {/* One label rule across both strips (item 146): N over · N short · N
           missing, zeros included. A strip that omitted a zero taught a reader
           who saw an absence to distrust it. */}
@@ -433,10 +445,13 @@ function Strip({ name, cut, viewport, bars, total, pick, selected, onPreview, on
                    title={"How much of what we know about this site this "
                           + "audit's crawl drew. Not a fault rate - the part "
                           + "header states coverage against the site."} />
-          {" · this audit's crawl · first crawled … last crawled"}
+          {/* Item 273 (row 9): the foot named a crawl date range it
+              never had - a constant, not dates. */}
+          {" · this audit's crawl"}
         </span>
         <span className="strip-counts">
           <span className="strip-over">{over} over</span>{" · "}
+          <span className="strip-fit">{fit} fit</span>{" · "}
           <span className="strip-short">{short} short</span>{" · "}
           <span className="strip-missing">{missing} missing</span>
         </span>

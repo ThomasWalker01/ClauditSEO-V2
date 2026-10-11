@@ -50,7 +50,9 @@ def test_a_free_row_the_sweep_raised_on_that_page_stands():
 
 
 def test_a_template_row_stands_only_beside_a_sweep_that_raised_the_check():
-    got = _parse([_row("TEC/url-depth", None, url="/a/*/", group="template:deep"),
+    # A template that matches a page in the set (item 266 files a template row
+    # on its template's page; `/a/*/` matched none and was filed on `/`).
+    got = _parse([_row("TEC/url-depth", None, url="/a/*/*/*/", group="template:deep"),
                   _row("TEC/url-length", None, url="/x/*/", group="template:long")])
     assert [r.check for r in got.rows] == ["TEC/url-depth"], (got.rows, got.dropped)
 

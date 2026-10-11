@@ -9,6 +9,7 @@ checks:
   - ONP/img-alt-decorative-nonempty
   - ONP/img-link-alt-not-destination
   - ONP/img-filename-generic
+  - ONP/img-alt-filename
   - ONP/img-lcp-lazy
   - ONP/img-dimensions-missing
   - ONP/img-oversized
@@ -55,6 +56,8 @@ CHECK SET (use these ids verbatim):
                                    picture, not where the link goes
   ONP/img-filename-generic         Filename carries no meaning (IMG_4821,
                                    image1, final-v3, hash)
+  ONP/img-alt-filename             Alt text that says nothing: the filename,
+                                   or a placeholder such as "image"
   ONP/img-lcp-lazy                 The LCP candidate, or any image in the
                                    initial viewport, has loading="lazy" or
                                    lacks fetchpriority="high"
@@ -139,6 +142,14 @@ Handling rules:
 - Text-in-image is assessed from `ocr_text` where present, else from the
   filename and adjacent copy; if neither carries the entity and OCR is null,
   the row is a WARN with `note: "no OCR — visual check"`.
+- An `img-alt-missing` row is for an image with no alt attribute or an
+  empty one. If the alt is present, there is no row; a row whose evidence
+  quotes the alt is dropped.
+- A check that does not apply to an image (an SVG has no `srcset`) is a
+  pass, so it is omitted, not put in `not_assessable`.
+- In a `srcset`, each `w` descriptor is the file's own intrinsic width, so
+  the descriptors rise as the files grow. A row whose descriptors fall is
+  dropped.
 - Never ask a question. Assume, act, and list the assumption.
 
 Severity: every row takes the check's registered default from AUTOMATIC CHECK
@@ -147,7 +158,7 @@ RESULTS. You may raise it with a reason in `note`; you may not lower it.
 img-alt-missing, img-dimensions-missing, img-oversized, img-no-srcset,
 img-sizes-wrong, img-legacy-format, img-text-in-image, img-duplicate-links,
 img-link-alt-not-destination — MEDIUM; img-alt-decorative-nonempty,
-img-filename-generic, img-sitemap-missing — LOW; review markup is
+img-filename-generic, img-alt-filename, img-sitemap-missing — LOW; review markup is
 always HELD.)
 
 # FORMAT

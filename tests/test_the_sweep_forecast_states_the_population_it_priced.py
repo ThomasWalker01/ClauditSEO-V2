@@ -95,8 +95,10 @@ FIXTURE_PAGE = f"https://{FIXTURE_HOST}/"
 PRICE_SCREENS = {
     "schedule": (lambda site, run: f"#/sites/{site}?schedule",
                  "section.sched-block"),
+    # The dossier since item 251: the page-level analyses moved there with
+    # the page-detail screen's retirement.
     "page-experts": (lambda site, run:
-                     f"#/runs/{run}/page/{quote(FIXTURE_PAGE, safe='')}",
+                     f"#/sites/{site}/dossier/{quote(FIXTURE_PAGE, safe='')}",
                      "h3"),
 }
 
@@ -166,6 +168,11 @@ def served_with_a_priced_brief():
         # imported-crawl shape and is all this screen needs: it asks what has
         # been analysed, not what was scored.
         run_id = runs.create_run(conn, site["id"], ["TEC"], "T2")
+        # The page the page-level panel is drawn for. The panel lives on the
+        # dossier since item 251, and a dossier exists only for a page some
+        # crawl has read.
+        runs.store_evidence(conn, run_id, {"start_url": FIXTURE_PAGE, "pages": [
+            {"url": FIXTURE_PAGE, "status": 200, "title": "Home"}]})
         with conn:
             runs.mark_complete(conn, run_id, runs.now_iso())
         conn.close()

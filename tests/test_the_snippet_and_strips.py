@@ -164,7 +164,9 @@ def test_both_strips_label_zero_the_same_way():
     foot = STRIPS[STRIPS.index("strip-foot"):STRIPS.index("strip-foot") + 400]
     assert "over > 0" not in foot and "short > 0" not in foot, (
         "a count that hides its zero is the defect this fixes")
-    assert ("over: pixel width · short: characters · missing: no value on the page"
+    # Item 273 (row 9): "fit" joined the counts, and the unit line says it.
+    assert ("over: pixel width past the cut · fit: within it · short: characters ·\n"
+            "        missing: no value on the page"
             in STRIPS), "the unit line names which unit each side is in"
 
 

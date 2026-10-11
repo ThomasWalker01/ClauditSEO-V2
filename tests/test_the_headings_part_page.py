@@ -171,7 +171,7 @@ _JS = """() => ({
   // step AV3 - free checks and Analysis are counted apart - and the clause
   // below is about every check of the part being accounted for somewhere,
   // which is a question about both.
-  clean: [...document.querySelectorAll('.cause-clean-line')]
+  clean: [...document.querySelectorAll('.cause-clean-line, .cause-unreturned-line')]
     .map((p) => p.textContent.trim()).join(' '),
   groups: [...document.querySelectorAll('.fix-group')].map((g) => g.textContent.replace(/\\s+/g, ' ').trim()),
   checks: [...document.querySelectorAll('.checks-table tbody tr')].map((tr) =>
@@ -198,11 +198,12 @@ def test_narrowed_the_outline_is_what_the_parser_saw_and_the_fix_is_an_outline(b
         open_page_filter(pg)
         pg.fill(".page-find", "/")
         pg.wait_for_selector(".now-card .ho-ladder", timeout=15_000)
-        # Two cards on this page: the level skip, and the triple held for
-        # want of the category.
+        # One card on this page, the level skip. The triple held for want of
+        # the category is a held line, as every hold is since item 272.
         try:
             pg.wait_for_function(
-                "() => document.querySelectorAll('.anat-pane .fix-card').length === 2", timeout=15_000)
+                "() => document.querySelectorAll('.anat-pane .fix-card').length === 1"
+                " && document.querySelectorAll('.fix-na').length === 3", timeout=15_000)
         except Exception as e:
             raise AssertionError((str(e).splitlines()[0], pg.evaluate(_JS)))
         got = pg.evaluate(_JS)
@@ -221,20 +222,20 @@ def test_narrowed_the_outline_is_what_the_parser_saw_and_the_fix_is_an_outline(b
     # One card, and its body is an outline: the h4 struck, the h3 green.
     card = got["cards"][0]
     assert card["name"] == "Level skipped" and card["copy"] == "copy outline", card
+    # Item 268 (row 3): the card's evidence is drawn above the diff, where it
+    # was drawn only on a card with no outline to diff.
+    assert card["why"], card
     # Only the lines that move, with one line of context above; the site's
     # navigation heading is outside main and is not shown as cut.
     assert card["was"] == [" H2 How do we work?", "-H4 Our clients"], card["was"]
     assert card["now"] == [" H2 How do we work?",
                            "+H3 Our clients [relevelled h4 → h3]"], card["now"]
-    # The held check is the AO card, with its link and nothing to copy.
-    held = got["cards"][1]
-    # Item 211: the title is the check's plain name; the pill says held.
-    assert "not checked" not in held["name"] and held["copy"] == "", held
-    # Item 211: label and value apart in the text, in the table's shape.
-    assert held["why"].startswith("Why held: needs GBP primary category"), held
-    # The two checks that need a list on the record are one line each,
-    # never a card per page.
+    # Every hold is one line (item 272), never a card among the faults: the
+    # triple held for want of the category, and the two checks that need a
+    # list on the record.
     assert sorted(got["na"]) == [
+        # Item 211: the table's shape, "needs <input>", and a link home.
+        "h1-triple-restated not assessable — needs GBP primary category — set it on Admin › Sites",
         # Item 211: the prompt's variable names said as words, on read.
         "h3-geo-map not assessable — needs location pages.",
         # And a word with a home links to it, which the variable name did not.

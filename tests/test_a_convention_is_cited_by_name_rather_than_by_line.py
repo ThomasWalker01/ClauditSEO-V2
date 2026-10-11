@@ -43,8 +43,12 @@ import re
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parent.parent / "dashboard" / "src"
-CONVENTION_FILE = "views.tsx"
-CONVENTION_SYMBOL = "ReportView"
+#: `reports.tsx`'s `GenerateCard` since item 256. The convention was stated
+#: beside `views.tsx`'s `ReportView`, the per-run report screen; that screen
+#: is deleted and the statement moved to the one Generate control left. The
+#: history above is kept as it happened.
+CONVENTION_FILE = "reports.tsx"
+CONVENTION_SYMBOL = "GenerateCard"
 
 #: A `/* ... */` span (which `{/* ... */}` contains) or a `//` line comment.
 _COMMENT = re.compile(r"/\*.*?\*/|//[^\n]*", re.S)
@@ -123,9 +127,9 @@ def test_no_comment_addresses_the_convention_by_line() -> None:
 #: So the sample lives here: the citation shapes round 135 wrote, and the
 #: shapes this round leaves.
 _BEFORE = {
-    "views.tsx": (
+    "reports.tsx": (
         "export function Other() {}\n"
-        "export function ReportView({ runId }: { runId: string }) {\n"
+        "function GenerateCard({ siteId }: { siteId: string }) {\n"
         + "  // filler\n" * 8
         + "  {/* UX-66. The caption no longer swaps to a busy word. */}\n"
         "  <button />\n"
@@ -133,26 +137,26 @@ _BEFORE = {
         "export function After() {}\n"
     ),
     "admin.tsx": (
-        "{/* UX-66, the convention `views.tsx:11` states in full. */}\n"
-        "{/* `reports.tsx:270-289` set for UX-64 and `views.tsx:11` took. */}\n"
+        "{/* UX-66, the convention `reports.tsx:11` states in full. */}\n"
+        "{/* `views.tsx:1832` set for UX-88 and `reports.tsx:11` took. */}\n"
     ),
-    "analyses.tsx": "{/* `views.tsx:10` is the house pattern. */}\n",
-    "panels.tsx": "/* UX-66. The convention `views.tsx:11` states in full. */\n",
+    "analyses.tsx": "{/* `reports.tsx:10` is the house pattern. */}\n",
+    "panels.tsx": "/* UX-66. The convention `reports.tsx:11` states in full. */\n",
 }
 
 _AFTER = {
-    "views.tsx": _BEFORE["views.tsx"],
+    "reports.tsx": _BEFORE["reports.tsx"],
     "admin.tsx": (
-        "{/* UX-66, the convention `views.tsx`'s `ReportView` states. */}\n"
-        "{/* `reports.tsx:270-289` set for UX-64 and `ReportView` took. */}\n"
+        "{/* UX-66, the convention `reports.tsx`'s `GenerateCard` states. */}\n"
+        "{/* `views.tsx:1832` set for UX-88 and `GenerateCard` took. */}\n"
     ),
-    "analyses.tsx": "{/* `views.tsx`'s `ReportView` is the house pattern. */}\n",
-    "panels.tsx": "/* UX-66. The convention `ReportView` states in full. */\n",
+    "analyses.tsx": "{/* `reports.tsx`'s `GenerateCard` is the house pattern. */}\n",
+    "panels.tsx": "/* UX-66. The convention `GenerateCard` states in full. */\n",
 }
 
 
 def test_the_reader_finds_every_citation_in_the_shape_the_sweep_wrote() -> None:
-    bounds = _component_bounds(_BEFORE["views.tsx"], CONVENTION_SYMBOL)
+    bounds = _component_bounds(_BEFORE["reports.tsx"], CONVENTION_SYMBOL)
     found = _citations_into_the_convention(_BEFORE, bounds)
     assert len(found) == 4, f"expected 4 citations, got {found}"
     assert {f for f, _, _ in found} == {
@@ -160,20 +164,20 @@ def test_the_reader_finds_every_citation_in_the_shape_the_sweep_wrote() -> None:
 
 
 def test_the_shape_the_fix_leaves_is_not_read_as_a_citation() -> None:
-    bounds = _component_bounds(_AFTER["views.tsx"], CONVENTION_SYMBOL)
+    bounds = _component_bounds(_AFTER["reports.tsx"], CONVENTION_SYMBOL)
     assert not _citations_into_the_convention(_AFTER, bounds)
 
 
 def test_an_address_outside_the_convention_is_left_alone() -> None:
-    """`reports.tsx:270-289` and friends are a different population."""
-    bounds = _component_bounds(_BEFORE["views.tsx"], CONVENTION_SYMBOL)
-    outside = {"admin.tsx": "{/* `views.tsx:1` and `components.tsx:812`. */}\n"}
+    """`views.tsx:1832` and friends are a different population."""
+    bounds = _component_bounds(_BEFORE["reports.tsx"], CONVENTION_SYMBOL)
+    outside = {"admin.tsx": "{/* `reports.tsx:1` and `components.tsx:812`. */}\n"}
     assert not _citations_into_the_convention(outside, bounds)
 
 
 def test_a_bare_self_reference_counts_only_inside_the_convention_file() -> None:
-    bounds = _component_bounds(_BEFORE["views.tsx"], CONVENTION_SYMBOL)
-    inside = {"views.tsx": _BEFORE["views.tsx"]
+    bounds = _component_bounds(_BEFORE["reports.tsx"], CONVENTION_SYMBOL)
+    inside = {"reports.tsx": _BEFORE["reports.tsx"]
               + "{/* this file's own control takes at :11. */}\n"}
     assert len(_citations_into_the_convention(inside, bounds)) == 1
     elsewhere = {"admin.tsx": "{/* the control takes at :11. */}\n"}
@@ -186,10 +190,10 @@ def test_the_bounds_follow_the_component_when_the_file_grows() -> None:
     Fifteen inserted lines are what moved the real target, so the fixture
     inserts fifteen and asserts the window moves with them.
     """
-    grown = _BEFORE["views.tsx"].replace(
-        "export function ReportView",
-        "  // pad\n" * 15 + "export function ReportView")
-    before = _component_bounds(_BEFORE["views.tsx"], CONVENTION_SYMBOL)
+    grown = _BEFORE["reports.tsx"].replace(
+        "function GenerateCard",
+        "  // pad\n" * 15 + "function GenerateCard")
+    before = _component_bounds(_BEFORE["reports.tsx"], CONVENTION_SYMBOL)
     after = _component_bounds(grown, CONVENTION_SYMBOL)
     assert after[0] == before[0] + 15, (before, after)
     assert after[1] == before[1] + 15, (before, after)

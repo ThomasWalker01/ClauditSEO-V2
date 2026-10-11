@@ -24,6 +24,7 @@ import { DerivedFigures, StoredBrief } from "./expert";
 import { ReportView } from "./markdown";
 import { useSelection } from "./selection";
 import { Pill, Tone } from "./pill";
+import { day } from "./dates";
 
 export type Analysis = {
   tool: string; name: string; phase: string; kind: string; does: string;
@@ -35,6 +36,8 @@ export type Analysis = {
    *  invent their own. */
   verb: string;
   est_tokens?: number | null; est_cost?: number | null;
+  /** How many past runs `est_cost` is the median of (item 271, row 10). */
+  est_samples?: number | null;
   /** The estimate at the model that would run it - the brief's default -
    *  and how long a run took (brief v4 Item 3f). */
   est_cost_default?: number | null; est_seconds?: number | null;
@@ -193,7 +196,7 @@ export function AnalysisRow({ a, onAct, busy, extra, open,
         {a.name}
         <small>
           {a.state === "ready" && a.ran_at
-            ? `${a.ran_at.slice(0, 10)} · ${a.findings ?? 0} findings`
+            ? `${day(a.ran_at)} · ${a.findings ?? 0} findings`
             : a.state === "running" ? "running now"
             : a.state === "needs_input" ? "needs context a crawl cannot supply"
             : a.tool}
@@ -273,7 +276,7 @@ export function AnalysisRow({ a, onAct, busy, extra, open,
       )}
       {/* Mounted unconditionally — a region inserted in the same render as
           its text gives assistive technology nothing to observe a change
-          against. `views.tsx`'s `ReportView` is the house pattern. */}
+          against. `reports.tsx`'s `GenerateCard` is the house pattern. */}
       <span className="muted" role="status" aria-live="polite">
         {busy && <Working>{`${a.verb}…`}</Working>}
       </span>

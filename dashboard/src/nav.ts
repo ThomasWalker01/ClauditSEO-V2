@@ -126,12 +126,14 @@ export function recordNarrowFromHash(siteId: string): { run: string; sev: string
 /** The catalogue's narrowing (item 207): the parts the landing counts as not
  *  read, or the analyses it counts as not run. Anything else is no narrowing,
  *  not an empty list. */
-export type CatalogueOnly = "" | "unread" | "not-run";
+export type CatalogueOnly = "" | "unread" | "not-run" | "unmeasured";
 export function catalogueOnlyFromHash(siteId: string): CatalogueOnly {
   const [path, query] = (window.location.hash || "").split("?");
   if (!siteId || path !== `#/sites/${siteId}`) return "";
   const v = new URLSearchParams(query || "").get("only") || "";
-  return v === "unread" || v === "not-run" ? v : "";
+  // `unmeasured` (item 252): the parts the audit did not fully measure, the
+  // one landing figure that had no door.
+  return v === "unread" || v === "not-run" || v === "unmeasured" ? v : "";
 }
 
 /** The current address without `keys`: the way out of a narrowing. A link,

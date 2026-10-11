@@ -904,6 +904,10 @@ def build_model(blocks: list[dict], page_type_map: dict[str, list[str]] | None,
     # trust.
     dangling = len([r for r in b.refs if not r["resolved"]])
     copies = len([n for n in b.nodes if n.kind == "inline-copy"])
+    # Top-level nodes declaring the entity's own @id: more than one is the
+    # same entity described twice, which no inline-copy count sees.
+    declared = (len([n for n in b.nodes if n.kind == "node" and n.id == b.entity.id])
+                if b.entity is not None and b.entity.id else 0)
     pointed_at = bool(b.entity is not None and any(
         b.by_key[r["from_node"]].role == "site" for r in b.entity.refs_in))
     if b.entity is None:
@@ -915,6 +919,13 @@ def build_model(blocks: list[dict], page_type_map: dict[str, list[str]] | None,
     elif copies:
         verdict = "UNIDENTIFIED"
         why = f"the entity is described {copies + 1} times"
+    elif declared > 1:
+        # Screen audits round 3 (Structured data AC-01): twenty22's home page
+        # declares `/#organization` in two top-level blocks, and the ladder,
+        # counting only inline copies, read "CONSOLIDATED · one @id" beside
+        # an inventory listing it twice and a check saying "declared by 2".
+        verdict = "FRAGMENTED"
+        why = f"the entity's @id ({b.entity.sid}) is declared by {declared} top-level nodes"
     elif dangling:
         verdict = "FRAGMENTED"
         why = (f"{dangling} reference{'s' if dangling > 1 else ''} resolve to nothing"
@@ -934,7 +945,8 @@ def build_model(blocks: list[dict], page_type_map: dict[str, list[str]] | None,
         edges=b.edges, collections=b.cols, refs=b.refs,
         verdict={"entity": verdict, "why": why, "dangling": dangling,
                  "islands": len([n for n in tops if n.island]),
-                 "blocks": len(b.blocks), "nodes": len(tops), "copies": copies},
+                 "blocks": len(b.blocks), "nodes": len(tops), "copies": copies,
+                 "declared": declared},
         counts={"open": len([f for f in shaped
                              if f.get("sev") in ("High", "Medium", "Low")]),
                 "held": len([f for f in shaped if f.get("sev") == "Held"]),

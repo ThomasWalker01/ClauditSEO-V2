@@ -204,6 +204,9 @@ SCOPE_STATEMENT_EMITTERS = {
     # next run at a wider scope simply does not raise it.
     "adaptive-scope-held": "clauditseo/adaptive.py",
     "adaptive-no-escalation": "clauditseo/adaptive.py",
+    # Item 267 (row 8): what the audit cannot measure of an AI answer -
+    # "Nothing to change: this row states a limit of the audit".
+    "ai-experience-unmeasured": "clauditseo/modules/ais.py",
     "axe-coverage": "clauditseo/axe.py",
     "axe-sampled": "clauditseo/modules/a11y.py",
     "backlinks-not-assessed": "clauditseo/modules/ofp.py",

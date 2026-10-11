@@ -442,6 +442,45 @@ def test_scrolling_the_fixes_lights_the_node_and_the_graph_goes_sticky(
 
 @NEEDS_BROWSER
 @pytest.mark.skipif(not (DIST / "index.html").is_file(), reason="dashboard not built")
+def test_the_strip_engages_once_and_the_page_does_not_move(browser, served):
+    """Operator report, 11 October: "a very weird flicking on this page".
+
+    Collapsing the canvas to the strip shortened the page by the difference,
+    every card moved up, the card nearest the top changed, and the strip let
+    go - so it flipped between full and strip on every frame. Measured on
+    twenty22 with a slow wheel scroll: 334 flips and the page height
+    alternating 3411/3601 px; a hold one pixel short still flipped 13 times
+    at scrollY 1327/1328. Now: one flip, one page height.
+    """
+    base, site_id = served
+    pg = browser.new_page(viewport={"width": 1500, "height": 840})
+    try:
+        _open(pg, base, site_id, RICH)
+        top = pg.evaluate("Math.round(document.querySelector('.sg-canvas')"
+                          ".getBoundingClientRect().top + scrollY)")
+        pg.evaluate(f"window.scrollTo(0, {max(0, top - 300)})")
+        pg.evaluate("""() => { window.__flips = 0; window.__heights = new Set();
+          new MutationObserver(() => window.__flips++).observe(
+            document.querySelector('.sg-canvas'), {attributes: true, attributeFilter: ['class']});
+          const tick = () => { window.__heights.add(document.documentElement.scrollHeight);
+                               requestAnimationFrame(tick); };
+          tick(); }""")
+        pg.mouse.move(750, 500)
+        for _ in range(60):
+            pg.mouse.wheel(0, 40)
+            pg.wait_for_timeout(60)
+        pg.wait_for_timeout(1500)
+        got = pg.evaluate("({flips: window.__flips, heights: [...window.__heights]})")
+    finally:
+        pg.close()
+    # Non-vacuous: the scroll has to have reached the strip at all.
+    assert got["flips"] >= 1, got
+    assert got["flips"] <= 2, got
+    assert len(got["heights"]) == 1, got
+
+
+@NEEDS_BROWSER
+@pytest.mark.skipif(not (DIST / "index.html").is_file(), reason="dashboard not built")
 def test_every_control_in_the_picture_has_text_that_can_be_read(browser, served):
     """The white-on-white trap, guarded because it shipped once.
 

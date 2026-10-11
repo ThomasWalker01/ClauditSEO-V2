@@ -12,9 +12,10 @@
 import { SecondaryButton } from "./buttons";
 import { useState } from "react";
 import { Card } from "./components";
-import { Legend, ENTRIES } from "./glossary";
+import { Legend, ENTRIES, entry, short } from "./glossary";
 import { MEASURE_WORD } from "./measure";
 import { Pill } from "./pill";
+import { goHandler } from "./nav";
 
 export type AiRow = {
   agent: string; class: string; robots_token: boolean;
@@ -27,7 +28,8 @@ export type AiNow = {
   classes: Record<string, string>;
   matrix_ran: boolean;
   field_source: string | null;
-  render: { median_share: number | null; pages: number; below: number; threshold: number };
+  render: { median_share: number | null; pages: number; below: number; threshold: number;
+            not_comparable?: number; initial_words?: number | null; rendered_words?: number | null };
   llms_txt_status: number | null;
   unmeasured: string;
 };
@@ -87,10 +89,16 @@ export function AiReachability({ now, brief }: { now: AiNow; brief: AiBrief }) {
       <p className="ai-lead">
         {/* Item 180 (07-4): the counts first. "No agent is turned away" was
             drawn over 13 of 19 agents nobody had visited. */}
+        {/* Item 267 (row 12): a robots token is not a crawler - nothing visits
+            under its name - so it is not counted among the crawlers measured,
+            and is said beside them. */}
         {(() => {
-          const notVisited = now.rows.filter((r) => stateKey(r.state) === "not-assessed").length;
-          const visited = now.rows.length - notVisited;
-          return `${visited} of ${now.rows.length} AI crawler${now.rows.length === 1 ? "" : "s"} measured`
+          const crawlers = now.rows.filter((r) => !r.robots_token);
+          const tokens = now.rows.length - crawlers.length;
+          const notVisited = crawlers.filter((r) => stateKey(r.state) === "not-assessed").length;
+          const visited = crawlers.length - notVisited;
+          return `${visited} of ${crawlers.length} AI crawler${crawlers.length === 1 ? "" : "s"} measured`
+            + (tokens ? ` · ${tokens} robots token${tokens === 1 ? "" : "s"}` : "")
             + (notVisited ? ` · ${notVisited} ${MEASURE_WORD["not-measured"]} in this audit` : "") + ". ";
         })()}
         {unstatedBlocks.length > 0
@@ -115,7 +123,9 @@ export function AiReachability({ now, brief }: { now: AiNow; brief: AiBrief }) {
             {byClass.map(([cls, rows]) => rows.length === 0 ? null : [
               <tr key={`class-${cls}`} className="ai-class-row">
                 <th scope="rowgroup" colSpan={cols}>
-                  {cls} <small className="muted">{now.classes[cls]}</small>
+                  {/* Item 267 (row 12): the class in the registry's words, the
+                      sentence the legend gives it, not a second caption. */}
+                  {cls} <small className="muted">{short(entry(`agent-${cls}`))}</small>
                 </th>
               </tr>,
               ...rows.map((r) => (
@@ -148,9 +158,18 @@ export function AiReachability({ now, brief }: { now: AiNow; brief: AiBrief }) {
         <strong>What a non-rendering reader gets:</strong>{" "}
         {now.render.median_share === null
           ? "not assessed: the rendered pass did not visit a page with enough text on this audit."
-          : `a median ${Math.round(now.render.median_share * 100)}% of the rendered text is in the initial HTML, `
-            + `over ${now.render.pages} rendered page${now.render.pages === 1 ? "" : "s"}; `
-            + `${now.render.below} of ${now.render.pages} below ${Math.round(now.render.threshold * 100)}%.`}
+          : `a median ${Math.round(now.render.median_share * 100)}% of the rendered text is in the initial HTML`
+            // Item 267 (row 18): the share with both its counts, and the
+            // pages it could not be stated on.
+            + (now.render.initial_words != null && now.render.rendered_words != null
+              ? ` (${now.render.initial_words} initial / ${now.render.rendered_words} rendered words on the median page)`
+              : "")
+            + `, over ${now.render.pages} rendered page${now.render.pages === 1 ? "" : "s"}; `
+            + `${now.render.below} of ${now.render.pages} below ${Math.round(now.render.threshold * 100)}%.`
+            + (now.render.not_comparable
+              ? ` Not comparable on ${now.render.not_comparable} page${now.render.not_comparable === 1 ? "" : "s"},`
+                + " where the initial HTML counts more words than the rendered text."
+              : "")}
       </p>
       <p className="ai-line">
         <strong>/llms.txt:</strong>{" "}
@@ -175,13 +194,62 @@ export function AiReachability({ now, brief }: { now: AiNow; brief: AiBrief }) {
   );
 }
 
-/** The foot of the site tab: the brief's Conflict Register, what it declined,
- *  and the reads it could not make, each saying which absence it is. */
+/** The prompt's standing non-goals (`ai-surface.md`, "Non-goals"), one
+ *  pattern each, in its order. The prompt has every run decline all of them,
+ *  so on twenty22 the Declined list was the prompt read back twelve times. */
+export const STANDING_NON_GOALS: RegExp[] = [
+  /\brank|traffic|visibility score|readiness score/i,
+  /\bCTR\b|click-?through/i,
+  /\bcites?\b|citation|quoted verbatim/i,
+  /harmonic|pagerank|host-graph/i,
+  /term density|co-occurrence|\bLSI\b/i,
+  /page count/i,
+  /wikipedia/i,
+  /next question/i,
+  /\bGBP\b|business profile|third-party platform|off-site/i,
+  /schema markup/i,
+  /\bvoice\b|testimonial|\breviews?\b|client stor/i,
+  /llms-full/i,
+];
+
+/** Where a declined item points at something this run drew: a row by its
+ *  prefixed id (`ONP/title-entity-incomplete`) or a conflict it recorded. */
+const NAMES_THIS_RUN = /\b[A-Z]{2,5}\/[a-z0-9-]+|conflict recorded/;
+
+/** Item 267 (row 10): the declined items worth reading - any that is not a
+ *  standing non-goal, and a non-goal only where its `handled_at` names a row
+ *  or a conflict of this run. The rest are counted, not listed. */
+export function declinedHere(declined: { item: string; reason: string; handled_at?: string }[]) {
+  const kept = declined.filter((d) => !STANDING_NON_GOALS.some((re) => re.test(d.item))
+    || NAMES_THIS_RUN.test(d.handled_at ?? ""));
+  const folded = declined.filter((d) => !kept.includes(d));
+  return { kept, folded, standing: folded.length };
+}
+
+/** The foot of the site tab, below Fixes and closed (item 267, row 10): the
+ *  brief's Conflict Register, what it declined here, and the reads it could
+ *  not make, each saying which absence it is. Drawn first, it stood between
+ *  the reachability card and the checks, and the first fix card sat 3,500px
+ *  down. */
 export function AiRegister({ brief }: { brief: AiBrief }) {
   if (!brief) return null;
+  const { kept, folded, standing } = declinedHere(brief.declined ?? []);
+  const conflicts = (brief.conflicts ?? []).length;
+  // Item 267 (row 11): a read whose owning check ran and raised nothing is a
+  // pass, said under its own heading, not counted as unavailable.
+  const clean = (brief.absent_reads ?? []).filter((a) => a.needs === "ran clean");
+  const unavailable = (brief.absent_reads ?? []).filter((a) => a.needs !== "ran clean");
+  const absent = unavailable.length;
   return (
     <Card className="ai-register">
-      <h3>Register</h3>
+      <details>
+      <summary>
+        <h3>Register</h3>{" "}
+        <span className="muted">
+          {conflicts} conflict{conflicts === 1 ? "" : "s"} · {kept.length} declined
+          here{absent ? ` · ${absent} read${absent === 1 ? "" : "s"} not available` : ""}
+        </span>
+      </summary>
       <h4>Conflicts</h4>
       <ul>
         {(brief.conflicts ?? []).map((c) => (
@@ -194,15 +262,40 @@ export function AiRegister({ brief }: { brief: AiBrief }) {
       </ul>
       <h4>Declined</h4>
       <ul>
-        {(brief.declined ?? []).map((d, i) => (
+        {kept.map((d, i) => (
           <li key={i}><strong>{d.item}</strong>: {d.reason}{d.handled_at ? ` (${d.handled_at})` : ""}</li>
         ))}
       </ul>
-      {(brief.absent_reads ?? []).length > 0 && (
+      {/* A disclosure, so what the count folds can be read in place: the
+          patterns run over model-written text and may fold more than meant
+          (the channel's answer, 20261005-2330). */}
+      {standing > 0 && (
+        <details className="ai-standing">
+          <summary className="muted">
+            And {standing} of the prompt's standing non-goals, declined on every run and
+            pointing at nothing this run drew.
+          </summary>
+          <ul>
+            {folded.map((d, i) => (
+              <li key={i}><strong>{d.item}</strong>: {d.reason}{d.handled_at ? ` (${d.handled_at})` : ""}</li>
+            ))}
+          </ul>
+        </details>
+      )}
+      {clean.length > 0 && (
+        <>
+          <h4>Read: nothing to carry</h4>
+          <p className="muted ai-clean-reads">
+            The owning check ran on this audit and raised nothing:{" "}
+            {clean.map((a) => a.check).join(" · ")}
+          </p>
+        </>
+      )}
+      {unavailable.length > 0 && (
         <>
           <h4>Reads not available</h4>
           <ul>
-            {(brief.absent_reads ?? []).map((a) => (
+            {unavailable.map((a) => (
               <li key={a.check} className="ai-absent">
                 <code>{a.check}</code>: {a.needs}{a.held ? ` (held: ${a.held})` : ""}
               </li>
@@ -210,6 +303,7 @@ export function AiRegister({ brief }: { brief: AiBrief }) {
           </ul>
         </>
       )}
+      </details>
     </Card>
   );
 }
@@ -338,8 +432,29 @@ type Candidate = { entity: string; source: string; place: string; sentence: stri
 /** A fix card's body for the brief's rows: each enrichment candidate as its
  *  placed sentence, a lifted passage with its four criteria, the ID page's
  *  sections, and the JSON-LD delta beside the replacement. */
+/** Item 267 (row 5): what `copy change` copies on an AI surface card - the
+ *  text the card shows, not the row's pointer at it. The passage; else the
+ *  candidates' sentences, one per line, leaving out any that still wait on
+ *  the client ("[client to supply]"); else the JSON-LD change; else the
+ *  replacement as written. "see candidates — each is the sentence as it
+ *  should read, placed" was what reached the clipboard. */
+export function aiSurfaceCopy(replacement: string,
+                              fix: { payload?: Record<string, unknown> }): string {
+  const p = fix.payload ?? {};
+  if (typeof p.passage === "string" && p.passage.trim()) return p.passage.trim();
+  const sentences = ((p.candidates as Candidate[] | undefined) ?? [])
+    .map((c) => (c.sentence ?? "").trim())
+    .filter((s) => s && !/\[client to supply/i.test(s));
+  if (sentences.length) return sentences.join("\n");
+  const delta = p.jsonld_delta ?? p.type_delta;
+  if (delta !== undefined) return JSON.stringify(delta, null, 2);
+  return replacement;
+}
+
 export function AiSurfaceFixBody({ fix }: { fix: { current: string; note: string; replacement: string | null;
-                                                    payload?: Record<string, unknown> }; facts: unknown }) {
+                                                    payload?: Record<string, unknown>;
+                                                    checkId?: string;
+                                                    recommendation?: string | null }; facts: unknown }) {
   const p = fix.payload ?? {};
   const candidates = (p.candidates as Candidate[] | undefined) ?? [];
   const criteria = p.criteria as Record<string, boolean> | undefined;
@@ -348,6 +463,21 @@ export function AiSurfaceFixBody({ fix }: { fix: { current: string; note: string
   return (
     <>
       <p className="fix-why">{fix.current || fix.note}</p>
+      {/* Item 267 (row 7): the automatic check's own advice, which reached
+          no screen - the four HIGH firewall cards carried the summary and
+          nothing to act on. A firewall block is a policy the client may have
+          chosen, so its card links the field that records that choice. */}
+      {fix.recommendation && !fix.replacement && (
+        <p className="fix-new"><span className="fix-lbl">Do this: </span>{fix.recommendation}</p>
+      )}
+      {fix.checkId === "edge-blocks-ai-ua" && (
+        <p className="muted fix-meta">
+          Blocked on purpose? Tick the agent under{" "}
+          <a href="#/admin?tab=sites" onClick={goHandler("#/admin?tab=sites")}>
+            Admin › Sites › Blocked at the firewall on purpose</a>; the next
+          audit then rates it Low, as the policy working.
+        </p>
+      )}
       {candidates.length > 0 && (
         <ul className="ai-candidates">
           {candidates.map((c, i) => (
@@ -361,7 +491,7 @@ export function AiSurfaceFixBody({ fix }: { fix: { current: string; note: string
       {typeof p.passage === "string" && (
         <div className="img-panel">
           <h5 className="muted">Passage{typeof p.place === "string" ? ` · ${p.place}` : ""}</h5>
-          <pre className="img-markup out-new" tabIndex={0}>{p.passage}</pre>
+          <p className="fix-new"><span className="fix-rep">{p.passage}</span></p>
           {criteria && (
             <p className="muted fix-meta">
               {Object.entries(criteria).map(([k, v]) => `${k.replace(/_/g, " ")}: ${v ? "yes" : "no"}`).join(" · ")}
@@ -385,7 +515,11 @@ export function AiSurfaceFixBody({ fix }: { fix: { current: string; note: string
       {fix.replacement && candidates.length === 0 && typeof p.passage !== "string" && (
         <div className="img-panel">
           <h5 className="muted">Change</h5>
-          <pre className="img-markup out-new" tabIndex={0}>{fix.replacement}</pre>
+          {/* Item 267 (row 5): a sentence reads as a sentence; a file body
+              (a robots.txt rule, an llms.txt section) keeps its lines. */}
+          {fix.replacement.includes("\n")
+            ? <pre className="img-markup out-new" tabIndex={0}>{fix.replacement}</pre>
+            : <p className="fix-new"><span className="fix-rep">{fix.replacement}</span></p>}
         </div>
       )}
     </>

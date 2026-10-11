@@ -17,8 +17,8 @@ import { heldRecordHref } from "./report_hold";
 import { Working } from "./working";
 import { LinkButton, PrimaryButton, SecondaryButton } from "./buttons";
 import { sourceWord } from "./glossary";
-import { CatalogueList, notRunCount } from "./catalogue";
-import { LOADING_WORD, Legend } from "./glossary";
+import { CatalogueList, notRunCount, notRunList, runnableNow } from "./catalogue";
+import { LOADING_WORD, Legend, entry } from "./glossary";
 import { SpendButton, SpendTarget } from "./spend";
 import { REPORT_HELD_WORD, heldWords } from "./report_hold";
 import { MeasureLine } from "./measure";
@@ -44,7 +44,7 @@ import { Pill, type Tone } from "./pill";
 import { Precheck, PrecheckCompare, usePrecheck, usePrecheckCompare } from "./precheck";
 import { useSelection, host } from "./selection";
 import type { AgeThresholds } from "./age";
-import { DEPTH_TIER, DrawerFinding, ReauditDrawer } from "./reaudit";
+import { DEPTH_TIER, depthFor, DrawerFinding, ReauditDrawer } from "./reaudit";
 import { DepthKey } from "./scanmatrix";
 import { ReportView } from "./markdown";
 import { Contract, ContractAccount } from "./expert";
@@ -62,6 +62,8 @@ import { FixCol, FixState, FixTick, MarkBar, useFixLoop, useSeed,
 import {
   Figures, LookDot, LookLegend, Pane, Panes, ReportHead,
 } from "./panels";
+import { clock, day as dayOf } from "./dates";
+import { candidateWord } from "./to_confirm";
 
 type Finding = {
   fingerprint: string; check_id: string; dimension: string;
@@ -128,7 +130,9 @@ type Finding = {
  *  Not `group`: Speed, Mobile, Security, Indexability, AI surface and Local
  *  & citations all sit outside `on the page` as a heading and are every one
  *  of them measurable against a single page. `QUESTIONS.md` Q-17. */
-type Refresh = { dimension: string; also: string[]; per_page: boolean };
+type Refresh = { dimension: string; also: string[]; per_page: boolean;
+                 /** Item 278 (row 7): no crawl can move this part. */
+                 crawl_blind?: boolean };
 
 export type Category = {
   key: string; label: string; group: string; blurb: string;
@@ -145,6 +149,9 @@ export type Category = {
    *  renders it plain. Arithmetic reads `.value`, and the breakage of every
    *  consumer that did not is the audit of who was reading it bare. */
   open: Count; regressed: Count; total: Count;
+  /** Candidates that wait for the operator (item 250), counted apart from
+   *  `seen_once` (screen audits round 3, shop IP-02). */
+  to_confirm?: Count;
   /** Pages carrying an open finding in this part — a count over the RECORD,
    *  and it says so (item 155). Not the pages this run fetched: open state is
    *  site-scoped, so a finding raised by an older run and never fixed still
@@ -159,6 +166,13 @@ export type Category = {
   brief_checks?: string[];
   /** Every check id the engine filed under this part (brief v25 step BP). */
   filed_checks?: string[];
+  /** Every check registered to the part that measures something (item 279,
+   *  row 7). */
+  registered_checks?: string[];
+  /** Which provider signals the latest reading measured, on a part no crawl
+   *  moves (item 278, row 8). */
+  signal_coverage?: { total: number; measured: string[]; unmeasured: string[];
+                      providers: string[]; needs: string[] } | null;
   /** Which of those this run could not measure, and why (item 157). THE
    *  RULE, stated in `playbook.py`: a check may be reported as passing only
    *  if the run measured it; absence of a finding is not a pass.
@@ -208,7 +222,14 @@ export type Category = {
    *  the part is honest; `not_assessed` is not. Null where the brief would run.
    *  Nothing stores a refusal, and nothing needs to: the gate is a pure
    *  function of the evidence, so reading it again cannot go stale. */
-  gate?: { state: "na" | "not_assessed"; reason: string } | null;
+  gate?: { state: "na" | "not_assessed"; reason: string;
+           /** One sentence, and the evidence as fields (item 274, row 12). */
+           why?: string | null;
+           evidence?: { pages_inspected: number; lang_values: string[]; lang_undeclared: number;
+                        locale_folders: string[]; alternates_on: number } | null } | null;
+  /** International only: the operator's stated target locales, which lift
+   *  the gate (migration 0074). Null states none. */
+  target_locales?: string | null;
   /** Security's nine domains with their layer and checks (item 143 addendum). */
   sec_domains?: Record<string, { name: string; layer: string; checks: string[] }>;
   /** The Security brief's "now", newest brief (item 143 step BD). */
@@ -226,13 +247,28 @@ export type Category = {
    *  actually read over (item 155, brief 160). */
   trace_derived?: string[];
   traced_pages?: number | null;
+  /** Item 267: a check's own population where it is not the crawl - "probed"
+   *  (the crawler access test's URLs), "rendered", or "site" for a row about
+   *  the site as one subject (`n` null). Bare check id. */
+  samples?: Record<string, { n: number | null; basis: string }>;
+  /** Checks the sweep tests only in part, by bare id, with what it does not
+   *  test (screen audits round 3): its silence on them is not a pass. */
+  partly_measured?: Record<string, string>;
+  /** Page mode: checks whose rows name no page, so a page is neither clean
+   *  nor open on them (screen audits round 3, Speed AC-01). */
+  site_level_checks?: string[];
   /** Rows the parser dropped from, and rows not assessable in, the latest
    *  run of each brief writing to this part (brief v12 step AL). */
   brief_dropped?: number;
   /** The analysis's assessment section as the model wrote it (item 210). */
   brief_prose?: string | null;
   /** The dropped rows with their reasons (item 209), capped at 200. */
-  brief_dropped_rows?: { check: string; page: string | null; reason: string }[];
+  brief_dropped_rows?: { check: string; page: string | null; reason: string; tool?: string }[];
+  /** Every analysis writing to this part, newest per tool, each with its own
+   *  rows, drops and cost (item 269, row 4). */
+  brief_runs?: { tool: string; model: string | null; at: string; run_id: string;
+                 rows: number; dropped: number; cost: number | null;
+                 audits_since?: number; crawl_at?: string | null }[];
   brief_not_assessable?: number;
   /** The rows the brief could not assess, each naming the input it needs;
    *  the run that produced them; and the brief's own verdict sentence
@@ -275,7 +311,13 @@ export type Category = {
                 audits_since?: number | null;
                 /** The crawl it read, and the newest automatic measurement of
                  *  the part's checks after it, or null (item 239 step 4). */
-                crawl_at?: string | null; checked_since?: string | null } | null;
+                crawl_at?: string | null; checked_since?: string | null;
+                /** The brief has changed since this analysis was written;
+                 *  null where its version was never recorded (item 249). */
+                brief_changed?: boolean | null;
+                /** What is shown was re-read under the current rules, and
+                 *  when. */
+                reread?: boolean; reread_at?: string | null } | null;
   brief_summary?: string | null;
   /** The smallest refresh this section can start, or null if nothing
    *  refreshes it. Derived on the server from the dimension table, so a
@@ -350,6 +392,17 @@ export type Category = {
    *  stored crawl; `recorded: false` where the crawl stored no headers,
    *  which is a different answer from a site that sets none. */
   headers_grid?: HeadersGrid | null;
+  /** Links' hub map from its analysis, and how body inlinks and click depth
+   *  fall across the site (item 271, row 6). On `links` alone. */
+  brief_hubs?: { hub?: string; spokes?: string[]; spokes_linking_up?: number;
+                 hub_linking_down?: number; inlinks_body?: number }[];
+  links_site?: { run_id: string; pages: number; counted: number; minimum: number;
+                 cap?: number; capped?: number;
+                 inlinks: { band: string; pages: number }[];
+                 depth: { depth: string; pages: number }[] } | null;
+  /** What the connection negotiated, read from the security run's crawl
+   *  (item 276, row 9). On the `security` part alone. */
+  transport?: Facts["site"]["transport"];
   /** Every page's title and description width, in crawl order (brief v16i
    *  Part C). On the `title-desc` part, site scope. Null where there is no
    *  stored crawl. */
@@ -410,6 +463,9 @@ export type HeadingShapes = {
   /** Pages this picture does not read, because their canonical points at
    *  another page and the checks judge that one instead (item 180, e3). */
   not_checked?: string[];
+  /** Pages that answered an error, which no heading check reads (item 268,
+   *  row 5). */
+  errored?: string[];
 };
 
 type Related = { jaccard: number; shared: number; of_selected: number };
@@ -567,6 +623,9 @@ export type SchemaGraphFinding = {
   n: number; sev: string; sev_class: string; name: string;
   checks: string[]; src: string;
   anchors: string[]; anchor_keys: string[];
+  /** Item 270 (row 5): a candidate on the page is numbered after the open
+   *  rows, and says so. */
+  state?: string; to_confirm?: boolean;
 };
 
 export type SchemaBlock = {
@@ -742,6 +801,10 @@ export type Facts = {
    *  brief v17 step AX, because the Content page reads them: `unknown`
    *  meant every reader cast, and a cast is where a wrong key hides. */
   content_dates: Record<string, string> | null;
+  /** The site record's type for this page ("" where it names none), and the
+   *  content checks that do not read a page of that type (item 269). */
+  page_type?: string;
+  content_not_run?: string[];
   schema_types: string[] | null; jsonld_blocks: number | null;
   /** Every block as parsed, and the page's links to profile hosts (brief
    *  v16 step AS). Null on a run crawled before the inventory existed,
@@ -828,6 +891,8 @@ type Anatomy = {
   /** The standing position across every audit — never one run's output. */
   current?: {
     outstanding: number; open: number; regressed: number; candidate: number;
+    /** How many of the candidates wait for the operator (item 250). */
+    to_confirm?: number;
     accepted_risk: number; withdrawn: number; fixed: number;
     oldest_outstanding: string | null;
     last_audit: string | null;
@@ -1163,7 +1228,7 @@ function SectionRefresh({ siteId, label, refresh,
             enabled the analysts; it is what WF-59 was, and it went with it. */}
         {/* UX-66. Stable caption, state on `aria-busy`, words in the
             unconditionally-mounted region below — the convention
-            `views.tsx`'s `ReportView` states in full. */}
+            `reports.tsx`'s `GenerateCard` states in full. */}
         <PrimaryButton disabled={busy} aria-busy={busy}
                 onClick={start}>
           Run {refresh.dimension}
@@ -1306,7 +1371,7 @@ function PageRefresh({ siteId, label, sectionKey, refresh, page, onDone,
       </p>
       {error && <ErrorNote error={error} />}
       <div className="run-choice">
-        {/* UX-66, the convention `views.tsx`'s `ReportView` states in full. */}
+        {/* UX-66, the convention `reports.tsx`'s `GenerateCard` states in full. */}
         <PrimaryButton disabled={busy} aria-busy={busy}
                 onClick={start}>
           Re-read {path}
@@ -1571,7 +1636,7 @@ function PageFacts({ facts, category, guides, fault, refresh }:
       {carried.length > 0 && (
         <p className="muted fact-note fact-provenance">
           Some of this was last recorded on {carried.join(" and ")}, not in
-          the crawl of {(facts.captured_at || "").slice(0, 10)} — that audit did
+          the crawl of {dayOf(facts.captured_at)} — that audit did
           not capture it. Only a crawl refreshes these; an analysis reads its
           own fetch and stores nothing here.
         </p>
@@ -1583,7 +1648,7 @@ function PageFacts({ facts, category, guides, fault, refresh }:
 function PageFactsBody({ facts, category, guides, fault, refresh }:
     { facts: Facts; category: string; guides?: Record<string, Guideline>;
       fault?: Fault; refresh?: Refresh | null }) {
-  const when = (facts.captured_at || "").slice(0, 10);
+  const when = dayOf(facts.captured_at);
   // Says "the stored crawl", not "this crawl". The panel is built from what
   // the crawler wrote down; a brief fetches its own copy of the page and
   // keeps nothing, so running one changes nothing here. Without that
@@ -1944,7 +2009,10 @@ function sequenceSteps({ siteId, current, latestRun, lanes,
   const unknown = payload !== "ok";
   const unsaid = payload === "loading" ? "loading…" : "not loaded";
   const ready = lanes?.ready.length ?? 0;
-  const notRun = lanes?.available.filter((a: Analysis) => a.type !== "triage").length ?? 0;
+  // `notRunCount`, the catalogue's own (item 252): this filtered `available`
+  // for itself and counted the client plan, so the primary action read 24 on
+  // a catalogue listing 23.
+  const notRun = notRunCount(lanes) ?? 0;
   /** What the audit answered without a model (brief v17 step AV5), from
    *  the server's own count of the registry. `?? 0` reads as "not said"
    *  and the line below falls back to the words it used before. */
@@ -1971,9 +2039,11 @@ function sequenceSteps({ siteId, current, latestRun, lanes,
       href: `#/sites/${siteId}?tab=precheck`,
       status: prechecked ? "done" : "idle",
       state: precheck
-        ? `counted ${precheck.checked_at.slice(11, 16)}`
+        ? `counted ${clock(precheck.checked_at)}`
           + (precheck.sitemap_urls !== null ? ` · ${precheck.sitemap_urls} pages` : "")
-          + (compare?.diff.full.known && compare.diff.full.added.length
+          // Only against a prior check is the first list "added" (item 254).
+          + (compare?.prior.kind === "precheck" && compare.diff.full.known
+             && compare.diff.full.added.length
              ? ` · +${compare.diff.full.added.length}` : "")
         : prechecked ? "counted" : "not run",
       // The control lived in the retired What-to-do pane, beside the other two things this
@@ -2001,7 +2071,7 @@ function sequenceSteps({ siteId, current, latestRun, lanes,
         : running
         ? `running · ${elapsed(running.started_at)}`
         : current?.last_audit
-          ? `last ran ${current.last_audit.slice(0, 10)}`
+          ? `last ran ${dayOf(current.last_audit)}`
           : "never run",
       action: running
         ? <LinkButton className="seq-open-run" href={`#/runs/${running.id}`}>
@@ -2111,7 +2181,7 @@ function sequenceSteps({ siteId, current, latestRun, lanes,
         ? (current.plan_stale_rows
             ? `plan predates ${current.plan_stale_rows} row`
               + (current.plan_stale_rows === 1 ? "" : "s")
-            : `plan · generated ${(current.plan_generated_at || "").slice(0, 10)}`)
+            : `plan · generated ${dayOf(current.plan_generated_at)}`)
         : reports
         ? `${reports} generated${recordDone ? "" : " · before step 5"}`
         : "none yet",
@@ -2224,7 +2294,7 @@ export function deliverState(r: ReportState | null | undefined): {
   word: string; sentence: string | null; warn: boolean;
 } {
   if (!r) return { word: "not started", sentence: null, warn: false };
-  const day = r.created_at.slice(0, 10);
+  const day = dayOf(r.created_at);
   if (r.predates_guard) {
     return {
       word: "built before the report guard",
@@ -2553,13 +2623,16 @@ export function ReplacementTable({ states, belongs, findings, dropped = 0, notAs
   type Rep = { key: string; url: string; check_id: string; current: string; replacement: string;
                /** A brief-only row the sweep has not corroborated (brief v12
                 *  step AM): shown, and tagged, as the cause table shows it. */
-               candidate: boolean };
+               candidate: boolean;
+               /** It waits for the operator (item 250). */
+               toConfirm?: boolean };
   const fromRecord: Rep[] = states
     .filter((s) => s.proposed && (s.state === "open" || s.state === "regressed" || s.state === "candidate")
                    && belongs !== null && belongs(s.check_id))
     .map((s) => ({ key: s.fingerprint, url: s.affected_urls[0] ?? "", check_id: s.check_id,
                    current: s.summary, replacement: s.proposed as string,
-                   candidate: s.state === "candidate" }));
+                   candidate: s.state === "candidate",
+                   toConfirm: s.state === "candidate" && Boolean(s.to_confirm) }));
   const rows: Rep[] = fromRecord.length ? fromRecord
     : findings.filter((f) => f.contract && f.recommendation)
         .map((f) => ({ key: f.fingerprint, url: f.urls[0] ?? "", check_id: f.check_id,
@@ -2608,7 +2681,7 @@ export function ReplacementTable({ states, belongs, findings, dropped = 0, notAs
               <td><code>{pathOf(r.url)}</code></td>
               <td>
                 <code>{r.check_id}</code>
-                {r.candidate && <Pill tone="state-candidate" title={CANDIDATE_NOTE}>candidate</Pill>}
+                {r.candidate && <Pill tone="state-candidate" title={CANDIDATE_NOTE}>{candidateWord(r.toConfirm)}</Pill>}
               </td>
               <td className="muted">{r.current}</td>
               <td>
@@ -3214,7 +3287,7 @@ export function StandingHeader({ siteId, a, running = null, tab = "",
                        run={selectedRuns.find((x) => x.id === data?.headline?.run_id) ?? null}
                        nextStep={settled && seq.next >= 0 && seq.busyAt < 0 ? seq.steps[seq.next].name : null} />
         <IntegrityLine headline={headReady ? data?.headline ?? null : null}
-                       checking={!headReady && !error} />
+                       checking={!headReady && !error} siteId={siteId} />
         {/* Item 174: the regressions chip is an alert about this run, not a
             navigation control, so it sits with the held line under the
             headline rather than in the shell's bar. */}
@@ -3419,7 +3492,7 @@ export function SiteLanding({ siteId, a }: { siteId: string; a: AnatomyScreen })
                        <a className="cur-when" href={`#/runs/${move.run_id}`}
                           data-run={move.run_id}
                           title="Open the audit these counts are computed from - the one that last moved them">
-                         as of {move.at.slice(0, 10)} {move.at.slice(11, 16)}
+                         as of {stamp(move.at)}
                          {move.kind !== "audit" ? ` · ${kind}` : ""}
                          {word ? ` · ${word}` : ""}
                        </a>
@@ -3498,6 +3571,15 @@ function ReadAnalysis({ items, reading, onRead }: {
                 onClick={() => onRead(it.tool, it.run_id)}>
           {reading === it.tool ? "hide" : "read"} {it.tool}
           <span className="muted"> · {it.at ? stamp(it.at) : "?"}</span>
+          {/* Item 278 (row 4): in the open, in the renderer parts' words. The
+              crawl it read was only in the hover, so an analysis of a crawl
+              two weeks old read as today's. */}
+          {it.audits_since != null && (
+            <span className="muted">
+              {" "}· {it.audits_since} audit{it.audits_since === 1 ? "" : "s"} since
+            </span>
+          )}
+          {it.crawl_at && <span className="muted"> · read the crawl of {stamp(it.crawl_at)}</span>}
         </SecondaryButton>
       ))}
     </>
@@ -3593,6 +3675,10 @@ export function AnatomyView({ siteId, a, states, selected, onSelect, rerunAsk = 
                   *  many pages the record names rather than how prevalent the
                   *  fault is in what was looked at. */
                  prev: Count; unfetched: number;
+                 /** Item 278 (row 9): where the sentence shown is the
+                  *  automatic checks' site-wide one, the pages an analysis
+                  *  row names, said beside it rather than unioned under it. */
+                 siteWide?: boolean; analysisPages?: number;
                  templates: Template[]; rows: Finding[];
                  /** Per source (brief v10 step AF): `sweep 10 · brief 10` on
                   *  the one row rather than two rows for one check. */
@@ -3702,8 +3788,19 @@ export function AnatomyView({ siteId, a, states, selected, onSelect, rerunAsk = 
       const counted = mine.length ? mine.map((st) => wordOf(st.source)) : g.rows.map((f) => wordOf(f.source));
       g.sources = counted.reduce<Record<string, number>>((m, w) => ({ ...m, [w]: (m[w] ?? 0) + 1 }), {});
       g.candidates = mine.filter((st) => st.state === "candidate").length;
-      const urls = mine.length ? mine.flatMap((st) => st.affected_urls)
-                               : g.rows.flatMap((f) => f.urls);
+      // Item 278 (row 9): the sentence shown is the automatic checks' where
+      // they have a row. Filed site-wide (`affected_urls` empty) it is about
+      // the site as one subject, and an analysis row's two pages from an
+      // older crawl, unioned in, made it read as a fault on those two pages.
+      const sweepRows = mine.filter((st) => st.source === "deterministic");
+      g.siteWide = g.source === "deterministic" && sweepRows.length > 0
+                   && sweepRows.every((st) => !st.affected_urls.length);
+      g.analysisPages = g.siteWide
+        ? new Set(mine.filter((st) => st.source !== "deterministic")
+                      .flatMap((st) => st.affected_urls).map(pathKey)).size : 0;
+      const urls = g.siteWide ? []
+        : mine.length ? mine.flatMap((st) => st.affected_urls)
+                      : g.rows.flatMap((f) => f.urls);
       g.count = mine.length || g.rows.length;
       g.pages = new Set(urls).size;
       // The same set, as a count that carries its population (item 155).
@@ -4028,6 +4125,28 @@ export function AnatomyView({ siteId, a, states, selected, onSelect, rerunAsk = 
             <Card>
               {/* Item 181: a part's name is the pane's section heading, h2. */}
               <h2 className="part-h2">{current.label}</h2>
+              {/* Item 273 (row 12): the part's own count, under its name - the
+                  strip's figure for this part, split as the record splits it.
+                  The page below counted cards and rows; nothing said the
+                  part's total. */}
+              {/* Screen audits round 3 (Security IP-01): the strip's own
+                  figure, regressions included and named, and holds counted
+                  in checks with their source - "8 open · 11 held" sat under a
+                  chip reading 12 and tables counting holds as checks. */}
+              {(() => {
+                const heldChecks = new Set((current.brief_held ?? []).map((h) => h.check)).size;
+                return (
+                  <p className="part-count muted">
+                    {current.total.value} open
+                    {current.regressed.value > 0
+                      ? `, ${current.regressed.value} of them back after a fix` : ""}
+                    {(current.seen_once?.value ?? 0) > 0
+                      ? ` · ${current.seen_once!.value} ${entry("state-candidate").word}` : ""}
+                    {heldChecks > 0
+                      ? ` · the analysis held ${heldChecks} check${heldChecks === 1 ? "" : "s"}` : ""}
+                  </p>
+                );
+              })()}
               {/* Triage's rank for this part, on the part itself (channel
                   ruling 2026-09-15, item 4): the sidebar's digit, which the
                   shop header also carries. */}
@@ -4039,7 +4158,9 @@ export function AnatomyView({ siteId, a, states, selected, onSelect, rerunAsk = 
                         196: the ranking is the audit's own, computed from
                         what is open, so there is no second author to name and
                         nothing that can be an older audit's. */}
-                    ranked {r}
+                    {/* Items 266 (row 12), 268 (row 10), 276 (row 11): of how
+                        many - "ranked 51" read as a score. */}
+                    ranked {r} of {lanes!.triage!.ranked.length} in triage
                   </p>
                 ) : null;
               })()}
@@ -4050,7 +4171,24 @@ export function AnatomyView({ siteId, a, states, selected, onSelect, rerunAsk = 
                   lower restates it - that is the redundancy the rule exists
                   to avoid, and it is why the length strips need neither 42
                   mute bars on a Twenty22 T1 nor a second absent tone. */}
-              <CoverageLine headline={data.headline ?? null} page={page} />
+              {/* Item 278 (row 8): a part no crawl moves states the signals
+                  it was read against, not crawled pages it does not read. */}
+              {current?.refresh?.crawl_blind && current.signal_coverage ? (
+                <p className="part-coverage muted" data-scope="signals">
+                  <b>{current.signal_coverage.measured.length} of {current.signal_coverage.total}
+                    {" "}{current.label.toLowerCase()} signals measured</b>
+                  {current.signal_coverage.measured.length
+                    ? ` (${current.signal_coverage.measured.join(", ")})` : ""}
+                  {current.signal_coverage.unmeasured.length
+                    ? `; ${current.signal_coverage.unmeasured.join(", ")} not measured`
+                      + (current.signal_coverage.providers.length
+                        ? `, not supplied by ${current.signal_coverage.providers.join(", ")}` : "")
+                    : ""}.
+                  {" "}This part reads the domain, not pages, so no count below is a share of pages.
+                </p>
+              ) : (
+                <CoverageLine headline={data.headline ?? null} page={page} />
+              )}
               {/* Item 185: the way to the other parts, above the part DETAIL
                   and kept in view - which is where the item asked for it, and
                   not above the part's own name. The first build led the card
@@ -4358,7 +4496,9 @@ export function AnatomyView({ siteId, a, states, selected, onSelect, rerunAsk = 
                   <thead>
                     <tr><FixCol />
                         <th>Severity</th><th>Cause</th>
-                        <th className="num">Pages</th>
+                        {/* Item 278 (row 8): no Pages column where the part
+                            reads no page - "0" read as "affects nothing". */}
+                        {current.refresh?.per_page !== false && <th className="num">Pages</th>}
                         <th className="state-col">State</th></tr>
                   </thead>
                   <tbody>
@@ -4437,10 +4577,12 @@ export function AnatomyView({ siteId, a, states, selected, onSelect, rerunAsk = 
                             {/* FEATURES.md F-11. The count is the control: a
                                 number that summarises a list the operator cannot
                                 reach is a claim they have to take on trust. */}
-                            <td className="num">
-                              <PagesCount f={f} open={openPages.has(f.fingerprint)}
-                                          onToggle={() => togglePages(f.fingerprint)} />
-                            </td>
+                            {current.refresh?.per_page !== false && (
+                              <td className="num">
+                                <PagesCount f={f} open={openPages.has(f.fingerprint)}
+                                            onToggle={() => togglePages(f.fingerprint)} />
+                              </td>
+                            )}
                             <td className="state-col">
                               <FixState f={f} marked={marked} outcome={outcome}
                                             judged={judged} />
@@ -4492,7 +4634,7 @@ export function AnatomyView({ siteId, a, states, selected, onSelect, rerunAsk = 
                           ))}
                           {cause.candidates > 0 && (
                             <Pill tone="state-candidate" title={CANDIDATE_NOTE}>
-                              candidate {cause.candidates}
+                              to confirm or seen once {cause.candidates}
                             </Pill>
                           )}
                           {cause.count === 0 && (
@@ -4519,11 +4661,20 @@ export function AnatomyView({ siteId, a, states, selected, onSelect, rerunAsk = 
                             nothing saying so, and on a partial crawl that
                             invited a fault rate over pages nobody looked
                             at. */}
-                        <td className="num cause-prev">
-                          <Prevalence pops={data.populations ?? null}
-                                      prev={{ count: cause.prev,
-                                              unfetched: cause.unfetched }} />
-                        </td>
+                        {current.refresh?.per_page !== false && (
+                          <td className="num cause-prev">
+                            {/* Site-wide, `prev` is the site-scoped count (no
+                                URLs), and the analysis's pages are said beside it. */}
+                            <Prevalence pops={data.populations ?? null}
+                                        prev={{ count: cause.prev,
+                                                unfetched: cause.unfetched }} />
+                            {cause.siteWide && (cause.analysisPages ?? 0) > 0 && (
+                              <span className="muted">
+                                {` · analysis names ${cause.analysisPages} page${cause.analysisPages === 1 ? "" : "s"}`}
+                              </span>
+                            )}
+                          </td>
+                        )}
                         <td className="state-col muted">
                           {/* `worst N here` only where the payload holds some
                               of them: a candidate-only cause (brief v12 step
@@ -4667,7 +4818,10 @@ export function AnatomyView({ siteId, a, states, selected, onSelect, rerunAsk = 
                     .map(([full, reason]) =>
                       [full.split("/").pop() ?? full, reason] as const));
                 const zero = causesOf(current).filter((c) => c.count === 0);
-                const clean = zero.filter((c) => !why.has(c.check));
+                // Screen audits round 3 (Speed AC-01): on one page, a check
+                // filed for the site as a whole is not a pass here.
+                const siteLevel = new Set(page ? current.site_level_checks ?? [] : []);
+                const clean = zero.filter((c) => !why.has(c.check) && !siteLevel.has(c.check));
                 const dark = zero.filter((c) => why.has(c.check));
                 /* Grouped by reason, so the line reads as one sentence per
                    cause rather than one per check. */
@@ -4706,14 +4860,20 @@ export function AnatomyView({ siteId, a, states, selected, onSelect, rerunAsk = 
                   (brief v2 step E). */}
               <h4 className="cause-briefs">
                 Analyses for this part
+              </h4>
+                {/* Item 278 (row 4): the action beside the heading, not inside
+                    it - a heading's name read "Analyses for this part Run the
+                    4 not run USD 0.51". */}
                 {/* Run the N not run (brief v4 Item 3f): opens the
                     drawer's confirm panel scoped to this part; the press
                     here spends nothing, the panel's commit carries the
                     mark (F-10). Page-scoped briefs are not in the count. */}
                 {onRunAll && (() => {
-                  const mine = (lanes?.available ?? []).filter(
-                    (x) => current.tools.includes(x.tool) && x.type !== "page"
-                           && x.state === "not_run");
+                  // The catalogue's population and its "can run now" rule
+                  // (item 252), narrowed to this part: never an analysis the
+                  // catalogue does not list.
+                  const mine = runnableNow(lanes ? notRunList(lanes) : [])
+                    .filter((x) => current.tools.includes(x.tool));
                   if (!mine.length) return null;
                   const priced = mine.map((x) => x.est_cost_default)
                     .filter((c): c is number => c != null);
@@ -4721,6 +4881,10 @@ export function AnatomyView({ siteId, a, states, selected, onSelect, rerunAsk = 
                     ? `${money(priced.reduce((s, c) => s + c, 0))}`
                       + (priced.length < mine.length ? ` + ${mine.length - priced.length} unpriced` : "")
                     : "unpriced";
+                  // Item 278 (row 4): "not run" of analyses that have each run on
+                  // this site is wrong; they have not run on THIS audit.
+                  const again = mine.every((x) => (current.analysed ?? [])
+                    .some((a) => a.tool === x.tool));
                   return (
                     // Item 178 (07-10): the control that spends the most was drawn
                     // as a text link. It opens the batch confirmation rather than
@@ -4728,11 +4892,11 @@ export function AnatomyView({ siteId, a, states, selected, onSelect, rerunAsk = 
                     <Pill tone="action-paid" as="button" type="button" className="run-part"
                             aria-disabled={Boolean(narrowNote) || undefined}
                             onClick={() => { if (!narrowNote) onRunAll(current.key); }}>
-                      Run the {mine.length} not run · {est}
+                      {again ? `Run the ${mine.length} again on this audit`
+                             : `Run the ${mine.length} not run`} · {est}
                     </Pill>
                   );
                 })()}
-              </h4>
               {/* Whether anyone has read this category, and what to do about
                   it. The count above says how much is wrong; this says
                   whether a specialist has looked. */}
@@ -4773,7 +4937,13 @@ export function AnatomyView({ siteId, a, states, selected, onSelect, rerunAsk = 
                   </>
                 ) : (
                   <span className="muted">
-                    <strong>Nothing has analysed this.</strong> The automatic checks counted the problems; no specialist has read them.
+                    {/* Item 278 (row 6): "counted the problems" only where they
+                        counted one - a cause above Info with a count. On
+                        Backlinks it stood over a table of coverage notes. */}
+                    <strong>Nothing has analysed this.</strong>{" "}
+                    {causesOf(current).some((c) => c.count > 0 && c.severity !== "info")
+                      ? "The automatic checks counted the problems; no specialist has read them."
+                      : "The automatic checks found nothing to fix on this part; no specialist has read it."}
                   </span>
                 )}
                 {/* Only what can actually start — a sweep runs inside every
@@ -4910,7 +5080,11 @@ export function AnatomyView({ siteId, a, states, selected, onSelect, rerunAsk = 
                               refresh={current.refresh}
                               startConfirming={refreshFor === current.key}
                               ask={refreshAsk}
-                              tier={depth ? DEPTH_TIER[depth] : null}
+                              // Item 278 (row 7): a part no crawl moves runs at
+                              // Standard unless a depth was chosen, since Quick's
+                              // pulse never asks its provider (`depthFor`).
+                              tier={depthFor(current.refresh, depth)
+                                ? DEPTH_TIER[depthFor(current.refresh, depth)!] : null}
                               />
             )}
           </ReauditDrawer>

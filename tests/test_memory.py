@@ -62,9 +62,20 @@ def test_one_appearance_is_a_candidate_not_an_open_finding(db):
     assert state_of(conn, site, "local-signals", "nap-missing") == "candidate"
 
 
-def test_a_second_appearance_opens_it(db):
+def _confirm(conn, site, tool, code):
+    """The operator's Confirm (items 237 and 250): `open`, with no run behind it."""
+    runs.set_state(conn, site, fp(tool, code), "open")
+
+
+def test_a_second_appearance_does_not_open_it_and_the_operator_does(db):
+    """Item 250: a second run of the same model over the same evidence is
+    not confirmation. It was, for the briefs that walk here, until the rule
+    item 237 gave the contract walk was applied to this one."""
     conn, site = db
     _run_tool(conn, site, "local-signals", {"nap-missing"})
+    _run_tool(conn, site, "local-signals", {"nap-missing"})
+    assert state_of(conn, site, "local-signals", "nap-missing") == "candidate"
+    _confirm(conn, site, "local-signals", "nap-missing")
     _run_tool(conn, site, "local-signals", {"nap-missing"})
     assert state_of(conn, site, "local-signals", "nap-missing") == "open"
 
@@ -78,20 +89,24 @@ def test_a_candidate_that_fails_to_reappear_is_dropped_not_remembered(db):
     assert state_of(conn, site, "local-signals", "nap-missing") is None
 
 
-def test_open_then_absent_is_fixed_and_reappearance_is_regressed(db):
+def test_a_confirmed_finding_is_not_closed_by_the_models_silence(db):
+    """The other half of the same rule: if the model's repetition is not
+    confirmation, its silence is not a repair. A row the operator confirmed
+    stays open until the operator moves it."""
     conn, site = db
-    for codes in ({"x"}, {"x"}, set()):
-        _run_tool(conn, site, "t", codes)
-    assert state_of(conn, site, "t", "x") == "fixed"
     _run_tool(conn, site, "t", {"x"})
-    assert state_of(conn, site, "t", "x") == "regressed"
+    _confirm(conn, site, "t", "x")
+    _run_tool(conn, site, "t", set())
+    assert state_of(conn, site, "t", "x") == "open"
+    _run_tool(conn, site, "t", {"x"})
+    assert state_of(conn, site, "t", "x") == "open"
 
 
 def test_a_run_where_the_tool_did_not_run_says_nothing(db):
     """Absence of a check is never evidence of a fix."""
     conn, site = db
     _run_tool(conn, site, "t", {"x"})
-    _run_tool(conn, site, "t", {"x"})            # open
+    _confirm(conn, site, "t", "x")               # open
     runs.create_run(conn, site, ["TEC"], "T2")   # audit run, tool absent
     runs.recompute_expert_states(conn, site, "t")
     assert state_of(conn, site, "t", "x") == "open"
@@ -138,7 +153,7 @@ def test_deterministic_sweeps_never_touch_expert_states(db):
     dimensions it audited, which EXP:* can never be."""
     conn, site = db
     _run_tool(conn, site, "t", {"x"})
-    _run_tool(conn, site, "t", {"x"})
+    _confirm(conn, site, "t", "x")
 
     from clauditseo.engine.core import AuditResult
     from clauditseo.engine.types import Site, Tier
@@ -151,17 +166,19 @@ def test_deterministic_sweeps_never_touch_expert_states(db):
 
 # --- fix loop ----------------------------------------------------------------
 
-def test_an_attempt_survives_the_verdict_either_way(db):
+def test_an_attempt_survives_a_later_run(db):
     conn, site = db
     _run_tool(conn, site, "t", {"x"})
-    _run_tool(conn, site, "t", {"x"})
+    _confirm(conn, site, "t", "x")
     assert runs.mark_attempt(conn, site, fp("t", "x"), "swapped the template")
 
-    _run_tool(conn, site, "t", set())            # verdict: fixed
+    # The model stops reporting it. That is not a verdict (item 250), and the
+    # attempt mark is still there for the operator who made it.
+    _run_tool(conn, site, "t", set())
     row = conn.execute("SELECT state, attempted_at, attempt_note FROM"
                        " finding_states WHERE site_id=? AND fingerprint=?",
                        (site, fp("t", "x"))).fetchone()
-    assert row["state"] == "fixed"
+    assert row["state"] == "open"
     assert row["attempted_at"] and row["attempt_note"] == "swapped the template"
 
 
@@ -771,7 +788,7 @@ def test_a_withdrawn_finding_is_not_handed_to_the_dispatcher_as_memory(db):
 
     conn, site = db
     _run_tool(conn, site, "local-signals", {"nap-missing"})
-    _run_tool(conn, site, "local-signals", {"nap-missing"})          # -> open
+    _confirm(conn, site, "local-signals", "nap-missing")             # -> open
     run_id = _run_tool(conn, site, "crawl", {"robots-missing",
                                                     "not-https"})
     _run_tool(conn, site, "crawl", {"robots-missing", "not-https"})

@@ -28,6 +28,17 @@ STALE_DAYS: dict[str, int] = {"article": 365, "service": 730, "location": 730}
 #: Figures, names, dates and units per hundred words, below which a page is
 #: asserting rather than telling.
 FACT_FLOORS: dict[str, float] = {"service": 2.0, "location": 2.0, "article": 3.0}
+
+
+def not_run_on(page_type: str) -> list[str]:
+    """Item 269: the per-page content checks that do not read a page of this
+    type, by the same gates the checks use - `no-author` reads articles only,
+    `fact-density` and `stale` only types with a floor. On twenty22 the home
+    page's badges said "Author: named · Facts: enough · Updated: current" for
+    three checks none of which had looked at it."""
+    return sorted(c for c, runs in (("no-author", page_type == "article"),
+                                    ("fact-density", page_type in FACT_FLOORS),
+                                    ("stale", page_type in STALE_DAYS)) if not runs)
 #: Two titles closer than this, once a location entity is taken out of
 #: both, are the same title. Measured as a token Jaccard.
 TITLE_OVERLAP = 0.8
@@ -197,9 +208,13 @@ def _same_page_title(a: PageFacts, b: PageFacts, places: set[str]) -> bool:
     H1 has two pages that read differently, and one that varies the title
     and templates the H1 has two that read the same.
     """
-    for left, right in ((a.title, b.title),
-                        (a.headings[0][1] if a.headings else None,
-                         b.headings[0][1] if b.headings else None)):
+    # Item 269 (row 6): the H1, not the first heading of any level. On
+    # twenty22 every page's first heading is a template H3 ("About the
+    # Design Process"), so all 45 pages read as one shared title.
+    def h1(p: PageFacts) -> str | None:
+        return next((t for lv, t in (p.headings or []) if lv == 1), None)
+
+    for left, right in ((a.title, b.title), (h1(a), h1(b))):
         if left and right and same_title(left, right, places):
             return True
     return False

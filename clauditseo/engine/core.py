@@ -47,6 +47,9 @@ class AuditResult:
     #: Paths the browser image pass weighed (item 240): the instrument the
     #: image-derived checks need, as `traced_paths` is the trace's.
     imaged_paths: set[str] = field(default_factory=set)
+    #: Paths this run fetched that answered 400 or above (channel ruling
+    #: 20261011-0745): what `measured` sets a page-level Links finding aside on.
+    errored_paths: set[str] = field(default_factory=set)
 
 
 def _merge_by_identity(findings: list[Finding]) -> list[Finding]:
@@ -140,7 +143,9 @@ def run_audit(
                       if traces.get(p.url)
                       and traces[p.url].get("traced") is not False},
         imaged_paths={urlsplit(p.url).path or "/" for p in readable
-                      if (context.get("image_measurements") or {}).get(p.url)})
+                      if (context.get("image_measurements") or {}).get(p.url)},
+        errored_paths={urlsplit(p.url).path or "/" for p in crawl_result.pages
+                       if isinstance(p.status, int) and p.status >= 400})
     raw_subscores: dict[str, SubScore] = {}
 
     for code in _in_run_order(dimensions):

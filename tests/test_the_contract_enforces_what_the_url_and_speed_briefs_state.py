@@ -131,3 +131,21 @@ def test_a_row_that_names_its_page_is_untouched():
            "evidence": "x", "replacement": "y", "note": ""}
     got = _parse([row], SPEED)
     assert got.rows and got.rows[0].page == BASE + "/", got.rows
+
+
+def test_a_urls_template_row_carrying_its_pattern_in_url_is_filed_on_that_template():
+    """Item 266. The URLs brief writes a template row with `page: null`, the
+    pattern in `url` and a `template:` group - not in `template` - so item
+    217's branch never saw it and the row was filed on `/`. On twenty22
+    `url-depth` read "12 of 45" where the automatic checks raised 11."""
+    row = {"check": "TEC/url-rename", "page": None, "url": "/seo/<pillar>/<slug>/",
+           "group": "template:seo-nested", "status": "WARN", "severity": "LOW",
+           "evidence": "4 pages at depth 3", "replacement": "keep", "note": ""}
+    got = _parse([row], URL_CHECKS)
+    assert got.rows, got.dropped
+    assert got.rows[0].page == BASE + "/seo/on-page/meta-descriptions/", got.rows[0].page
+    assert got.rows[0].extra.get("template") == "/seo/<pillar>/<slug>/", got.rows[0].extra
+    # A group that is not a template, and a row that names its page, are not touched.
+    plain = dict(row, group="duplicate-title", url="/seo/<pillar>/<slug>/")
+    got = _parse([plain], URL_CHECKS)
+    assert not got.rows or got.rows[0].page == BASE + "/", got.rows

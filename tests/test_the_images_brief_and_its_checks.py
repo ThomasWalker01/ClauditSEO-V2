@@ -81,11 +81,14 @@ def test_the_sixteen_checks_are_registered_at_the_severities_the_prompt_states()
     # is pinned rather than counted from the prompt, because the prompt and
     # the registry agreeing with each other proves nothing if both were
     # edited in one pass without anybody deciding to move a check.
-    assert len(IMAGES_CHECKS) == 16
+    # 17 since screen audits round 3 (Images IP-12): img-alt-filename.
+    assert len(IMAGES_CHECKS) == 17
     # The ones no sweep can compute here are registered as the brief's.
     brief_only = {c.split("/")[1] for c in brief_only_checks()}
-    assert {"img-oversized", "img-weight-budget", "img-sizes-wrong", "img-text-in-image",
+    assert {"img-sizes-wrong", "img-text-in-image",
             "img-link-alt-not-destination", "img-sitemap-missing"} <= brief_only
+    # Item 272 (row 9): the browser pass raises these two, so they are free.
+    assert not {"img-oversized", "img-weight-budget"} & brief_only
 
 
 def test_a_held_only_check_is_dropped_wherever_else_it_is_named(monkeypatch):
@@ -244,7 +247,7 @@ def test_a_page_whose_images_are_all_in_order_raises_nothing():
 def test_the_prompt_loads_conforms_and_the_two_it_replaces_are_gone():
     by = briefs.by_id()
     assert by["images"].part == "images" and by["images"].scope == "site"
-    assert len(by["images"].checks) == 16 and conforms("images")
+    assert len(by["images"].checks) == 17 and conforms("images")
     assert "onpage-hygiene" not in by and "image-optimisation" not in by
     assert "onpage-hygiene" not in EXPERT_TOOLS and "image-optimisation" not in EXPERT_TOOLS
     from pathlib import Path

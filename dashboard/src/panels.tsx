@@ -165,7 +165,7 @@ export function ReportHead({ title, onRerun, rerunning, rerunTitle, onClose, rer
       <h4>{title}</h4>
       {onRerun && (
         /* UX-66. Stable caption, state on `aria-busy`, words in the region
-           below — the convention `views.tsx`'s `ReportView` states in full. */
+           below — the convention `reports.tsx`'s `GenerateCard` states in full. */
         <SpendButton busy={rerunning} price={rerunPrice} onSpend={onRerun}
                      confirm={{ title: "Run this analysis again?",
                                 body: <><SpendTarget />

@@ -67,6 +67,9 @@ def test_the_head_the_pages_line_and_the_crawl_badge(browser, served):
     pre = _precheck(site["domain"].rstrip("/"))
     pre["sitemap_urls"] = 10
     pre["not_in_sitemap"] = [site["domain"].rstrip("/") + "/p1", site["domain"].rstrip("/") + "/p2"]
+    # What the current reading audited, which the route supplies since screen
+    # audits round 3 (launch IP-02); it was the record's page list.
+    pre["audited"] = 12
     pg = browser.new_page(viewport={"width": 1400, "height": 900})
     try:
         pg.route(f"**/api/sites/{ids['site']}/precheck",

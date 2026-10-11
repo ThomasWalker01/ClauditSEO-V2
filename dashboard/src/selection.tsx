@@ -20,6 +20,7 @@ import { RunStatus, api, completedAudits, hasScore, isNarrowScope, scopeOf, scop
 import { LOADING_WORD } from "./glossary";
 import { goto } from "./nav";
 import { Pill } from "./pill";
+import { day } from "./dates";
 
 export type Site = { id: string; domain: string; client: string };
 export type Run = { id: string; status: RunStatus; composite_score: number | null;
@@ -226,7 +227,6 @@ export function useSelection(): Selection {
  *  more place for `https://www.acme.com.au/` and `www.acme.com.au` to be
  *  the same site under two spellings on one screen. */
 export const host = (domain: string) => domain.replace(/^https?:\/\//, "").replace(/\/$/, "");
-const day = (iso: string) => (iso || "").slice(0, 10);
 
 /** The newest run that read the site; failing one, the newest run at all. */
 export function defaultRun(usable: Run[]): Run | undefined {

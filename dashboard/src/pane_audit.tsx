@@ -12,10 +12,11 @@ import { api, Meta, SiteDetail, completedAudits, isDeletable, runsDiffer, scopeO
 import { AnatomyScreen } from "./anatomy";
 import { goHandler as navHandler, goto as navigate, historyHref } from "./nav";
 import { ScanMatrix } from "./scanmatrix";
-import { Card, NarrowRunNote, RunScore, RunStatusChip, ScoreBandKey } from "./components";
+import { Card, NarrowRunNote, RunScore, RunStatusChip, SPEND_KEPT, ScoreBandKey } from "./components";
 import { ScoreTrend, trendReading } from "./score_trend";
 import { Pill } from "./pill";
 import { DangerButton } from "./spend";
+import { day } from "./dates";
 
 export function AuditPane({ siteId, data, anat, setTick, show = "all" }: {
   siteId: string;
@@ -175,7 +176,8 @@ export function AuditPane({ siteId, data, anat, setTick, show = "all" }: {
                   printing it beside a complete run's makes the two look
                   comparable. One owner, since UX-42. */}
               <td><RunScore kind={r.kind} status={r.status}
-                            score={r.composite_score} scope={scopeOf(r)} /></td>
+                            score={r.composite_score} scope={scopeOf(r)}
+                            partOnly={r.part_only ?? null} /></td>
               {/* The trend's per-point reading, on the run that made the
                   point — which earlier run this score reads against, named.
                   A run with no point (narrow, blocked, unscored) reads a
@@ -213,12 +215,12 @@ export function AuditPane({ siteId, data, anat, setTick, show = "all" }: {
                     more
                   </summary>
                   <DangerButton label={`delete the audit of ${r.started_at ? stamp(r.started_at) : r.id.slice(0, 8)}`}
-                                confirm={{ title: `Delete the ${r.tier} audit of ${r.started_at?.slice(0, 10) ?? r.id.slice(0, 8)}?`,
+                                confirm={{ title: `Delete the ${r.tier} audit of ${r.started_at ? day(r.started_at) : r.id.slice(0, 8)}?`,
                                            // Prose, so the missing case is prose too. A dash
                                            // inside a sentence naming the run reads as a score
                                            // too small to print - UX-15's defect at lower stakes.
                                            body: <p>Score {r.composite_score ?? "not assessed"}. This removes its
-                                             findings and its trend point permanently.</p>,
+                                             findings and its trend point permanently. {SPEND_KEPT}</p>,
                                            action: "Delete the audit" }}
                                 onConfirm={async () => {
                                   await api.del(`/api/runs/${r.id}`);

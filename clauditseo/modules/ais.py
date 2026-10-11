@@ -39,7 +39,27 @@ DEFAULT_SEVERITY: dict[str, Severity] = {
 #: `runs.not_assessed_payload` reports the check not assessed, naming the field,
 #: rather than letting the silence read as a pass (157). One check today; the
 #: table is where the others go when they are asked for.
-RECORD_FIELDS: dict[str, tuple[str, ...]] = {"entity-unresolvable": ("sameas_sources",)}
+#: Item 267 (row 14): `entity-unnamed` too - it returns silently while the
+#: record names no entity, so a free-only audit lost it without a word.
+#: (`llms-txt-stale` is not here: `llms_txt_status` is a crawl reading, not a
+#: site-record field, and an empty record field would hold the check on
+#: every site whose file is simply current.)
+RECORD_FIELDS: dict[str, tuple[str, ...]] = {
+    "entity-unresolvable": ("sameas_sources",),
+    "entity-unnamed": ("sub_services", "locations", "authors"),
+}
+
+#: Item 267 (row 3): what each AI-surface check reads when it is not the
+#: crawl. The crawler access test fetches the home page and a few probe
+#: pages as each agent (`ua_matrix.PROBE_PAGES`); `content-behind-js` reads
+#: the pages the rendered pass visited. Counted "of 45 pages crawled", a
+#: block on 3 of 3 probed URLs read as 3 of 45. The site rows name no page
+#: and are about the site as one subject.
+SAMPLED: dict[str, str] = {"edge-blocks-ai-ua": "probed", "ua-sensitive": "probed",
+                           "content-behind-js": "rendered"}
+SITE_ROWS = ("ai-crawler-allowed-unstated", "ai-experience-unmeasured",
+             "llms-txt-missing")
+
 
 #: The analysis checks: judged by the AI surface brief, raised by no sweep.
 BRIEF_ONLY_CHECKS = frozenset({
@@ -326,6 +346,9 @@ class AiSurfaceModule:
         findings.append(Finding(
             dimension=self.code, check_id="ai-experience-unmeasured",
             severity=Severity.INFO, summary=UNMEASURED, subject="site",
+            # A statement of what the audit cannot measure (item 267 row 8):
+            # a coverage note, kept in the table and out of Fixes and counts.
+            scope_statement=True,
             # The start URL, as every site-level row here names it: a verify
             # of the home page re-raises this row, so it is still present.
             affected_urls=[crawl.start_url], evidence={"field": "not connected"},

@@ -503,6 +503,10 @@ def _delete_rows(conn: sqlite3.Connection, run_id: str, site_id: str, finished_a
     # The states it moved still name it; the replay after rewrites them.
     conn.execute("UPDATE finding_states SET changed_by_run=NULL WHERE changed_by_run=?", (run_id,))
     conn.execute("DELETE FROM findings WHERE run_id=?", (run_id,))
+    # Its spend is kept in the month's tally first (channel ruling
+    # 20261011-0746): billed money does not leave the total or the cap.
+    from .spend import keep_deleted_spend
+    keep_deleted_spend(conn, [run_id])
     conn.execute("DELETE FROM cost_entries WHERE run_id=?", (run_id,))
     conn.execute("DELETE FROM metric_snapshots WHERE run_id=?", (run_id,))
     conn.execute("DELETE FROM expert_reports WHERE run_id=?", (run_id,))

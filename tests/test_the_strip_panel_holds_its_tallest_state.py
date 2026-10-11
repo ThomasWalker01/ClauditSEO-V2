@@ -131,3 +131,15 @@ def test_the_tallest_panel_state_does_not_clip():
     assert got["natural"] <= got["height"] + 0.5, (
         f"the panel's content is {got['natural']:.1f} px and the panel "
         f"{got['height']:.1f} px, so overflow: hidden is clipping it")
+
+
+def test_the_empty_panel_is_lighter_and_no_shorter():
+    """Item 273 row 9 asked for the empty panel to collapse; item 146 holds
+    its height. The channel (20261011-1051) kept 146 and lightened the empty
+    panel instead: no fill and a dashed border, at the same height."""
+    from pathlib import Path
+    css = (Path(__file__).resolve().parents[1] / "dashboard" / "src" / "styles.css") \
+        .read_text(encoding="utf-8")
+    assert (".strip-panel:has(> .strip-panel-empty) { background: transparent; "
+            "border-style: dashed; }") in css
+    assert ".strip-panel { height: 206px;" in css

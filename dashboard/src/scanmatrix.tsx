@@ -48,6 +48,67 @@ export const SECS_PER_PAGE: Record<DepthKey, number> = {
   quick: 1.8, standard: 4.5, deep: 11,
 };
 
+/** How long this site's own stored runs took (item 255): `runs.scan_pace`.
+ *
+ *  The comment above promised measured figures "once enough runs are stored"
+ *  and the foot said the times would improve as runs were stored; nothing
+ *  read a stored run. twenty22's Quick site audits take about 12 s a page,
+ *  and the grid quoted 1.8 - "~27s" for the scan that had just taken eight
+ *  minutes.
+ *
+ *  Two populations per depth: a rate per page from runs of two pages or
+ *  more, and a duration from one-page runs, which carry the whole fixed cost
+ *  and are never divided into a rate. And two kinds: `audit` is what the
+ *  chooser starts, `recheck` one part's re-read. */
+type Measured = { secs: number | null; runs: number };
+export type Pace = Record<"audit" | "recheck",
+  Record<DepthKey, { per_page: Measured; one_page: Measured }>>;
+
+export function usePace(siteId: string | null | undefined): Pace | null {
+  return useFetch<Pace>(siteId ? `/api/sites/${siteId}/scan-pace` : null).data ?? null;
+}
+
+/** A time and where it came from. `measured` is this site's own median at
+ *  this depth. `floor` and `ceiling` are this site's own figure from the
+ *  nearest thing that IS stored, which bounds the answer from one side: a
+ *  deeper scan does everything a shallower one does and then asks a model,
+ *  and one page costs less than the rate over many would say. `default` is
+ *  the constant above, where the site has no stored run at all. */
+export type Estimate = { secs: number; basis: "measured" | "floor" | "ceiling" | "default";
+                         runs: number };
+
+const DEPTH_ORDER: DepthKey[] = ["quick", "standard", "deep"];
+
+export function estimate(pace: Pace | null, kind: "audit" | "recheck",
+                         depth: DepthKey, pages: number): Estimate {
+  const by = pace?.[kind];
+  const want = pages === 1 ? "one_page" : "per_page";
+  const other = pages === 1 ? "per_page" : "one_page";
+  const times = pages === 1 ? 1 : pages;
+  const at = DEPTH_ORDER.indexOf(depth);
+  if (by) {
+    // The same population, at this depth or the nearest measured one.
+    const near = [...DEPTH_ORDER].sort((a, b) =>
+      Math.abs(DEPTH_ORDER.indexOf(a) - at) - Math.abs(DEPTH_ORDER.indexOf(b) - at));
+    for (const field of [want, other] as const) {
+      for (const d of near) {
+        const m = by[d]?.[field];
+        if (m?.secs == null) continue;
+        const from = DEPTH_ORDER.indexOf(d);
+        return {
+          secs: m.secs * times, runs: m.runs,
+          basis: field === want
+            ? (from === at ? "measured" : from < at ? "floor" : "ceiling")
+            // One page from a per-page rate leaves out the fixed cost; many
+            // pages from a one-page duration count it once per page.
+            : (pages === 1 ? "floor" : "ceiling"),
+        };
+      }
+    }
+  }
+  return { secs: pages * SECS_PER_PAGE[depth], basis: "default", runs: 0 };
+}
+
 /** Where a row's page figure came from, carried with the figure.
  *
  *  These are two different claims and the screen used to make only one of
@@ -89,6 +150,12 @@ export function pagesFor(scope: ScopeKey, pre: Precheck | null,
         // scan whose coverage can reach 100%", which at 49 of 53 it cannot.
         // `population.tsx` gives the reason in its own words: "divide by the
         // declaration and coverage rises when the declaration fails."
+        // And where the current reading measured the site, its size: what
+        // the sitemap declares and every page the crawl found besides (screen
+        // audits round 3, launch IP-04: "Full ... 53 pages" on a site of 74).
+        : pre.site_size?.size != null
+          ? Math.max(pre.site_size.size,
+                     (pre.sitemap_urls ?? 0) + (pre.not_in_sitemap?.length ?? 0))
         : pre.sitemap_urls === null ? null
           : pre.sitemap_urls + (pre.not_in_sitemap?.length ?? 0);
   if (measured === null) return null;
@@ -107,12 +174,12 @@ export function pagesFor(scope: ScopeKey, pre: Precheck | null,
  *  is under both caps, and then every figure on the screen really is the
  *  precheck's. */
 function foot(rows: { label: string; pages: PageCount }[],
-              ready: boolean): string {
+              ready: boolean, pace: Pace | null): string {
   if (!ready) {
     return "Run the precheck above and every cell will say how many pages it "
       + "would visit.";
   }
-  const times = " Times are estimates and get more honest as runs are stored.";
+  const times = paceWords(pace);
   // Two scopes with one figure, said rather than left to look like an error
   // (audit F10): on a site under every cap, Site and Full really do visit the
   // same pages, and two identical rows with different names read as a bug.
@@ -142,6 +209,44 @@ export function human(seconds: number): string {
   if (seconds < 3600) return `~${Math.round(seconds / 60)}m`;
   const h = seconds / 3600;
   return `~${h < 2 ? h.toFixed(1) : Math.round(h)}h`;
+}
+
+/** An estimate as the cell prints it: `~9m` measured or defaulted, `≥9m`
+ *  for a floor, `≤9m` for a ceiling. */
+export function humanEst(e: Estimate): string {
+  const t = human(e.secs);
+  return e.basis === "floor" ? `≥${t.slice(1)}` : e.basis === "ceiling" ? `≤${t.slice(1)}` : t;
+}
+
+/** The same, spoken. */
+function spokenEst(e: Estimate): string {
+  const t = spoken(e.secs);
+  return e.basis === "floor" ? `at least ${t}` : e.basis === "ceiling" ? `at most ${t}` : t;
+}
+
+/** Where the grid's times came from, in one or two sentences (item 255). It
+ *  replaced "Times are estimates and get more honest as runs are stored",
+ *  which no code made true. */
+export function paceWords(pace: Pace | null): string {
+  const label = (d: DepthKey) => DEPTHS.find((x) => x.key === d)!.label;
+  const measured = DEPTH_ORDER.filter((d) => pace?.audit[d]?.per_page.secs != null);
+  if (!pace || !measured.length) {
+    return " Times are a default, not measured: no audit of this site over more than "
+      + "one page is stored yet.";
+  }
+  const list = (ds: DepthKey[]) => ds.map(label).join(" and ");
+  const said = measured.map((d) => {
+    const m = pace.audit[d].per_page;
+    return `${label(d)} about ${Math.round(m.secs!)} s a page from ${m.runs} stored `
+      + `run${m.runs === 1 ? "" : "s"}`;
+  }).join("; ");
+  const rest = DEPTH_ORDER.filter((d) => !measured.includes(d));
+  return ` Times are this site's own: ${said}.`
+    + (rest.length
+      ? ` No ${list(rest)} audit of this site over more than one page is stored, so `
+        + `${rest.length === 1 ? "that column shows" : "those columns show"}`
+        + " the nearest measured depth's time as a bound (≥ or ≤); a model's time comes on top."
+      : "");
 }
 
 /** `human()` in words, for a name that is spoken rather than read.
@@ -180,13 +285,13 @@ function spoken(seconds: number): string {
  *  change meant to improve it.
  */
 function cellLabel(scopeLabel: string, depthLabel: string,
-                   secs: number | null, free: boolean): string {
+                   secs: Estimate | null, free: boolean): string {
   //  Null is the unmeasured case, not a zero: the visible span says "run it"
   //  because no precheck has counted the pages yet, and the name says the
   //  same thing in the same words rather than implying a duration of none.
   const when = secs === null
     ? "duration unknown until the precheck runs"
-    : spoken(secs);
+    : spokenEst(secs);
   return `${scopeLabel} scan, ${depthLabel} depth — ${when}, `
     + (free ? "free" : "spends model tokens");
 }
@@ -224,6 +329,10 @@ export function ScanMatrix({ siteId, precheck, onLaunched, running = null,
    *  holds `/api/meta`, so a prop would make the other screen fetch a payload
    *  it has no other use for. */
   const { data: meta } = useFetch<Meta>("/api/meta");
+  /** This site's own stored durations (item 255). Null until it arrives or
+   *  where nothing is stored: the cells then quote the default and the foot
+   *  says so. */
+  const pace = usePace(siteId);
 
   const { sites } = useSelection();
   const [dialog, ask] = useConfirm();
@@ -243,7 +352,7 @@ export function ScanMatrix({ siteId, precheck, onLaunched, running = null,
           <p>{sc.what} {d.what} It runs on the {d.model}, so it spends model tokens.</p>
           <p>{row?.pages
             ? `About ${row.pages.n} page${row.pages.n === 1 ? "" : "s"}, roughly `
-              + `${human(row.pages.n * SECS_PER_PAGE[depth])}.`
+              + `${humanEst(estimate(pace, "audit", depth, row.pages.n))}.`
             : "How many pages it visits is not known until the precheck has run."}</p>
         </>,
       });
@@ -329,7 +438,7 @@ export function ScanMatrix({ siteId, precheck, onLaunched, running = null,
         {rows.map((sc) => {
           const pages = sc.pages;
           return (
-            <RowOf key={sc.key} scope={sc} pages={pages} busy={busy}
+            <RowOf key={sc.key} scope={sc} pages={pages} busy={busy} pace={pace}
                    recommended={recommended} onPick={launch}
                    counting={precheckLoading || !meta}
                    disabled={Boolean(running) || precheckLoading || !meta
@@ -377,14 +486,17 @@ export function ScanMatrix({ siteId, precheck, onLaunched, running = null,
       <p className="muted scan-foot">
         {precheckLoading || !meta
           ? `${LOADING_WORD} the precheck - every cell waits for its page count.`
-          : foot(rows, Boolean(precheck && meta))}
+          : foot(rows, Boolean(precheck && meta), pace)}
       </p>
       {dialog}
     </div>
   );
 }
 
-function RowOf({ scope, pages, busy, recommended, onPick, extra, disabled, counting = false }: {
+function RowOf({ scope, pages, busy, recommended, onPick, extra, disabled, counting = false,
+                 pace }: {
+  /** The site's stored durations, for the time each cell quotes. */
+  pace: Pace | null;
   /** The page counts are still being read (item 178). */
   counting?: boolean;
   scope: { key: ScopeKey; label: string; what: string };
@@ -412,7 +524,7 @@ function RowOf({ scope, pages, busy, recommended, onPick, extra, disabled, count
       {DEPTHS.map((d) => {
         const key = `${scope.key}:${d.key}`;
         const running = busy === key;
-        const secs = pages === null ? null : pages.n * SECS_PER_PAGE[d.key];
+        const secs = pages === null ? null : estimate(pace, "audit", d.key, pages.n);
         return (
           <div className="scan-cellwrap" key={d.key}>
             <button className={`scan-cell${recommended === key ? " is-rec" : ""}`}
@@ -425,7 +537,7 @@ function RowOf({ scope, pages, busy, recommended, onPick, extra, disabled, count
               <span className="scan-time">
                 {/* While counting the cell is held and the foot says Loading; the
                     caption stays one shape rather than swapping to a busy word. */}
-                {secs !== null ? human(secs) : counting ? "—" : "time unknown"}
+                {secs !== null ? humanEst(secs) : counting ? "—" : "time unknown"}
               </span>
               {/* The shared mark on every cell that reaches a model (F-10
                   clause 1): the launcher's control for the same POST is

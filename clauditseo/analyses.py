@@ -181,6 +181,8 @@ def lanes(stored: dict[str, dict], estimates: dict[str, dict],
         row = {
             **meta,
             "est_tokens": est.get("tokens"), "est_cost": est.get("cost"),
+            # Item 271 (row 10): how many past runs the price is the median of.
+            "est_samples": est.get("cost_samples"),
             "est_seconds": est.get("seconds"),
             "inputs": brief.get("inputs") or [],
             "scope": brief.get("scope"), "tier": brief.get("tier"),

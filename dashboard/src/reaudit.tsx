@@ -32,10 +32,13 @@ import { ReactNode, useEffect, useState } from "react";
 import { Meta, useFetch } from "./api";
 import { pathOf } from "./components";
 import { Precheck } from "./precheck";
-import { DEPTHS, DepthKey, SECS_PER_PAGE, human, pagesFor } from "./scanmatrix";
+import { DEPTHS, DepthKey, estimate, humanEst, pagesFor, usePace } from "./scanmatrix";
+import { useSelection } from "./selection";
 import { Pill } from "./pill";
 
-export type Refresh = { dimension: string; also: string[]; per_page: boolean };
+export type Refresh = { dimension: string; also: string[]; per_page: boolean;
+                 /** Item 278 (row 7): no crawl can move this part. */
+                 crawl_blind?: boolean };
 
 /** The finding the drawer was opened from, if it was opened from one. */
 export type DrawerFinding = {
@@ -51,6 +54,14 @@ export type DrawerFinding = {
 export const DEPTH_TIER: Record<DepthKey, string> = {
   quick: "T1", standard: "T2", deep: "T3",
 };
+
+/** The depth a re-check runs at: the one chosen, or Standard for a part no
+ *  page and no crawl moves (item 278, row 7: Quick's pulse never asks the
+ *  provider such a part reads), or null for the engine's own choice. Read by
+ *  the drawer and by the pane's commit, so the two cannot differ. */
+export function depthFor(refresh: Refresh, depth: DepthKey | null): DepthKey | null {
+  return depth ?? (!refresh.per_page && refresh.crawl_blind ? "standard" : null);
+}
 
 export function ReauditDrawer({ label, refresh, page, precheck, finding,
                                 depth, onDepth, onClearPage, children,
@@ -99,13 +110,23 @@ export function ReauditDrawer({ label, refresh, page, precheck, finding,
   const findingScope = scope === "finding" && Boolean(finding?.namesPage);
   const { data: meta } = useFetch<Meta>("/api/meta");
   const onePage = Boolean(page) && refresh.per_page;
-  const pages = pagesFor(onePage ? "page" : "site", precheck, meta?.scopes);
-  const secs = (d: DepthKey) => (pages ? pages.n * SECS_PER_PAGE[d] : null);
+  // Item 278 (row 7): a part no page and no crawl can move (Backlinks). Its
+  // re-check reads the provider, so no page count, no page-based time and
+  // no Pages select; Standard by default, since Quick's pulse does not ask
+  // the provider.
+  const domainOnly = !refresh.per_page && Boolean(refresh.crawl_blind);
+  // Such a part reads Standard until a depth is chosen (`depthFor`), and
+  // Quick is chosen explicitly below rather than as null.
+  const pages = domainOnly ? null : pagesFor(onePage ? "page" : "site", precheck, meta?.scopes);
+  // Item 255: a re-check is timed from this site's stored re-checks, not
+  // from a constant and not from a whole audit's pace.
+  const pace = usePace(useSelection().siteId);
+  const secs = (d: DepthKey) => (pages ? estimate(pace, "recheck", d, pages.n) : null);
   const plural = (n: number) => `${n} page${n === 1 ? "" : "s"}`;
 
   const [allChips, setAllChips] = useState(false);
   /** The pill in hand: the engine's choice reads as Quick. */
-  const shown: DepthKey = depth ?? "quick";
+  const shown: DepthKey = depthFor(refresh, depth) ?? "quick";
   const depthLabel = DEPTHS.find((d) => d.key === shown)!.label;
   const chipLabel = (d: DepthKey) =>
     `${DEPTHS.find((x) => x.key === d)!.label} · free`;
@@ -114,14 +135,16 @@ export function ReauditDrawer({ label, refresh, page, precheck, finding,
    *  far it crawls, not what it spends. */
   const primaryLabel = findingScope && finding
     ? `Verify ${plural(finding.pages)} now · free`
+    : domainOnly
+      ? `Re-check ${label} · ${depthLabel} · free`
     : onePage
       ? `Re-read ${pathOf(page)} · ${label} · ${depthLabel}`
-        + (secs(shown) !== null ? ` · ${human(SECS_PER_PAGE[shown])}` : "") + " · free"
+        + (secs(shown) !== null ? ` · ${humanEst(secs(shown)!)}` : "") + " · free"
       : `Re-check ${label}`
         + (pages ? ` · ${plural(pages.n)}` : "") + ` · ${depthLabel}`
         // `human` carries its own `~` (`scanmatrix.tsx`), so the label
         // does not add a second one (brief v12 step AN).
-        + (secs(shown) !== null ? ` · ${human(secs(shown)!)}` : "") + " · free";
+        + (secs(shown) !== null ? ` · ${humanEst(secs(shown)!)}` : "") + " · free";
   const chips = [refresh.dimension, ...refresh.also];
   const shownChips = allChips ? chips : chips.slice(0, 3);
 
@@ -170,7 +193,7 @@ export function ReauditDrawer({ label, refresh, page, precheck, finding,
             <Pill as="button" key={d.key} type="button"
                     tone={shown === d.key ? "current" : "action-free"}
                     aria-pressed={shown === d.key}
-                    onClick={() => onDepth(d.key === "quick" ? null : d.key)}
+                    onClick={() => onDepth(d.key === "quick" && !domainOnly ? null : d.key)}
                     title={d.key === "quick"
                       ? `${DEPTH_TIER[d.key]}. The engine's own default: an audit left to it starts here and escalates where the evidence asks.`
                       : `${DEPTH_TIER[d.key]}, fixed - it does not escalate.`}>
@@ -180,35 +203,47 @@ export function ReauditDrawer({ label, refresh, page, precheck, finding,
         </div>
       </div>
 
-      <label className="reaudit-field">
-        <span className="sel-lbl">Pages</span>
-        <select className="input reaudit-pages"
-                value={findingScope ? "finding" : onePage ? "one" : "site"}
-                onChange={(e) => {
-                  if (e.target.value === "finding") { setScope("finding"); return; }
-                  setScope("sweep");
-                  if (e.target.value === "site") onClearPage();
-                }}>
-          <option value="finding" disabled={!finding?.namesPage}>
-            {finding
-              ? finding.namesPage
-                ? `The ${plural(finding.pages)} this finding is on — via verify`
-                : "The pages this finding is on — it names none; a full audit judges it"
-              : "The pages a finding is on — open the drawer from a finding"}
-          </option>
-          <option value="nav" disabled>Nav pages</option>
-          <option value="filter" disabled>Pages in the current filter</option>
-          <option value="one" disabled={!onePage}>
-            {page && refresh.per_page ? `One page — ${pathOf(page)}`
-              : refresh.per_page ? "One page — narrow to it above first"
-              : "One page — not for this part"}
-          </option>
-          <option value="site">
-            {/* Item 180 (e5): the pages the request fetches, not an abstraction. */}
-            Every page a site scan visits{pages && !onePage ? ` (${pages.n})` : ""}
-          </option>
-        </select>
-      </label>
+      {domainOnly ? (
+        // Item 278 (row 7): said where it is read, not in the closed details.
+        <p className="muted reaudit-domain">
+          {label} is not measured page by page: {refresh.dimension} reads the domain
+          rather than any page of it, so this re-check asks the provider and fetches no page.
+        </p>
+      ) : (
+        <>
+          <label className="reaudit-field">
+            <span className="sel-lbl">Pages</span>
+            {/* Item 278 (row 7): only what can be chosen is listed; what
+                cannot is said once, below, rather than as greyed options. */}
+            <select className="input reaudit-pages"
+                    value={findingScope ? "finding" : onePage ? "one" : "site"}
+                    onChange={(e) => {
+                      if (e.target.value === "finding") { setScope("finding"); return; }
+                      setScope("sweep");
+                      if (e.target.value === "site") onClearPage();
+                    }}>
+              {finding?.namesPage && (
+                <option value="finding">
+                  {`The ${plural(finding.pages)} this finding is on — via verify`}
+                </option>
+              )}
+              {onePage && <option value="one">{`One page — ${pathOf(page)}`}</option>}
+              <option value="site">
+                {/* Item 180 (e5): the pages the request fetches, not an abstraction. */}
+                Every page a site scan visits{pages && !onePage ? ` (${pages.n})` : ""}
+              </option>
+            </select>
+          </label>
+          <p className="muted reaudit-pages-note">
+            Not offered: nav pages or the current filter, since no route takes a list of pages
+            {!finding?.namesPage ? (finding
+              ? "; this finding's pages, since it names none and a full audit judges it"
+              : "; a finding's pages, until the drawer is opened from one") : ""}
+            {!onePage ? (refresh.per_page ? "; one page, until you narrow to it above"
+              : "; one page, which cannot move this part") : ""}.
+          </p>
+        </>
+      )}
 
       <div className="reaudit-field reaudit-sweep">
         <span className="sel-lbl">Automatic checks</span>
@@ -256,17 +291,28 @@ export function ReauditDrawer({ label, refresh, page, precheck, finding,
               + "list of pages. "
               + (refresh.per_page
                  ? "One page can: narrow to it above."
+                 // Said above the details where no crawl moves the part.
+                 : domainOnly ? ""
                  : `${label} is not measured page by page: ${refresh.dimension} reads `
                    + "the domain rather than any page of it, so no page narrows this "
                    + "part, and re-reading one page could not change a finding here.")}
         </p>
         <p className="muted reaudit-cost">
-          {pages === null
+          {domainOnly
+            ? "Not timed by pages: it fetches none."
+            : pages === null
             ? "Run the precheck to estimate the time."
             : depth
-              ? `Estimated ${human(secs(depth)!)} over ${plural(pages.n)} at ${depthLabel}, fixed.`
-              : `Estimated ${human(secs("quick")!)} at Quick over ${plural(pages.n)}, `
-                + `up to ${human(secs("deep")!)} if the engine escalates to Deep.`}
+              ? `Estimated ${humanEst(secs(depth)!)} over ${plural(pages.n)} at ${depthLabel}, fixed.`
+              : `Estimated ${humanEst(secs("quick")!)} at Quick over ${plural(pages.n)}, `
+                + `${humanEst(secs("deep")!)} if the engine escalates to Deep.`}
+          {/* Item 255: where the figure came from. Only once there is one -
+              with no precheck there are no pages and no estimate. */}
+          {secs(shown) !== null && (
+            <>{" "}{secs(shown)!.basis === "default"
+              ? "A default: no re-check of this site is stored yet."
+              : `From this site's ${secs(shown)!.runs} stored re-check${secs(shown)!.runs === 1 ? "" : "s"}.`}</>
+          )}
           {" "}Free — no model is invoked at any depth: the automatic checks ask for no analyst.
           {pages?.from === "budget" && (
             <> The page count is a budget this product sets, not something

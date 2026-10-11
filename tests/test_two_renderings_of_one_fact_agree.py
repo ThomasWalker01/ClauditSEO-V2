@@ -85,11 +85,13 @@ def test_no_screen_slices_an_iso_string_into_a_clock():
 
 
 def test_the_stamp_helper_converts_and_is_shared():
-    lanes = (SRC / "client_lanes.tsx").read_text(encoding="utf-8")
-    assert "export function stamp(" in lanes
-    # A conversion, not a slice: it must go through Date.
-    body = lanes[lanes.index("export function stamp("):][:600]
-    assert "new Date(iso)" in body, body
+    # `stamp` lives in dates.ts with `day` and `clock` since item 248;
+    # client_lanes still exports it for the files that import it from there.
+    dates = (SRC / "dates.ts").read_text(encoding="utf-8")
+    assert "export function stamp(" in dates
+    assert "export { stamp }" in (SRC / "client_lanes.tsx").read_text(encoding="utf-8")
+    # A conversion, not a slice: all three go through Date.
+    assert "new Date(iso)" in dates and ".slice(" not in dates.split("*/", 1)[1], dates[:400]
     readers = [p.name for p in sorted(SRC.glob("*.tsx"))
                if re.search(r"\bstamp\(", p.read_text(encoding="utf-8"))]
     assert len(readers) >= 5, readers

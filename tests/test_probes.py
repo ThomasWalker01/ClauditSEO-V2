@@ -745,18 +745,13 @@ def test_every_brief_on_every_screen_can_settle_its_own_items():
     DISCIPLINE rule 3 exists to stop. A hard-coded list of three is how that
     passes, so this reads the call sites out of the bundle's own source.
 
-    The one exemption is named and justified rather than pattern-matched: a
-    client deliverable is read where nothing can be run, so its markers stay
-    text. It is imported under a different name for that reason, and a new
-    consumer fails this until somebody decides which of the two it is.
-
-    The sweep catches a fifth `<ReportView` in `App.tsx`, which is the
-    *other* component of that name — `views.ReportView`, the screen that
-    generates a deliverable. It already takes a `runId` for its own reasons
-    and so passes here without meaning anything. Left in rather than
-    special-cased: a name collision between two components is worth having
-    visible, and excluding it by filename is the hard-coded list this test
-    exists to avoid.
+    There was one exemption, named and justified rather than pattern-matched:
+    the per-run screen that generated a client deliverable drew its markdown
+    where nothing could be run, under a different import name. Item 256
+    deleted that screen (`views.ReportView`, the other component of this
+    name), so the exemption has no instance left; a stored deliverable is read
+    through `Markdown` in `deliverable.tsx`, which is not this component at
+    all. The clause below holds that the exemption stays retired.
     """
     from pathlib import Path
 
@@ -779,15 +774,20 @@ def test_every_brief_on_every_screen_can_settle_its_own_items():
         + ", ".join(missing))
 
 
-def test_the_deliverable_screen_is_the_exemption_and_still_takes_it():
-    """The other half, so the guard above cannot be satisfied by wiring a run
-    into the one place that must not have one."""
+def test_the_exemption_went_with_the_screen_that_took_it():
+    """The other half. The brief renderer drawn with no run was the per-run
+    report screen's alone; item 256 deleted that screen. Nothing imports the
+    renderer under the exemption's name any more, so a consumer that wants a
+    brief's markers as text has to say so again, in the open."""
     from pathlib import Path
 
-    views = (Path(__file__).resolve().parents[1] / "dashboard" / "src"
-             / "views.tsx").read_text(encoding="utf-8")
-    assert "<RenderedMarkdown source={markdown} />" in views
-    assert "<RenderedMarkdown source={markdown} runId" not in views
+    src = Path(__file__).resolve().parents[1] / "dashboard" / "src"
+    for path in sorted(src.glob("*.tsx")):
+        text = path.read_text(encoding="utf-8")
+        assert "RenderedMarkdown" not in text, (
+            f"{path.name} draws a brief under the retired exemption's name")
+    # And a stored deliverable is still read without the brief renderer.
+    assert "ReportView" not in (src / "deliverable.tsx").read_text(encoding="utf-8")
 
 
 # --- the table this migration had to take back ------------------------------

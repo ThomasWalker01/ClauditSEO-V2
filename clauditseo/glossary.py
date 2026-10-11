@@ -25,7 +25,28 @@ _FIRST = re.compile(FIRST_SENTENCE, re.S)
 
 @lru_cache(maxsize=1)
 def entries() -> tuple[dict, ...]:
-    return tuple(json.loads(PATH.read_text(encoding="utf-8"))["entries"])
+    """Every id the product may name, each with its word and definition.
+
+    An entry with `same_as` (item 263) is one word drawn in a second place:
+    it keeps its own id, group, tone class and engine name, and takes its
+    word and definition from the entry it names - never that entry's
+    `matches`, so a client report's appendix finds the word once."""
+    raw = json.loads(PATH.read_text(encoding="utf-8"))["entries"]
+    by = {e["id"]: e for e in raw}
+    out = []
+    for e in raw:
+        if "same_as" in e:
+            target = by[e["same_as"]]
+            e = {**({"engine": target["engine"]} if "engine" in target else {}),
+                 **e, "word": target["word"], "full": target["full"]}
+        out.append(e)
+    return tuple(out)
+
+
+def definitions() -> tuple[dict, ...]:
+    """One entry per word: the registry without its `same_as` entries. What
+    the glossary route lists, and what no word may repeat in (item 263)."""
+    return tuple(e for e in entries() if "same_as" not in e)
 
 
 def short(entry: dict) -> str:

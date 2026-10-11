@@ -170,9 +170,9 @@ def test_the_card_asks_the_operator_and_confirm_opens_it(served):
         finally:
             b.close()
     assert before["card"], before
-    assert "analysis, not yet confirmed" in before["pill"], before
+    assert "to confirm" in before["pill"], before
     assert before["controls"] == ["Confirm", "Accept", "Withdraw"], before
-    assert before["state"] == "not yet confirmed", before
+    assert before["state"] == "to confirm", before
     assert after["state"] == "open", after
     states = httpx.get(f"{base}/api/sites/{site_id}", timeout=30).json()["states"]
     row = next(s for s in states if s["check_id"] == BRIEF_ONLY)

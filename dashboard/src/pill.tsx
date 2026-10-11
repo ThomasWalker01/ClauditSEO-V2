@@ -30,7 +30,7 @@ export type Tone =
   | "sev-critical" | "sev-high" | "sev-medium" | "sev-low" | "sev-info"
   // where a finding is in its life — outline only
   | "state-open" | "state-regressed" | "state-fixed"
-  | "state-candidate" | "state-withdrawn" | "state-accepted"
+  | "state-candidate" | "state-withdrawn" | "state-accepted" | "state-set-aside"
   // who found it — text, no fill
   | "source-brief" | "source-sweep"
   // needs an input to be judged — neutral grey fill

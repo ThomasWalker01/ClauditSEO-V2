@@ -88,6 +88,9 @@ def test_a_stored_run_still_carries_its_tier():
     """Kept as the receipt, for the reason the delta rule needs: a score is
     compared against the previous audit of the same tier."""
     app = (ROOT / "clauditseo" / "api" / "app.py").read_text(encoding="utf-8")
-    assert "AND tier=? AND composite_score > 0" in app
+    # Since screen audits round 3 the previous audit is picked in Python, so
+    # a part-only re-check can be skipped; the same-tier rule stands.
+    assert 'and r["tier"] == scored[0]["tier"]' in app
+    assert 'and (r["composite_score"] or 0) > 0), None)' in app
     lanes = (SRC / "client_lanes.tsx").read_text(encoding="utf-8")
     assert "run.tier" in lanes or "tier" in lanes

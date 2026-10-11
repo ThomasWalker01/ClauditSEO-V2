@@ -19,10 +19,12 @@ import { WriteBrief, plainName } from "./part_page";
 import { narrowStates } from "./anatomy";
 import { goHandler, hashWithout, pageScopeFromHash, recordNarrowFromHash } from "./nav";
 import { stamp } from "./client_lanes";
+import { ConfirmControls, candidateWord } from "./to_confirm";
 import { FixCol, FixState, FixTick, MarkBar, StateNote, useFixLoop } from "./fixloop";
 import { Pill } from "./pill";
 import { coverageNotes } from "./population";
 import { DangerButton } from "./spend";
+import { day } from "./dates";
 
 /** Rows revealed at a time in the full findings table. */
 export const PAGE = 50;
@@ -135,7 +137,16 @@ export function RecordPane({ siteId, data, fix, fState, onState, group, onGroup,
     ? [raisedBy?.tier, stamp(raisedBy?.started_at)].filter(Boolean).join(" · ")
       || narrow.run.slice(0, 8)
     : "";
-  const [fText, setFText] = useState("");
+  // Item 273 (row 7): the address may name the text filter (`?find=`), so a
+  // part page's card links to its own row here - check and page.
+  const findOf = () => new URLSearchParams((window.location.hash || "").split("?")[1] || "")
+    .get("find") ?? "";
+  const [fText, setFText] = useState(findOf);
+  useEffect(() => {
+    const read = () => { const f = findOf(); if (f) setFText(f); };
+    window.addEventListener("hashchange", read);
+    return () => window.removeEventListener("hashchange", read);
+  }, []);
   /** Brief v2 step B. A finding on a page the latest site-wide crawl did
    *  not fetch carries a marker. The crawl is `latestSiteWideCrawl`, never
    *  a navigation-scoped scan: a page merely outside a small scan's scope
@@ -209,7 +220,9 @@ export function RecordPane({ siteId, data, fix, fState, onState, group, onGroup,
       }
       g.rows.push(r);
       if (order.indexOf(r.severity) < order.indexOf(g.severity)) g.severity = r.severity;
-      g.states[r.state] = (g.states[r.state] ?? 0) + 1;
+      // Item 250: a candidate is counted under the word it is drawn with.
+      const word = r.state === "candidate" ? candidateWord(r.to_confirm) : r.state;
+      g.states[word] = (g.states[word] ?? 0) + 1;
     }
     for (const g of by.values()) {
       g.pages = new Set(g.rows.flatMap((r) => r.affected_urls)).size;
@@ -253,7 +266,7 @@ export function RecordPane({ siteId, data, fix, fState, onState, group, onGroup,
   const inCost = (s: FindingState) => !cost || costOfRow(s) === cost;
   /** Item 237: an analysis finding on a check no sweep can raise, waiting
    *  for the operator - not for a second audit, which is not confirmation. */
-  const awaiting = (s: FindingState) => s.state === "candidate" && costOfRow(s) === "model";
+  const awaiting = (s: FindingState) => s.state === "candidate" && Boolean(s.to_confirm);
   /** The record opens on this (item 237): what is outstanding AND what waits
    *  for the operator, so a brief-only finding is seen without a press. Its
    *  own chip rather than widening "Open + regressed", which the landing's
@@ -266,7 +279,8 @@ export function RecordPane({ siteId, data, fix, fState, onState, group, onGroup,
     ["fixed", "Fixed", (s) => s.state === "fixed"],
     ["accepted-risk", "Accepted", (s) => s.state === "accepted-risk"],
     ["withdrawn", "Withdrawn", (s) => s.state === "withdrawn"],
-    ["candidate", "Seen once", (s) => s.state === "candidate"],
+    ["set-aside", "On an error page", (s) => s.state === "set-aside"],
+    ["candidate", "Seen once", (s) => s.state === "candidate" && !s.to_confirm],
     ["gone", "On pages gone", (s) => goneFrom(s).length > 0],
     ["all", "Every state", () => true],
   ];
@@ -275,9 +289,10 @@ export function RecordPane({ siteId, data, fix, fState, onState, group, onGroup,
    *  state row the server holds - is met by rows plus notes on this pane. */
   const inState = (s: FindingState) => {
     // One rule per chip, the chip's own (item 237 added two); an address
-    // value with no chip - `open`, `regressed` - is the state itself.
+    // value with no chip - `open`, `regressed` - is the state itself, and a
+    // comma list of them (item 252) is any of them.
     const chip = STATE_CHIPS.find(([v]) => v === fState);
-    return chip ? chip[2](s) : s.state === fState;
+    return chip ? chip[2](s) : fState.split(",").includes(s.state);
   };
   const coverageShown = noteRows.filter(inState);
   /** The group's headline is the check, never its first instance's
@@ -289,8 +304,14 @@ export function RecordPane({ siteId, data, fix, fState, onState, group, onGroup,
   // Item 183: the same words the part pages use for a check, one source.
   const headlineOf = (checkId: string) => plainName(checkId);
   const inSev = (s: FindingState) => !fSevs.length || fSevs.includes(s.severity);
-  const inText = (s: FindingState) => !needle
-    || `${s.dimension}/${s.check_id} ${s.summary}`.toLowerCase().includes(needle);
+  // Every word of the filter, over the check, the sentence and the pages
+  // (item 273, row 7): "TEC/noindex-linked /webdesign/" is one row.
+  const inText = (s: FindingState) => {
+    if (!needle) return true;
+    const hay = `${s.dimension}/${s.check_id} ${s.summary} `
+      + s.affected_urls.map(pathOfUrl).join(" ");
+    return needle.split(/\s+/).every((w) => hay.toLowerCase().includes(w));
+  };
   const stateRows = findings.filter((s) => inCost(s) && inState(s) && inSev(s) && inText(s));
   // Item 201: what each row of chips counts over - everything the table
   // applies except that row's own filter.
@@ -310,7 +331,7 @@ export function RecordPane({ siteId, data, fix, fState, onState, group, onGroup,
           filterable and searchable — or flat, one row per finding. The tick
           and the verify are the same ones as there — mark here, verify here,
           and the mark shows up on both. What is only here is the ability to
-          accept a risk. Candidates are model findings seen once: they open
+          accept a risk. "Seen once" rows are model findings: they open
           when a second audit confirms them, and are dropped if it does not -
           except where no automatic check can raise the finding at all. Those
           are "to confirm": they wait for you to confirm, accept or withdraw
@@ -329,7 +350,8 @@ export function RecordPane({ siteId, data, fix, fState, onState, group, onGroup,
           reported rather than guessed. The chips are the address's
           `?state=` values, so a stored link and a press mean the same. */}
       <Legend ids={["outstanding", "state-open", "state-regressed", "state-fixed", "state-accepted",
-                    "state-withdrawn", "state-candidate", "to-confirm", "on-pages-gone"]} />
+                    "state-withdrawn", "state-set-aside", "state-candidate", "to-confirm",
+                    "on-pages-gone"]} />
       <div className="filters state-filters" role="group" aria-label="state filter">
         {STATE_CHIPS.map(([value, label, test]) => {
           const n = forState.filter(test).length;
@@ -509,7 +531,33 @@ export function RecordPane({ siteId, data, fix, fState, onState, group, onGroup,
                   not the same sentence: a row can be open in the record and
                   awaiting a look in the loop. */}
               <td>
-                <Pill tone={s.state === "accepted-risk" ? "state-accepted" : `state-${s.state}`}>{s.state}</Pill>
+                {/* Item 250: a candidate is drawn by what it waits for, in
+                    the registry's words, never as the engine's `candidate`. */}
+                <Pill tone={s.state === "accepted-risk" ? "state-accepted" : `state-${s.state}`}>
+                  {s.state === "candidate" ? candidateWord(s.to_confirm)
+                    : s.state === "set-aside" ? "on an error page" : s.state}
+                </Pill>
+                {/* Channel ruling 20261011-0745: with its reason and date. */}
+                {s.state === "set-aside" && (
+                  <span className="muted"> set aside {day(s.updated_at)}</span>
+                )}
+                {/* Screen audits round 3 (Record US-01): since when, and the
+                    audit that moved it where the record still lists it. */}
+                {s.state !== "set-aside" && s.updated_at && (() => {
+                  const by = s.changed_by_run ? data.runs.find((r) => r.id === s.changed_by_run) : undefined;
+                  return (
+                    <div className="muted group-since">
+                      since {day(s.updated_at)}
+                      {by ? ` · by the ${by.tier} audit of ${day(by.started_at)}` : ""}
+                    </div>
+                  );
+                })()}
+                {awaiting(s) && (
+                  <ConfirmControls fingerprints={[s.fingerprint]} siteId={siteId}
+                                   subject={`${s.dimension}/${s.check_id}`
+                                            + (s.affected_urls[0] ? ` on ${s.affected_urls[0]}` : "")}
+                                   onStateChanged={() => setTick((t) => t + 1)} />
+                )}
                 {/* The state's own meaning, where the state is listed. The
                     filter above offers `withdrawn` and `candidate` as things
                     to narrow to, and until this line the word arrived here
@@ -552,7 +600,7 @@ export function RecordPane({ siteId, data, fix, fState, onState, group, onGroup,
                   <div className="page-gone">
                     page not in latest crawl
                     {latestCrawl?.started_at
-                      ? ` (${latestCrawl.started_at.slice(0, 10)}, ${latestCrawl.tier})` : ""}
+                      ? ` (${day(latestCrawl.started_at)}, ${latestCrawl.tier})` : ""}
                     {goneFrom(s).length > 1 ? ` — ${goneFrom(s).length} of its pages` : ""}
                   </div>
                 )}
@@ -756,7 +804,8 @@ export function RecordPane({ siteId, data, fix, fState, onState, group, onGroup,
             return groupsOf(stateRows).slice(0, shown).flatMap((g) => {
               const open = expanded.has(g.key);
               const states = Object.entries(g.states)
-                .map(([k, n]) => `${n} ${k}`).join(" · ");
+                // The engine's `set-aside` in the registry's words.
+                .map(([k, n]) => `${n} ${k === "set-aside" ? "on an error page" : k}`).join(" · ");
               const rows: ReactNode[] = [
                 <tr key={g.key} className="group-row">
                   <td className="fix-col">
@@ -771,7 +820,17 @@ export function RecordPane({ siteId, data, fix, fState, onState, group, onGroup,
                       {open ? "−" : "+"}
                     </SecondaryButton>
                   </td>
-                  <td><span className="muted group-states">{states}</span></td>
+                  <td><span className="muted group-states">{states}</span>
+                    {/* Screen audits round 3 (Record US-01): when, as a range
+                        over the group's rows - "4 regressed" could have been
+                        yesterday or two weeks ago. */}
+                    {(() => {
+                      const at = g.rows.map((r) => r.updated_at).filter(Boolean).sort();
+                      if (!at.length) return null;
+                      const a = day(at[0]), b = day(at[at.length - 1]);
+                      return <div className="muted group-since">since {a === b ? a : `${a} to ${b}`}</div>;
+                    })()}
+                  </td>
                   <td><SeverityTag severity={g.severity} /></td>
                   <td><code>{g.key}</code></td>
                   <td>

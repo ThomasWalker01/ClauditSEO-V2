@@ -28,6 +28,8 @@ export type IndexabilityNow = {
     chains: number;
     temporary: number | null;
     to_404: number | null;
+    /** Whether the crawl stored each hop's status (item 277, row 8). */
+    per_hop?: boolean;
   };
   convention: { scheme: string; host: string; trailing_slash: boolean };
 };
@@ -97,9 +99,12 @@ export function IndexabilityNowBlock({ now }: { now: IndexabilityNow }) {
         {count(now.redirects.to_404)} to a 404.
       </p>
       <p className="cn-caveat">
-        A redirect&rsquo;s per-hop status is not in the stored crawl, so
-        &ldquo;temporary&rdquo; and &ldquo;to a 404&rdquo; read &ldquo;&mdash;&rdquo;
-        here — they are judged over a live redirect log. URL convention:{" "}
+        {/* Item 277 (row 8): the gap named only where it applies. */}
+        {now.redirects.total > 0 && !now.redirects.per_hop && <>
+          This crawl stored no per-hop status, so
+          &ldquo;temporary&rdquo; and &ldquo;to a 404&rdquo; read &ldquo;&mdash;&rdquo;.{" "}
+        </>}
+        URL convention:{" "}
         {c.scheme}://{c.host}{c.trailing_slash ? "/…/  (trailing slash)" : "/…  (no trailing slash)"},
         from the majority of reached 200s.
       </p>

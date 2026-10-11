@@ -181,7 +181,7 @@ def test_the_part_page_lists_every_check_and_counts_the_replacements(browser, se
             check: tr.querySelectorAll('td')[1]?.textContent.trim(), clean: false })),
           // One line per section since brief v17 step AV3; joined,
           // because this clause is about every check of the part.
-          clean: [...document.querySelectorAll('.anat-pane .cause-clean-line')]
+          clean: [...document.querySelectorAll('.anat-pane .cause-clean-line, .anat-pane .cause-unreturned-line')]
             .map((p) => p.textContent.trim()).join(' '),
           rows: document.querySelectorAll('.anat-pane .fix-card').length,
           copies: document.querySelectorAll('.anat-pane .fix-copy').length,
@@ -199,7 +199,9 @@ def test_the_part_page_lists_every_check_and_counts_the_replacements(browser, se
     # every page THIS RUN FETCHED, not over a record that includes pages
     # nobody looked at.
     assert got["clean"].startswith("4 checks clean on every page this audit fetched"), got["clean"]
-    assert "1 check clean on every page this audit fetched" in got["clean"], got["clean"]
+    # Items 274, 276: the analysis section's check with no row is said as
+    # that, not as clean - the briefs report faults and omit passes.
+    assert "1 check the analysis returned no row for" in got["clean"], got["clean"]
     assert "title-entity-alignment" in got["clean"], got["clean"]
     for c in ("ONP/title-missing", "ONP/title-duplicate", "ONP/title-entity-alignment",
               "ONP/meta-desc-length", "ONP/meta-desc-duplicate"):

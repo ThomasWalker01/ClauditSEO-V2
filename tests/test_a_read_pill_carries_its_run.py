@@ -129,6 +129,9 @@ def test_the_pill_says_its_date_and_opens_the_report(browser, served):
     assert got["current"] == newer, got
     assert len(got["pills"]) == 1 and got["pills"][0]["run"] == older, got["pills"]
     assert got["pills"][0]["text"].startswith(f"read {TOOL} · "), got["pills"]
+    # Item 278 (row 4): how many audits since, and which crawl it read, in
+    # the open rather than only in the hover.
+    assert " · 1 audit since · read the crawl of " in got["pills"][0]["text"], got["pills"]
     assert got["elsewhere"] == 0
     assert not any(f"run {TOOL}" in p for p in got["runs"]), got["runs"]
     assert "Read once" in report, report

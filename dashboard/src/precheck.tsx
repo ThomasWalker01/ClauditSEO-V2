@@ -18,6 +18,7 @@ import { useState } from "react";
 
 import { api, useFetch } from "./api";
 import { Pill } from "./pill";
+import { day } from "./dates";
 
 export interface PrecheckScope {
   pages: number | null;
@@ -43,6 +44,11 @@ export interface Precheck {
   page_urls_capped: boolean;
   findings_meaningful: boolean;
   scopes: Record<string, PrecheckScope>;
+  /** The site's size as the current reading measured it: declared and
+   *  found besides (screen audits round 3). Absent on a stored payload. */
+  site_size?: { size: number | null; declared: number; discovered: number; gap: number } | null;
+  /** Pages the current reading audited. */
+  audited?: number | null;
 }
 
 export function usePrecheck(siteId: string | null, tick = 0) {
@@ -54,7 +60,12 @@ export function usePrecheck(siteId: string | null, tick = 0) {
 export interface PrecheckCompare {
   now: { checked_at: string; nav: number; full: number | null; full_capped: boolean;
          sitemap_files: number | null; sitemap_state: string };
+  /** The newest audit, where it started after this check (item 254): the
+   *  counts are then older than a crawl of the same site. */
+  stale?: { audit_at: string } | null;
   prior: { kind: "precheck" | "crawl" | null; at: string | null;
+           /** Why there is no prior where one might be expected. */
+           reason?: string | null;
            before_audit: { id: string; started_at: string; tier: string } | null;
            nav: number | null; full: number | null; full_capped: boolean;
            sitemap_files: number | null; sitemap_state: string | null };
@@ -70,9 +81,15 @@ export function usePrecheckCompare(siteId: string | null, tick = 0) {
 }
 
 /** The pages the prior check published and this one does not: gone, in a
- *  stronger sense than a scope-limited crawl missing them (WF-04). */
+ *  stronger sense than a scope-limited crawl missing them (WF-04).
+ *
+ *  Only against a prior CHECK (item 254). Against a crawl the same list is
+ *  "crawled, not declared" - pages the crawl read that the sitemap does not
+ *  list, which are live. Fed here, four nav pages on twenty22 had their
+ *  findings filed under "on pages gone". */
 export function pagesGone(compare: PrecheckCompare | null | undefined): Set<string> {
-  return new Set(compare?.diff.full.known ? compare.diff.full.removed : []);
+  return new Set(compare?.prior.kind === "precheck" && compare.diff.full.known
+    ? compare.diff.full.removed : []);
 }
 
 /** The scope order the scan screen uses. `site` is absent deliberately: its
@@ -106,6 +123,10 @@ export function PrecheckPanel({ siteId, data, onRan, compact, compare = null }: 
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** An audit has crawled the site since this check (item 254): every count
+   *  below is older than that crawl, so the stamp says so and re-running is
+   *  the row's next step. */
+  const stale = !!(data && compare?.stale);
 
   const run = async () => {
     setBusy(true);
@@ -132,7 +153,7 @@ export function PrecheckPanel({ siteId, data, onRan, compact, compare = null }: 
     <>
       {/* Item 178: the precheck runs no model and costs nothing, so it is never
           drawn in the paid tone - which it was until one had run. */}
-      <Pill as="button" tone={data ? "nav" : "action-free"}
+      <Pill as="button" tone={stale ? "action-primary" : data ? "nav" : "action-free"}
               disabled={busy} aria-busy={busy} onClick={run}
               title="Reads robots.txt, the sitemap and this page's navigation.
 No model, a few seconds.">
@@ -220,9 +241,11 @@ No model, a few seconds.">
     <div className="pre-panel">
       <div className="pre-cta">
         {button}
-        <span className="pre-cost">
+        <span className={"pre-cost" + (stale ? " pre-stale" : "")}>
           checked {stamp(data.checked_at)}
-          {" · "}{(data.took_ms / 1000).toFixed(1)}s
+          {stale
+            ? " · older than the last audit · re-run"
+            : <>{" · "}{(data.took_ms / 1000).toFixed(1)}s</>}
         </span>
       </div>
 
@@ -233,12 +256,18 @@ No model, a few seconds.">
         {SCOPES.map(([key, label]) => {
           const sc = data.scopes[key];
           if (!sc) return null;
+          // Site and Full read the site's size where the current reading
+          // measured one, as the grid below does (screen audits round 3,
+          // launch IP-03: "49 Full" here, "53 pages" in the grid).
+          const sized = (key === "site" || key === "full") && data.site_size?.size != null
+            && data.site_size.size > (sc.pages ?? 0);
           return (
             <div className="pre-scope" key={key}>
-              <span className="pre-n">{sc.pages === null ? "—" : sc.pages}</span>
+              <span className="pre-n">{sized ? data.site_size!.size : sc.pages === null ? "—" : sc.pages}</span>
               <span className="pre-label">{label}</span>
               <span className="pre-basis">
-                {sc.pages === null ? missing(data.sitemap_state) : sc.basis}
+                {sized ? "declared and found"
+                  : sc.pages === null ? missing(data.sitemap_state) : sc.basis}
               </span>
             </div>
           );
@@ -247,8 +276,10 @@ No model, a few seconds.">
       )}
       {compare && !compare.prior.kind && (
         <p className="muted pre-note pre-first">
-          First check, and no audit has crawled this site: nothing to compare
-          with yet. The next check will show what moved.
+          {compare.prior.reason
+            ? <>Nothing to compare with: {compare.prior.reason}.</>
+            : <>First check, and no audit has crawled this site: nothing to compare
+                with yet. The next check will show what moved.</>}
         </p>
       )}
 
@@ -325,11 +356,17 @@ function Compare({ siteId, data, c }: { siteId: string; data: Precheck; c: Prech
       ))}</ul>
     </details>
   ) : null;
+  /* Against a crawl the two lists are not arrivals and departures (item
+     254): the sitemap declares pages the crawl did not read, and the crawl
+     read pages the sitemap does not declare. Both are live. */
+  const crawl = c.prior.kind === "crawl";
+  const [moreWord, fewerWord] = crawl
+    ? ["declared, not crawled", "crawled, not declared"] : ["added", "removed"];
   const priorLabel = c.prior.kind === "crawl"
     ? `vs last audit · ${stamp(c.prior.at)}`
     : `prior ${stamp(c.prior.at)}`
       + (c.prior.before_audit
-         ? ` (before audit ${c.prior.before_audit.started_at.slice(0, 10)} ${c.prior.before_audit.tier})`
+         ? ` (before audit ${day(c.prior.before_audit.started_at)} ${c.prior.before_audit.tier})`
          : "");
   const sug = c.suggestion;
   const cellName = sug.cell === "full:quick" ? "Full · Quick" : sug.cell === "nav:quick" ? "Nav · Quick" : null;
@@ -363,7 +400,8 @@ function Compare({ siteId, data, c }: { siteId: string; data: Precheck; c: Prech
             <td className="num">{c.prior.full ?? "—"}</td>
             <td>{delta(c.now.full, c.prior.full)}</td>
             <td>{c.diff.full.known
-              ? <>{list("added", c.diff.full.added, "pre-added")}{list("removed", c.diff.full.removed, "pre-removed")}
+              ? <>{list(moreWord, c.diff.full.added, crawl ? "pre-neutral" : "pre-added")}
+                  {list(fewerWord, c.diff.full.removed, crawl ? "pre-neutral" : "pre-removed")}
                   {!c.diff.full.added.length && !c.diff.full.removed.length && <span className="muted">unchanged</span>}
                   {c.prior.sitemap_files !== null && c.prior.sitemap_files !== c.now.sitemap_files
                     && <span className="pre-files"> · sitemap files {c.prior.sitemap_files} → {c.now.sitemap_files}</span>}</>
@@ -401,8 +439,10 @@ function Compare({ siteId, data, c }: { siteId: string; data: Precheck; c: Prech
         <p className="muted pre-rule">
           Rule: at least {Math.round(sug.min_share * 100)}% of the pages published before added or
           removed, and at least {sug.min_pages} pages → Full; only the navigation changed → Nav;
-          else nothing to run. Removed pages mark their findings "on pages gone"; they are not
-          scanned. The suggested cell is marked in the grid below.
+          else nothing to run. {crawl
+            ? "Against a crawl nothing is removed: a page the crawl read and the sitemap does not declare is live."
+            : "Removed pages mark their findings \"on pages gone\"; they are not scanned."}
+          {" "}The suggested cell is marked in the grid below.
         </p>
       </div>
     </>

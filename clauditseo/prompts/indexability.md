@@ -54,7 +54,7 @@ known, a held card naming the one input that closes it.
 CHECK SET (use these ids verbatim):
   TEC/noindex-linked           noindex page linked from nav or ≥ 3 pages
   TEC/noindex-in-sitemap       noindex page declared in the sitemap
-  TEC/canonical-missing        no canonical on a parameter, pagination or
+  ONP/canonical-missing-variant  no canonical on a parameter, pagination or
                                facet variant
   TEC/canonical-to-404         canonical target returns 4xx/5xx
   TEC/canonical-loop           A → B → A, or a page whose own URL answers
@@ -108,7 +108,7 @@ Handling rules:
 
 Severity: registry default; raise only with a reason.
 (Registered: canonical-to-404, canonical-loop, redirect-to-404,
-noindex-linked — HIGH; canonical-missing, canonical-sitemap-conflict,
+noindex-linked — HIGH; canonical-missing-variant, canonical-sitemap-conflict,
 meta-robots-conflict, redirect-chain, redirect-map-correctness,
 parameter-policy — MEDIUM; noindex-in-sitemap, redirect-temporary — LOW;
 noindex-intent — HELD.)
@@ -157,6 +157,9 @@ Two blocks, in this order.
 }
 ```
 Rules for the block:
+- `status` is FAIL, WARN or PASS-OVERRIDE. Never return a PASS row or a
+  HELD row: a pass is silence, and a hold is a `not_assessable` entry
+  naming the input it needs.
 - `canonical_map` and `redirects` are the "now"; Block 2 does not repeat.
 - `artefact` ∈ canonical · meta robots · redirect rule · redirect map ·
   policy. `kind` ∈ markup · template · policy.

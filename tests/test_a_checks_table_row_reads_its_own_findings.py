@@ -94,10 +94,10 @@ def table(served):
 
 @needs_build
 def test_a_candidate_beside_a_hold_reads_candidate(table):
-    # "not yet confirmed" since item 237: `schema-sameas-missing` is a check
+    # "to confirm" since item 237 (the word is item 250's): `schema-sameas-missing` is a check
     # only a model raises, so its candidate waits for the operator. What this
     # holds is that the hold does not make it read "open".
-    assert table["rows"].get("ONP/schema-sameas-missing") == "not yet confirmed", table["rows"]
+    assert table["rows"].get("ONP/schema-sameas-missing") == "to confirm", table["rows"]
 
 
 @needs_build

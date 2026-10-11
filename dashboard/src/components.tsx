@@ -149,15 +149,20 @@ export function ScoreBandKey() {
  *  `composite_score`/`score`/`run_score`), which is most of why the branch
  *  was re-derived rather than shared. Named parameters settle that here
  *  once. */
-export function RunScore({ kind, status, score, scope = null }: {
+export function RunScore({ kind, status, score, scope = null, partOnly = null }: {
   kind: string; status: RunStatus; score: number | null;
   /** `scopeOf(run)` where the caller has the run (brief v3 step I): a page
    *  or navigation scan is shown as what it is, never as the site's score. */
   scope?: string | null;
+  /** The server's `part_only` label ("Links only") for a reading that
+   *  measured fewer parts than the audit before it (screen audits round 3):
+   *  its composite is one part's score, so it is not drawn as the site's. */
+  partOnly?: string | null;
 }) {
   if (!isSiteReading(kind)) return <span className="muted">narrow audit</span>;
   if (scope === "page" || scope === "nav")
     return <span className="muted">{scope} scan</span>;
+  if (partOnly) return <span className="muted">{partOnly}</span>;
   if (!hasScore(status)) return <span className="muted">not scored</span>;
   return <ScoreBadge score={score} />;
 }
@@ -232,6 +237,27 @@ const SEV_RANK_ALERT: Record<string, number> = {
   critical: 0, high: 1, medium: 2, low: 3, info: 4,
 };
 
+/** A watched change as `Alerts` and Home both carry it. */
+export type WatchedChange = { what: string; before: unknown; after: unknown; severity: string;
+                              note?: string };
+
+/** The worst severity among some severities, `info` for none. One rule for
+ *  the landing's alert line and Home's card (item 260). */
+export function worstOf(severities: string[]): string {
+  return severities.reduce((acc, s) => (SEV_RANK_ALERT[s] < SEV_RANK_ALERT[acc] ? s : acc), "info");
+}
+
+/** "llms.txt, robots.txt changed": the subject of the alert line, in one
+ *  spelling for the landing and Home (item 260). */
+export function changedWords(changes: WatchedChange[]): string {
+  return changes.map((c) => c.what.replace(/ HTTP status| declared entries/, ""))
+    .join(", ") + " changed";
+}
+
+/** The address that opens a site's landing with its alert line open (item
+ *  260): Home's card reports the alert and this is where it is read. */
+export const alertHref = (siteId: string) => `#/sites/${siteId}?alert=open`;
+
 /** One line for everything urgent, expandable.
  *
  *  These were two stacked banners costing about 290px before the tabs even
@@ -246,26 +272,25 @@ const SEV_RANK_ALERT: Record<string, number> = {
  */
 export function Alerts({ regressions, watch }:
     { regressions: FindingState[];
-      /** `WatchChange` in api.ts; spelled out here so this file's type is
-       *  the one the strip always had. */
-      watch?: { what: string; before: unknown; after: unknown; severity: string;
-            /** Why the two numbers may not be comparable, or which file
-             *  actually moved. A bare "268 → 117" sends someone to diagnose a
-             *  site-wide deletion; the note says which sitemap it was. */
-            note?: string }[] }) {
-  const [open, setOpen] = useState(false);
+      /** `WatchChange` in api.ts. A change's `note` says why the two numbers
+       *  may not be comparable, or which file actually moved: a bare
+       *  "268 → 117" sends someone to diagnose a site-wide deletion; the note
+       *  says which sitemap it was. */
+      watch?: WatchedChange[] }) {
+  // Opened by the address (item 260): Home's card links here with
+  // `alert=open`, because the card reports the alert and this is where it
+  // is read.
+  const [open, setOpen] = useState(
+    () => new URLSearchParams((window.location.hash.split("?")[1]) || "").get("alert") === "open");
   const changes = watch ?? [];
   if (!regressions.length && !changes.length) return null;
 
-  const worst = [...regressions.map((r) => r.severity),
-                 ...changes.map((c) => c.severity)]
-    .reduce((acc, s) => (SEV_RANK_ALERT[s] < SEV_RANK_ALERT[acc] ? s : acc), "info");
+  const worst = worstOf([...regressions.map((r) => r.severity),
+                         ...changes.map((c) => c.severity)]);
   const bits: string[] = [];
   if (regressions.length)
     bits.push(`${regressions.length} regression${regressions.length === 1 ? "" : "s"}`);
-  if (changes.length)
-    bits.push(changes.map((c) => c.what.replace(/ HTTP status| declared entries/, ""))
-      .join(", ") + " changed");
+  if (changes.length) bits.push(changedWords(changes));
 
   return (
     <div className={`alertline alert-${worst}${open ? " alertline-open" : ""}`} role="alert">
@@ -1025,3 +1050,9 @@ export function money(n: number): string {
 export function moneyPair(low: number, high: number): string {
   return `${MONEY_CURRENCY} ${amount(low)}/${amount(high)}`;
 }
+
+/** What a delete does to spend (channel ruling 20261011-0746), said on every
+ *  delete confirmation: the cost rows go with what is deleted, and their sums
+ *  stay in the month's total and the cap, as "Deleted runs". */
+export const SPEND_KEPT = "What it cost leaves the per-client rows; the month's total and "
+  + "the spending cap keep it.";

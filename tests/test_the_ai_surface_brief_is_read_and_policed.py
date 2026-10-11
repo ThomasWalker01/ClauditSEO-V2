@@ -239,7 +239,9 @@ def test_the_engine_says_which_absence_a_read_is():
     run_id = runs.create_run(conn, site_id, ["TEC", "CNT"], "T2")
     assert ai_surface.absent_needs(conn, site_id, run_id, "INT/lang-en-absent") == ai_surface.NEEDS_UNRUN
     assert ai_surface.absent_needs(conn, site_id, run_id, "CNT/eeat") == ai_surface.NEEDS_FREE_ONLY
-    assert ai_surface.absent_needs(conn, site_id, run_id, "TEC/links-behind-js").startswith("blocked: ")
+    # Item 267 (row 11): the owning check ran and raised nothing - a pass,
+    # the fourth form, not an unavailable read.
+    assert ai_surface.absent_needs(conn, site_id, run_id, "TEC/links-behind-js") == "ran clean"
     conn.close()
 
 
@@ -276,7 +278,7 @@ def test_a_rows_payload_survives_the_store_and_reaches_the_record():
 
 # --- the part page's reachability "now" ---------------------------------------
 
-def _reach_run(tmp_path, *, declared=None, field=None):
+def _reach_run(tmp_path, *, declared=None, field=None, filed=True):
     from clauditseo.crawler.types import CrawlResult
     from clauditseo.crawler.evidence import snapshot
     from clauditseo.db.connection import connect
@@ -300,7 +302,7 @@ def _reach_run(tmp_path, *, declared=None, field=None):
         {"agent": "Google-Extended", "agent_class": "training", "sent": False, "robots": "allow"}]
     runs.store_evidence(conn, run_id, ev)
     with conn:
-        for agent in ("ClaudeBot", "OAI-SearchBot"):
+        for agent in ("ClaudeBot", "OAI-SearchBot") if filed else ():
             conn.execute(
                 "INSERT INTO findings (id, run_id, dimension, check_id, severity, source, summary,"
                 " affected_urls, fingerprint, created_at, evidence) VALUES (?, ?, 'AIS',"
@@ -324,6 +326,20 @@ def test_the_reachability_rows_tell_a_chosen_block_from_an_unstated_one(tmp_path
     # An agent the matrix did not ask as is not assessed, never reachable.
     assert by["PerplexityBot"]["state"] == "not assessed"
     assert "Googlebot" not in by, "the search agents are not AI agents"
+
+
+def test_a_refusal_is_read_off_the_status_when_no_row_was_filed(tmp_path):
+    """Screen audits round 3, the AI surface Critical: a run that filed no
+    AIS rows (a Links-only re-check) drew four 403s as "reachable · Let in
+    and shown the page", under a lead saying no crawler is turned away."""
+    conn, run_id, site = _reach_run(tmp_path, declared="ClaudeBot", filed=False)
+    now = ai_surface.reachability_payload(conn, run_id, site)
+    conn.close()
+    by = {r["agent"]: r for r in now["rows"]}
+    assert by["ClaudeBot"]["state"] == "edge policy" and by["ClaudeBot"]["got"] == "403"
+    assert by["OAI-SearchBot"]["state"] == "unstated block"
+    assert by["OAI-SearchBot"]["shown"] == "—"
+    assert by["Applebot"]["state"] == "reachable"
 
 
 def test_the_field_columns_render_only_when_the_source_is_set(tmp_path):
@@ -431,3 +447,45 @@ def test_a_brief_row_on_a_free_check_is_dropped():
                      _row("AIS/id-page-absent", None, severity="HIGH")])
     assert [r.check for r in p.rows] == ["AIS/id-page-absent"]
     assert "free check; the automatic checks measure it" in p.dropped[0]["reason"]
+
+
+# --- item 267: a free check the sweep did not assess is not the sweep's ------
+
+def _parse_with(sweep, **over):
+    from clauditseo.analysts.contract import Rules
+    b = _brief()
+    return parse(_block(**over), list(b.checks), PAGES, defaults=default_severities(),
+                 reads=list(b.reads), inputs={"LLMS_TXT_BUILD": "true"},
+                 rules=Rules(**sweep))
+
+
+def test_a_brief_row_on_a_free_check_the_sweep_did_not_assess_is_kept_and_says_why():
+    # twenty22: the free line said "sameas_sources on the site record is
+    # empty" and the dropped list said the automatic checks measure it.
+    why = "sameas_sources on the site record is empty; set it on Admin › Sites"
+    p = _parse_with({"sweep_raised": {}, "sweep_measured": {"AIS"},
+                     "sweep_unassessed": {"AIS/entity-unresolvable": why}},
+                    rows=[_row("AIS/entity-unresolvable", "https://site.test/")])
+    assert [r.check for r in p.rows] == ["AIS/entity-unresolvable"]
+    assert f"the automatic checks did not assess entity-unresolvable: {why}" in p.rows[0].note
+    assert not p.dropped
+
+
+def test_a_dropped_free_row_names_what_the_sweep_found():
+    p = _parse_with({"sweep_raised": {"llms-txt-missing": {"/"}}, "sweep_measured": {"AIS"},
+                     "sweep_unassessed": {}},
+                    rows=[_row("AIS/entity-unresolvable", "https://site.test/"),
+                          _row("AIS/llms-txt-missing", "https://site.test/")])
+    assert not p.rows
+    reasons = [d["reason"] for d in p.dropped]
+    assert "the automatic checks measured it and did not raise it" in reasons[0]
+    assert "the automatic checks measured it and raised it on 1 page," in reasons[1]
+
+
+def test_a_site_row_the_sweep_raised_on_no_page_is_said_raised():
+    # twenty22: `llms-txt-missing` is filed with no page, and the drop said
+    # the automatic checks "did not raise it" beside a table row raising it.
+    p = _parse_with({"sweep_raised": {"llms-txt-missing": set()}, "sweep_measured": {"AIS"},
+                     "sweep_unassessed": {}},
+                    rows=[_row("AIS/llms-txt-missing", "https://site.test/")])
+    assert "the automatic checks measured it and raised it for the site" in p.dropped[0]["reason"]

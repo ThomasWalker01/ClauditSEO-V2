@@ -133,7 +133,9 @@ def test_the_standing_pill_names_the_run_the_counts_come_from(browser, served):
     assert current["last_move"], current
     assert got["pillRun"] == current["last_move"]["run_id"], got
     assert got["pillHref"] == f"#/runs/{current['last_move']['run_id']}", got
-    assert got["pillText"].startswith(f"as of {current['last_move']['at'][:10]} {current['last_move']['at'][11:16]}"), got["pillText"]
+    # The screen's local stamp (item 248), not a slice of the UTC string.
+    from tests import localtime
+    assert got["pillText"].startswith(f"as of {localtime.stamp(current['last_move']['at'])}"), got["pillText"]
     # Item 239 step 5: the header's current audit, where the picker was.
     assert got["current"], "the bar names no current audit, so neither arm asserts anything"
     if current["last_move"]["run_id"] == got["current"]:

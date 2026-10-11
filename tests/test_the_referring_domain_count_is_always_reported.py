@@ -30,11 +30,17 @@ def test_a_count_above_the_floor_is_reported():
     assert row.evidence["referring_domains"] == LOW_REFERRING_DOMAINS + 40
     assert row.scope_statement and row.severity.value == "info"
     assert "low-referring-domains" not in got
+    # Item 278 (row 3): the sentence states the floor, and points at no row
+    # the part does not draw.
+    assert row.summary == ("50 referring domains (moz), above the floor of 10 under "
+                           "which this part raises a fault."), row.summary
 
 
 def test_a_count_under_the_floor_is_reported_and_is_the_fault():
     got = _by_check(3)
     assert {"referring-domains-reported", "low-referring-domains"} <= set(got), sorted(got)
+    assert "3 referring domains (moz), below the floor of 10" in got[
+        "referring-domains-reported"].summary
 
 
 def test_the_new_row_is_registered_where_its_sibling_is():

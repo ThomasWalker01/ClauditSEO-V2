@@ -32,7 +32,7 @@ clauditseo/
                 budget-bounded, error-tolerant), cache, ingest validation
   persistence/  repository layer — the only code that executes SQL
   db/           SQLite connection + numbered SQL migrations
-  api/          FastAPI app + deterministic history chat
+  api/          FastAPI app
   reporting/    templates, honesty checks, generation
 dashboard/      React/Vite operator UI (hash-routed, no extra runtime deps)
 ```
@@ -94,5 +94,5 @@ Every phase shipped behind a gate that still runs in `tests/`:
 - G4 open → fixed → regressed lifecycle; three-point trend
 - G5 keyless completeness, injection defence, cache = zero tokens, ingest
   rejection
-- G6 dashboard e2e smoke incl. regression banner, analyst band, chat citation
+- G6 dashboard e2e smoke incl. regression banner, analyst band
 - G7 no unsourced numbers; no narrative numbers absent from evidence

@@ -19,18 +19,21 @@
  * A site no audit has completed on says so in words. Its score was an em-dash in
  * a column, which read as missing data; it is a state.
  */
-import { LinkButton, SecondaryButton } from "./buttons";
+import { LinkButton, PrimaryButton, SecondaryButton } from "./buttons";
 import { useEffect, useState } from "react";
 import { Meta, RunStatus, api, hasScore, useFetch } from "./api";
 import {
-  ErrorNote, Loading, PricedFrame, RunStatusChip, ScoreBadge, money,
+  ErrorNote, Loading, PricedFrame, RunStatusChip, ScoreBadge, WatchedChange, alertHref,
+  changedWords, money, worstOf,
+  SPEND_KEPT,
 } from "./components";
 import { Legend } from "./glossary";
 import { coverageNotes } from "./population";
 import { host, useSelection } from "./selection";
-import { Pill } from "./pill";
+import { Pill, type Tone } from "./pill";
 import { DangerButton } from "./spend";
 import { goHandler } from "./nav";
+import { ReportHeld } from "./report_hold";
 
 type Row = {
   client: string; client_id: string; site_id: string; domain: string;
@@ -48,14 +51,24 @@ type Row = {
   narrow_score?: number | null; narrow_scope?: string | null;
   /** When that narrow reading ran (item 180). */
   narrow_at?: string | null;
+  /** A part-only re-check newer than the score ("Links only"), and when.
+   *  The score and its movement are the newest full audit's. */
+  recheck_label?: string | null;
+  recheck_at?: string | null;
+  /** When the scored audit ran, which a re-check makes older than the last run. */
+  score_at?: string | null;
   last_run_at: string | null; last_run_id: string | null;
   /** The newest audit's status, which is not always the scored one.
    *  `/api/overview` has emitted this since `blocked` became a status,
    *  specifically so a blocked crawl is not reported as the previous run's
    *  healthy score. */
   last_run_status: RunStatus | null;
-  open: number; regressed: number; candidate: number;
-  watch: { change_count?: number }[] | number | null;
+  open: number; regressed: number; candidate: number; to_confirm?: number;
+  /** Open or regressed Critical and High in the site's record: what holds the
+   *  client report (item 252). */
+  severe_open?: number;
+  /** What the watch saw change since the last audit (`watch_changes`). */
+  watch: WatchedChange[] | number | null;
   schedule_state: "overdue" | "scheduled" | "manual" | "waiting";
   next_pass_at: string | null; why: string;
 };
@@ -82,12 +95,6 @@ function ago(iso: string | null): string {
   if (!iso) return "never";
   const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
   return days <= 0 ? "today" : days === 1 ? "yesterday" : `${days} days ago`;
-}
-
-function watchCount(w: Row["watch"]): number {
-  if (typeof w === "number") return w;
-  if (Array.isArray(w)) return w.length;
-  return 0;
 }
 
 /** The headline's last clause: what runs without anyone asking (item 177 says
@@ -124,6 +131,11 @@ export function HomeView() {
   const open = sites.reduce((n, s) => n + s.open, 0);
   const regressed = sites.reduce((n, s) => n + s.regressed, 0);
   const allScheduled = sites.length > 0 && sites.every((s) => s.schedule_state !== "manual");
+  // With no sites, adding one is the first thing to do (item 260 row 2,
+  // screen audits round 3 Home UX-01): "Set a cadence" was primary and
+  // opened an empty grid, and the control that does it was third and closed.
+  const noSites = sites.length === 0;
+  const addOpen = adding || noSites;
   const cadenceAt = "#/admin?tab=cadence";
   const auditAt = siteId ? `#/sites/${siteId}?tab=history` : null;
   const refresh = () => setTick((t) => t + 1);
@@ -164,28 +176,37 @@ export function HomeView() {
           <div className="bl-buttons">
             {/* Primary while any site is manual (item 177): the finding stays
                 visible without Home becoming a setup wizard. */}
-            <LinkButton primary={!allScheduled}
-                  className={allScheduled ? "bl-secondary" : "bl-primary"}
-                  href={cadenceAt}>
-              Set a cadence
-            </LinkButton>
+            {!noSites && (
+              <LinkButton primary={!allScheduled}
+                    className={allScheduled ? "bl-secondary" : "bl-primary"}
+                    href={cadenceAt}>
+                Set a cadence
+              </LinkButton>
+            )}
             {auditAt && (
               <LinkButton className="bl-secondary" href={auditAt}
                     onClick={goHandler(auditAt)}>
                 Audit a site now
               </LinkButton>
             )}
-            <SecondaryButton className="bl-secondary home-add-open"
-                  aria-expanded={adding} onClick={() => setAdding(!adding)}>
-              Add a client or site
-            </SecondaryButton>
+            {noSites ? (
+              <PrimaryButton className="bl-primary home-add-open"
+                    aria-expanded={addOpen} onClick={() => setAdding(!adding)}>
+                Add a client or site
+              </PrimaryButton>
+            ) : (
+              <SecondaryButton className="bl-secondary home-add-open"
+                    aria-expanded={addOpen} onClick={() => setAdding(!adding)}>
+                Add a client or site
+              </SecondaryButton>
+            )}
           </div>
         </div>
       </div>
 
-      {adding && (
+      {addOpen && (
         <section className="home-add" aria-label="Add a client or site">
-          <AddForms businessTypes={businessTypes} onAdded={refresh} />
+          <AddForms businessTypes={businessTypes} onAdded={refresh} version={tick} />
           <ClientsDisclosure onChanged={refresh} version={tick} />
         </section>
       )}
@@ -215,7 +236,6 @@ export function HomeView() {
 function SiteCard({ row: s, businessTypes, onChanged }: {
   row: Row; businessTypes: string[]; onChanged: () => void;
 }) {
-  const changes = watchCount(s.watch);
   const audited = s.last_run_at != null;
   /** Read only by a page or nav scan (item 180, 01-2): not "never audited". */
   const narrowOnly = !audited && s.narrow_score != null;
@@ -252,13 +272,43 @@ function SiteCard({ row: s, businessTypes, onChanged }: {
         </> : <>
           {s.regressed > 0 && <strong className="regressed">{s.regressed} back after a fix. </strong>}
           {s.open} open{s.notes ? ` · ${coverageNotes(s.notes)} not counted` : ""},
-          {" "}{s.candidate} seen once. Audited {ago(s.last_run_at)}{moved}.
+          {" "}{(s.to_confirm ?? 0) > 0 ? `${s.to_confirm} to confirm, ` : ""}
+          {s.candidate - (s.to_confirm ?? 0)} seen once. Audited {ago(s.recheck_label ? s.score_at ?? null : s.last_run_at)}{moved}.
           {s.score == null && s.narrow_score != null && (
             <> The score is a {s.narrow_scope} scan, not a site score.</>
           )}
+          {s.recheck_label && (
+            <span> The newest run re-checked {s.recheck_label.replace(/ only$/, "")}
+              {" "}only ({ago(s.recheck_at ?? null)}); the score is the last full audit's.</span>
+          )}
         </>}
-        {changes > 0 && <> {Count(changes)} change{changes === 1 ? " is" : "s are"} being watched.</>}
       </p>
+      {/* Item 260: the watch's alert in the landing's words and tone - the
+          worst severity, and what changed - opening the landing with the
+          alert line open. It read "One change is being watched.": a count
+          whose verb said the product had it in hand, for alerts that run
+          from llms.txt at medium to a robots.txt that stopped answering at
+          critical. */}
+      {Array.isArray(s.watch) && s.watch.length > 0 && (() => {
+        const worst = worstOf(s.watch.map((c) => c.severity));
+        return (
+          <p className={`home-card-watch alert-${worst}`}>
+            <a className="home-card-watch-go" href={alertHref(s.site_id)}
+               onClick={goHandler(alertHref(s.site_id))}>
+              <Pill tone={`sev-${worst}` as Tone}>{worst}</Pill>{" "}
+              {changedWords(s.watch)}
+            </a>
+          </p>
+        );
+      })()}
+      {/* Item 252: the hold, in the words the landing and Reports use, and a
+          door to the rows it counts. Home held neither the count nor the way
+          in, so what blocks the deliverable was one screen further on. */}
+      {(s.severe_open ?? 0) > 0 && (
+        <p className="home-card-hold">
+          <ReportHeld count={s.severe_open ?? 0} siteId={s.site_id} />
+        </p>
+      )}
       <div className="home-card-foot">
         <span className={`home-tag${audited ? "" : " home-tag-warn"}`}>
           {audited ? `audited ${ago(s.last_run_at)}`
@@ -490,7 +540,7 @@ function SiteDelete({ row, onDeleted }: { row: Row; onDeleted: () => void }) {
       <DangerButton busy={busy} label={`delete the site ${row.domain}`}
                     confirm={{ title: `Delete ${row.domain}?`,
                                body: <p>This permanently removes every audit, all findings and
-                                 the full trend history for this site.</p>,
+                                 the full trend history for this site. {SPEND_KEPT}</p>,
                                action: "Delete the site" }}
                     onConfirm={async () => {
               setBusy(true);
@@ -532,7 +582,7 @@ function ClientsDisclosure({ onChanged, version }: { onChanged: () => void; vers
                     confirm={{ title: `Delete client "${c.name}"?`,
                                body: <p>This permanently removes its {c.site_count} site
                                  {c.site_count === 1 ? "" : "s"}, every audit, all findings and the
-                                 full trend history.</p>,
+                                 full trend history. {SPEND_KEPT}</p>,
                                action: "Delete the client" }}
                     onConfirm={async () => {
                       setError(null);
@@ -553,10 +603,12 @@ function ClientsDisclosure({ onChanged, version }: { onChanged: () => void; vers
   );
 }
 
-function AddForms({ businessTypes, onAdded }: {
-  businessTypes: string[]; onAdded: () => void;
+function AddForms({ businessTypes, onAdded, version }: {
+  businessTypes: string[]; onAdded: () => void; version: number;
 }) {
-  const { data } = useFetch<{ id: string; name: string }[]>("/api/clients");
+  // Re-read on `version` too: a client deleted under Clients below used to
+  // stay in this picker until the page was reloaded.
+  const { data } = useFetch<{ id: string; name: string }[]>("/api/clients", version);
   // `onAdded` re-reads this screen's own table. The picker in the app chrome
   // is a different list with a different owner, and it has to be told too.
   const { refreshSites } = useSelection();
@@ -565,6 +617,10 @@ function AddForms({ businessTypes, onAdded }: {
   const [domain, setDomain] = useState("");
   const [kind, setKind] = useState("");
   const [busy, setBusy] = useState(false);
+  // A chosen client that has since been deleted is no longer a choice.
+  useEffect(() => {
+    if (client && data && !data.some((c) => c.id === client)) setClient("");
+  }, [client, data]);
   const [error, setError] = useState<string | null>(null);
 
   const run = async (what: () => Promise<unknown>) => {

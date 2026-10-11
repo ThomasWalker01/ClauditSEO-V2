@@ -196,6 +196,7 @@ button.tone-action-primary:hover { filter: brightness(1.06); }
 .tone-state-candidate { color: var(--text-muted);
                         border-color: var(--border); border-style: dashed; }
 .tone-state-withdrawn { color: var(--text-muted); border-color: var(--border-strong); }
+.tone-state-set-aside { color: var(--text-muted); border-color: var(--border-strong); border-style: dashed; }
 .tone-state-accepted  { color: var(--text-muted); border-color: var(--border-strong); }
 
 /* who found it — text, no fill; a dot or small tag beside it carries the rest */
@@ -985,6 +986,22 @@ span.figure-frame {
 .pre-down { color: var(--danger); }
 .pre-added { color: var(--good); }
 .pre-removed { color: var(--danger); }
+/* When a card's or a Now block's measurement was taken (item 251). */
+.fix-measured, .dossier-measured { font-size: 0.75rem; }
+/* What a stored report was built over, under its template (item 251). */
+.report-built-over { font-size: 0.75rem; }
+/* The compare screen's "showing 25 of N" line under a capped list. */
+.compare-more { font-size: 0.75rem; margin: .35rem 0 0; }
+.now-measured { font-size: 0.75rem; margin: 0 0 .35rem; }
+/* A model row the automatic checks have stopped seeing (item 249). */
+.fix-unseen { color: var(--warn-strong); font-size: 0.75rem; }
+/* An analysis written under a brief that has since changed (item 249). */
+.prov-earlier-brief, .fix-earlier-brief { color: var(--warn-strong); }
+.fix-earlier-brief { font-size: 0.75rem; }
+/* Against a crawl the lists are neither arrivals nor departures (item 254). */
+.pre-neutral { color: var(--text); }
+/* A check older than the last audit: its counts describe an earlier site. */
+.pre-cost.pre-stale { color: var(--warn-strong); }
 .pre-files { font-size: .78rem; color: light-dark(#8a6a12, #e8c96a); }
 .pre-moved { display: inline-block; margin-right: .6rem; font-size: .8rem; }
 .pre-moved summary { cursor: pointer; }
@@ -1042,6 +1059,7 @@ button.chip:hover, button.chip:focus-visible { border-color: var(--border-strong
 .reaudit .sec-refresh-confirm, .reaudit .sec-refresh-done { margin: 0 0 .7rem; }
 .reaudit-depth, .reaudit-sweep { margin-bottom: .6rem; }
 .reaudit-more { cursor: pointer; color: var(--text-muted); }
+.reaudit-domain, .reaudit-pages-note { font-size: .8rem; margin: .25rem 0 .5rem; }
 .reaudit-why { margin-top: .4rem; font-size: .78rem; }
 .reaudit-why summary { cursor: pointer; }
 .reaudit-why p { margin: .4rem 0 0; }
@@ -1071,6 +1089,15 @@ button.chip:hover, button.chip:focus-visible { border-color: var(--border-strong
 .age-recheck { font-size: .75rem; padding: 0 .4rem; }
 .prov-range { display: block; }
 .age-days { width: 5rem; }
+.parts-seen-once { font-size: .72rem; }
+/* In the sticky switcher, "+N" in place of "· N seen once" (the words stay
+   for a screen reader), so the pills keep to the strip's two rows. */
+.parts-seen-plus { display: none; }
+.part-switch .parts-seen-sep { display: none; }
+.part-switch .parts-seen-plus { display: inline; }
+.part-switch .parts-seen-word { position: absolute; width: 1px; height: 1px; padding: 0;
+                                margin: -1px; overflow: hidden; clip: rect(0 0 0 0);
+                                white-space: nowrap; border: 0; }
 .parts-stale { font-size: .7rem; font-weight: 600; color: var(--danger, var(--warn)); }
 .fix-superseded { font-size: .8rem; }
 /* Why a brief may not run against the picker's run (brief v6 step V3). */
@@ -1425,6 +1452,9 @@ td.num .prev-outside { font-size: .9em; }
 .record-what[open] summary { display: block; margin-bottom: .3rem; }
 .crawl-diff-gate { margin: .8rem 0; font-size: .85rem; }
 .group-states, .group-n { font-size: .74rem; white-space: nowrap; }
+/* When a row or group last changed (screen audits round 3, Record US-01):
+   its own class, because tests read `.group-n` as the group's count. */
+.group-since { font-size: .74rem; white-space: nowrap; }
 .group-confirm td { background: var(--info-bg); border-left: 3px solid var(--info);
                     font-size: .84rem; }
 .table-scroll { overflow-x: auto; }
@@ -1657,6 +1687,19 @@ td.num .prev-outside { font-size: .9em; }
 
 /* Which page a page-scoped brief read, under its name in the reports table. */
 .rep-page { font-size: .72rem; word-break: break-all; max-width: 26rem; }
+/* Item 265: Speed in page mode names the template the page was traced for. */
+.sp-this-page { margin: 0 0 var(--s2); }
+/* Item 257: which run a crawl row was. */
+.dossier-run { white-space: nowrap; }
+/* Item 256: what a generated document is made from. */
+.report-gen-from { max-width: 72ch; }
+/* What the generator asks to be checked before sending (screen audits round 3,
+   Reports UX-01): a bordered note, not a warning tone - it is a checklist. */
+.report-gen-warnings { max-width: 72ch; margin: .5rem 0; padding: .5rem .75rem;
+  border: 1px solid var(--border-strong); border-radius: .35rem; }
+.report-gen-warnings p, .report-gen-warnings ul { margin: .2rem 0; }
+/* Item 252: where an analysis row opens, or why it has no door. */
+.rep-open { white-space: nowrap; font-size: .78rem; }
 
 /* One sentence under a view title saying what the screen is. */
 .view-lede { max-width: 78ch; margin: -.3rem 0 1rem; font-size: .92rem; }
@@ -1899,6 +1942,19 @@ a.cur-when:hover, a.cur-when:focus-visible { color: var(--accent);
 .fig-link:hover, .fig-link:focus-visible { text-decoration-thickness: 2px; }
 /* The one door that is a sentence (item 207): a block-level target, 24px. */
 .cl-entry-go { display: inline-block; min-height: 24px; padding-block: 3px; color: inherit; }
+/* Item 275 (row 9): a card's page link, at the 24px target floor. */
+.fix-page a { display: inline-block; min-height: 24px; min-width: 24px; padding-block: 3px; }
+.fix-record { white-space: nowrap; display: inline-block; min-height: 24px; padding-block: 3px; }
+.fix-record-at { font-size: .78rem; }
+/* Item 269 (row 8): the page screenshot capped to a 900 px scroll box. */
+.tp-overlay-cap { max-height: 900px; overflow-y: auto; }
+/* Item 275 (row 10): the URLs a site-subject finding names. */
+.fix-urls { font-size: .78rem; margin: var(--s1) 0; }
+.fix-urls ul { margin: 2px 0 0; padding-left: 1.2em; }
+/* Item 269 (row 8): the way from a long page-mode tab to its cards. */
+.ctab-jump { margin: var(--s1) 0; }
+/* Item 275 (row 12): the Crawl verdict over its tiles. */
+.cn-verdict { font-size: var(--fs-ui); margin: 0 0 var(--s1); }
 .catalogue-only { margin: 0 0 var(--s2); }
 /* Items 209, 210, 212, 218: what an analysis returned and kept, said on the
    part page in its own voice - the accounting at the table's size, the
@@ -1908,6 +1964,7 @@ a.cur-when:hover, a.cur-when:focus-visible { color: var(--accent);
 .rep-dropped summary { cursor: pointer; }
 .rep-dropped-rows { margin: var(--s1) 0 0; padding-left: 1.2em; }
 .rep-dropped-rows li { margin: 2px 0; }
+.rep-dropped-pages { margin: 2px 0 4px; }
 .brief-accounting { font-size: var(--fs-ui); margin: var(--s2) 0 0; }
 .brief-prose { margin: var(--s2) 0 0; }
 .brief-prose > summary { cursor: pointer; font-size: var(--fs-ui); }
@@ -2107,7 +2164,9 @@ a.seq-name:hover, a.seq-name:focus-visible { text-decoration: underline; }
    hover, and the selected row's green, both themes. The first unread grey
    failed on two of the six (2.50:1 on selected dark); this one's worst case
    is 4.00:1. */
-.cat-dot { width: 10px; height: 10px; border-radius: 50%; flex: none;
+/* inline-block (screen audits round 3, shop UI-01): inside a table cell the
+   span was inline, so width and height were ignored and a 4 px sliver drew. */
+.cat-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex: none;
            border: 2px solid; box-sizing: border-box; }
 .cat-read   { background: var(--an-solid); border-color: var(--an-solid); }
 .cat-live   { background: var(--warn-bg);
@@ -2986,6 +3045,9 @@ tr.marked .f-sum { text-decoration: line-through; text-decoration-thickness: 1px
 .fix-name { font-size: .88rem; }
 .fix-check { font-size: .74rem; }
 .fix-src, .fix-page { font-size: .74rem; }
+/* Item 266 (row 13): the page is the card's subject - its own line under the
+   title, at body size; the pills stay on line one. */
+.fix-head .fix-page { flex-basis: 100%; order: 99; font-size: .84rem; }
 .fix-copy { margin-left: auto; }
 /* Item 237: the operator's three answers to an analysis finding that waits for them. */
 .fix-confirm { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.4rem 0; }
@@ -3000,6 +3062,18 @@ tr.marked .f-sum { text-decoration: line-through; text-decoration-thickness: 1px
 
 /* Every check of the part on the whole-site view. */
 .checks-table { width: 100%; }
+/* Item 270 (row 17): the free and the analysis tables on one grid - the same
+   widths for Severity and Check - so an id does not wrap mid-token in one and
+   sit on a line in the other. */
+.checks-table { table-layout: fixed; }
+.checks-table th:nth-child(1) { width: 6.5rem; }
+.checks-table th:nth-child(2) { width: 40%; }
+.checks-table td:nth-child(2) code { overflow-wrap: anywhere; }
+/* A fixed grid does not widen a column for a phrase that will not wrap, so
+   "8 of 45 pages crawled · 8 more in the record" ran over STATE (screen
+   audits round 3, Crawl UI-01). In this table the phrase wraps. */
+.checks-table .count-of, .checks-table .prev-outside { white-space: normal; }
+.checks-table td { overflow-wrap: anywhere; }
 .brief-summary { font-size: .78rem; margin: .4rem 0 0; }
 .act-busy { font-size: .76rem; align-self: center; }
 
@@ -3019,10 +3093,16 @@ tr.marked .f-sum { text-decoration: line-through; text-decoration-thickness: 1px
 .out-held { color: var(--text-muted); border-color: var(--border-strong); }
 .out-dim .out-tag, .out-tag.out-dim { color: var(--text-muted); border-color: var(--border); }
 .out-mark { background: var(--good-bg); color: var(--good); border-color: var(--good-border); }
+/* Item 268: the heading that skipped a level, on the page as it stands. */
+.out-skipped { background: var(--warn-bg); color: var(--warn); border-color: var(--warn-border); }
 .out-stub { margin: .15rem 0 0 1.4rem; font-size: .8rem; color: var(--text-soft); }
 .outline-was, .outline-now { margin-left: .6rem; }
 .fix-template { white-space: nowrap; }
+.fix-where { font-size: .8rem; margin: .3rem 0 0; overflow-wrap: anywhere; }
+.fix-done { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap;
+            font-size: .8rem; margin: .5rem 0 0; }
 .fix-na { font-size: .78rem; margin: .4rem 0 0; }
+.fix-na-ref .btn-link { font-size: inherit; }
 .out-link { font-size: .78rem; color: var(--text-muted); }
 .out-more { margin: .3rem 0 0; }
 
@@ -3143,6 +3223,7 @@ tr.marked .f-sum { text-decoration: line-through; text-decoration-thickness: 1px
 .write-brief { display: inline-flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
 .write-brief-state { font-size: .78rem; }
 .write-brief-error { font-size: .78rem; }
+.write-brief-read { flex-basis: 100%; font-size: .8rem; }
 .part-generate { margin: .4rem 0 0; }
 /* Triage's own ranking (brief v17 step AX): the model above it, the
    inputs beside each score, and blockers marked because the rule that
@@ -3193,7 +3274,7 @@ tr.marked .f-sum { text-decoration: line-through; text-decoration-thickness: 1px
 .fixorder-after { font-size: .74rem; }
 .fixorder-drift { font-size: .78rem; margin: 0 0 .4rem; }
 .fixorder-plot { display: flex; align-items: flex-end; gap: .5rem;
-                 list-style: none; margin: 0; padding: 0 0 2rem;
+                 list-style: none; margin: 0; padding: 0 0 3rem;
                  overflow-x: auto; }
 .fixorder-step { position: relative; display: flex; flex-direction: column;
                  justify-content: flex-end; align-items: center;
@@ -3207,14 +3288,18 @@ tr.marked .f-sum { text-decoration: line-through; text-decoration-thickness: 1px
 .fixorder-bar.tone-mute { background: var(--border-strong); }
 .fixorder-bar:focus-visible { outline: 2px solid var(--accent);
                               outline-offset: 2px; }
+.fixorder-bar[aria-pressed="true"] { outline: 2px solid var(--text);
+                                     outline-offset: 2px; }
+.fixorder-bar:disabled { cursor: default; }
 .fixorder-n { font-size: .72rem; font-weight: 600; color: var(--text); }
 /* The running remainder, as a dashed rule across the bar it follows. */
 .fixorder-rest { position: absolute; left: 0; right: 0; height: 0;
                  border-top: 1px dashed var(--border-strong);
                  pointer-events: none; }
-.fixorder-label { position: absolute; bottom: -1.9rem; left: 0; right: 0;
+.fixorder-label { position: absolute; bottom: -2.9rem; left: 0; right: 0;
                   font-size: .68rem; line-height: 1.2; text-align: center;
                   overflow-wrap: anywhere; color: var(--text-muted); }
+.fixorder-kind { display: block; font-style: italic; }
 .fixorder-axis { font-size: .76rem; margin: 1.4rem 0 0; }
 .fixorder-none { margin: .4rem 0; }
 
@@ -3443,6 +3528,17 @@ tr.marked .f-sum { text-decoration: line-through; text-decoration-thickness: 1px
 .strip-foot { display: flex; justify-content: space-between; font-size: .72rem;
               margin-top: .3rem; }
 .strip-counts { white-space: nowrap; }
+/* Item 277 (row 11): the pages with no canonical, as one line. */
+.cc-missing { font-size: var(--fs-ui); margin: var(--s1) 0; }
+/* Item 273 (row 12): the part's own count under its name. */
+.part-count { margin: 0 0 var(--s1); font-size: var(--fs-ui); }
+/* Item 273 (row 9): the cut drawn on the strip, and the pages within it. */
+.strip-plot { position: relative; }
+.strip-cutline { position: absolute; left: 0; right: 0; border-top: 1px dashed var(--text-dim);
+                 pointer-events: none; }
+.strip-cutline span { position: absolute; right: 0; bottom: 1px; font-size: .64rem;
+                      color: var(--text-dim); background: var(--surface); padding: 0 2px; }
+.strip-fit { color: var(--text-dim); }
 .strip-over { color: var(--danger); }
 .strip-short { color: var(--warn-strong); }
 .strip-missing { color: var(--text-dim); }
@@ -3469,6 +3565,11 @@ tr.marked .f-sum { text-decoration: line-through; text-decoration-thickness: 1px
                border: 1px solid var(--border); border-radius: 8px;
                background: var(--surface-2); padding: .7rem .85rem; }
 .strip-panel.pinned { border-color: var(--accent); }
+/* Empty, the panel keeps its height (item 146: a panel between two strips
+   that changes height moves the strip under the reader) and drops its fill,
+   so it reads as a place rather than a heavy blank box - item 273 row 9's
+   concern, met at the same height (channel ruling 20261011-1051). */
+.strip-panel:has(> .strip-panel-empty) { background: transparent; border-style: dashed; }
 .strip-panel-empty { height: 100%; margin: 0; display: flex; align-items: center;
                      justify-content: center; text-align: center;
                      color: var(--text-muted); font-size: .82rem; }
@@ -3799,12 +3900,13 @@ tr.marked .f-sum { text-decoration: line-through; text-decoration-thickness: 1px
 .secv { display: flex; flex-direction: column; gap: .15rem; padding: .6rem .8rem;
         border-radius: 6px; border: 1px solid var(--border); border-left-width: 4px;
         margin: 0 0 .8rem; }
-.secv b { font-size: .95rem; }
+.secv h3 { font-size: .95rem; margin: 0; }
 .secv span { font-size: .78rem; }
 .secv-clear { border-left-color: var(--good); }
 .secv-found { border-left-color: var(--danger); }
 .secv-none { border-left-color: var(--text-muted); }
 .seclayers { margin: 0 0 1rem; }
+.seclayers-caption { font-size: .78rem; margin: .35rem 0 0; }
 .seclayers-rail { display: flex; flex-direction: column; gap: .5rem;
                   border-left: 2px solid var(--border); padding-left: .8rem; }
 .seclayer { min-width: 0; }
@@ -3983,6 +4085,10 @@ button.seccard[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--focus, var(--a
 .cl-landing .cl-entry dd.fig-danger { background: var(--danger-bg); color: var(--danger); }
 .cl-landing .cl-entry dd.fig-good { background: var(--good-bg); color: var(--good); }
 .cl-landing .cl-entry dd.fig-quiet { background: transparent; color: var(--text-dim); }
+/* Item 252: a count with no door is not drawn as a figure. After the tones,
+   so a doorless warn or good count loses its chip too. */
+.cl-entry dd.fig-plain, .cl-landing .cl-entry dd.fig-plain {
+  background: transparent; color: var(--text-muted); font-weight: 400; }
 /* The sentence and its actions sit under the title, not under the chip. */
 .cl-landing .cl-entry dd.cl-entry-detail { grid-column: 2; grid-row: 2; margin: 0; }
 /* Item 173 part 8: an entry's actions are outlined buttons, which is what makes
@@ -4015,6 +4121,8 @@ button.seccard[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--focus, var(--a
 .narrow-line { margin: .4rem 0 .6rem; font-size: .82rem; }
 .narrow-clear { margin-left: .3rem; }
 .un-template.on code { font-weight: 700; }
+/* Item 266 (row 11): pressed is more than weight - the rule and wash .sp-pick.on uses. */
+.un-template.on { box-shadow: inset 3px 0 0 var(--accent); background: var(--surface-sunken); }
 
 /* Brief v25 step BP: URLs & parameters on the three-block layout reflowed
    past 320 px by one checks-table count ("... of 16 pages crawled" held on
@@ -4076,6 +4184,13 @@ button.seccard[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--focus, var(--a
 .ai-line { margin: .35rem 0; }
 .ai-unmeasured { margin: .75rem 0 0; padding-top: .5rem; border-top: 1px solid var(--border); }
 .ai-register ul { margin: .25rem 0 .75rem; padding-left: 1.1rem; }
+.ai-register summary { cursor: pointer; }
+.ai-standing, .ai-clean-reads { font-size: .8rem; margin: 0 0 .75rem; }
+.cn-ok-agents { margin: .25rem 0 .75rem; }
+.links-dist { font-size: .8rem; margin: .25rem 0 .75rem; }
+.prov-runs { font-size: .78rem; margin: .25rem 0 0; padding-left: 1.1rem; }
+.links-hub { overflow-wrap: anywhere; }
+.ai-register summary h3 { display: inline; margin: 0; }
 .ai-absent code { font-size: .8rem; }
 .ai-candidates { margin: .5rem 0; padding-left: 1.1rem; }
 .ai-sentence { color: var(--text); }
@@ -4212,6 +4327,11 @@ button.seccard[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--focus, var(--a
 /* The client report's hold (report_hold.tsx), drawn one way on the strip and
    beside Generate. `.nav-held` is gone with the mark it wrapped: see the note
    in `App.tsx` where the component was. */
+.home-card-hold { margin: var(--s2) 0 0; }
+/* Item 260: the watch's alert on the card, a door to the landing's line. */
+.home-card-watch { margin: var(--s2) 0 0; }
+.home-card-watch-go { display: inline-flex; align-items: center; gap: .35rem; min-height: 24px;
+                      color: var(--text); text-decoration: underline; text-underline-offset: .18em; }
 .report-held { color: var(--warn); font-weight: 600; font-size: var(--fs-ui); }
 .report-held-go { margin-left: var(--s2); font-weight: 500; }
 /* Item 178: a destructive control is a row-height from the save beside it -
@@ -4226,6 +4346,12 @@ button.seccard[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--focus, var(--a
    the block says so where a reader counting cards would otherwise find a
    difference. Sits under the heading, above the first section. */
 .part-fix-notes { margin: 0 0 var(--s3); font-size: var(--fs-ui); }
+/* Item 270: analysis rows the automatic checks overtook, one line a check. */
+.part-fix-overtaken { margin: 0 0 var(--s3); font-size: var(--fs-ui); }
+.part-fix-overtaken > summary { cursor: pointer; }
+.part-fix-overtaken-pages { margin: var(--s2) 0 0; font-size: .8rem; }
+/* Item 269: an analysis verdict, said as one sentence and not as a change. */
+.fix-override { color: var(--text-soft); }
 /* Item 181: the landing's headline is the page's h1, drawn exactly as the
    sentence it wraps - the heading adds structure, not a look. */
 .bl-h1 { margin: 0; font: inherit; }
@@ -4336,3 +4462,15 @@ summary { min-height: 24px; padding-block: 3px; box-sizing: border-box; }
 .sd-elig-pages { display: inline; margin-left: .35rem; }
 .sd-elig-pages > summary { display: inline; cursor: pointer; color: var(--text-muted); }
 .sd-elig-pages ul { margin: .2rem 0 .3rem; padding-left: 1.1rem; }
+/* The stated target locales on the International part (migration 0074). */
+.intl-target { margin-top: var(--s3); display: flex; flex-direction: column; gap: var(--s1); }
+.intl-target-row { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; }
+.intl-target-input { flex: 1 1 16rem; min-width: 0; }
+.intl-target-hint, .intl-target-note { font-size: .75rem; margin: 0; }
+/* Item 279: the coverage notes, each in its own words. */
+.part-fix-notes p { margin: 0; }
+.part-fix-notes-list { margin: var(--s1) 0 0; padding-left: 1.2rem; font-size: .8rem; }
+/* Item 275: a tile whose instrument did not run. */
+.cn-unmeasured { color: var(--text-muted); }
+/* Items 274, 276: analysis checks with no row, which are not a pass. */
+.cause-unreturned-line { font-size: var(--fs-ui); margin: var(--s1) 0; }

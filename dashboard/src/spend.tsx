@@ -20,6 +20,7 @@ import { SpendMark, money } from "./components";
 import { SPEND_WORDS, useConfirm, type ConfirmAsk } from "./confirm";
 import { Pill } from "./pill";
 import { host, runShortLabel, useSelection } from "./selection";
+import { day } from "./dates";
 
 /** A price as a spend control says it: a figure, or the registry's word.
  *  `undefined` is "not read yet" and says so. */
@@ -132,7 +133,7 @@ export function SpendTarget({ pages = null, page = null, runId: given }: {
     <p className="confirm-target">
       On <strong>{site ? host(site.domain) : "the selected site"}</strong>
       {run ? <>, reading audit <strong>{runShortLabel(run)}</strong>
-        {" "}of {(run.finished_at || run.started_at).slice(0, 10)}</>
+        {" "}of {day(run.finished_at || run.started_at)}</>
         : runId ? <>, reading audit <strong>{runId.slice(0, 8)}</strong></> : null}
       {page ? <>, for <strong>{page}</strong></>
         : pages != null ? <>, over <strong>{pages} page{pages === 1 ? "" : "s"}</strong></> : null}.

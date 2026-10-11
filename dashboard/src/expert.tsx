@@ -148,6 +148,7 @@ const TIER_NOTE: Record<string, string> = {
 // precision and carried no currency. One owner in components.tsx now, and
 // re-exported here because callers already import `money` from this module.
 import { money } from "./components";
+import { day } from "./dates";
 export { money };
 
 /** What this brief has typically cost. Dollars once rates are configured,
@@ -176,10 +177,19 @@ type BriefMeta = { typical_cost?: number | null; typical_tokens?: number | null;
 const words = (s?: string) => (s ? s.trim().split(/\s+/).length : 0);
 
 type StoredResult = { tool: string; created_at: string; findings: number;
-                      cost?: number | null };
+                      cost?: number | null;
+                      /** The run the report is stored under (the dossier's listing, item 251). */
+                      run_id?: string };
 
-export function ExpertPanel({ runId, siteId, tools: given, url, heading, blurb }:
+export function ExpertPanel({ runId, siteId, tools: given, url, heading, blurb,
+                              latestForPage = false }:
     { runId: string;
+      /** The dossier's mode (item 251): list the newest stored report of each
+       *  analysis for this page across the site's runs, and open it from the
+       *  run it is stored under. A run of an analysis still goes to `runId`,
+       *  the run that last measured the page. Without it the panel is one
+       *  run's, as it always was. */
+      latestForPage?: boolean;
       /** Which site's history the prices below are drawn from — UX-77.
        *
        *  Required rather than optional, deliberately. An optional prop would
@@ -238,7 +248,10 @@ export function ExpertPanel({ runId, siteId, tools: given, url, heading, blurb }
   const [stored, setStored] = useState<Record<string, StoredResult>>({});
   const [loaded, setLoaded] = useState(false);
   const reloadStored = () =>
-    api.get<{ results: StoredResult[] }>(`/api/runs/${runId}/expert`)
+    api.get<{ results: StoredResult[] }>(
+      latestForPage && url
+        ? `/api/sites/${siteId}/page-reports?url=${encodeURIComponent(url)}`
+        : `/api/runs/${runId}/expert`)
       .then((d) => {
         setStored(Object.fromEntries((d.results ?? []).map((r) => [r.tool, r])));
         setLoaded(true);
@@ -298,7 +311,11 @@ export function ExpertPanel({ runId, siteId, tools: given, url, heading, blurb }
     }
     setBusy(toolId);
     try {
-      const got = await api.get<Envelope>(`/api/runs/${runId}/expert/${toolId}`);
+      // From the run the report is stored under, which on the dossier may
+      // be older than the run that last measured the page (item 251).
+      const from = (latestForPage && stored[toolId]?.run_id) || runId;
+      const page = latestForPage && url ? `?url=${encodeURIComponent(url)}` : "";
+      const got = await api.get<Envelope>(`/api/runs/${from}/expert/${toolId}${page}`);
       setResults((r) => ({ ...r, [toolId]: got }));
       toggleReport(toolId, true);
     } catch {
@@ -414,8 +431,7 @@ export function ExpertPanel({ runId, siteId, tools: given, url, heading, blurb }
               audit.</strong>{" "}
               <span className="muted">
                 {ran.map((t) => t.name).join(", ")} — most recent{" "}
-                {ran.map((t) => stored[t.id].created_at).sort().slice(-1)[0]
-                  ?.slice(0, 10)}.
+                {day(ran.map((t) => stored[t.id].created_at).sort().slice(-1)[0])}.
                 {notRun.length > 0 && ` Not yet run: ${notRun.map((t) => t.name)
                   .join(", ")}.`}
               </span>
@@ -426,7 +442,7 @@ export function ExpertPanel({ runId, siteId, tools: given, url, heading, blurb }
               {" "}
               {/* UX-66. Stable caption, state on `aria-busy`, words in the
                   region below the tool list — the convention
-                  `views.tsx`'s `ReportView` states in full. */}
+                  `reports.tsx`'s `GenerateCard` states in full. */}
               {/* Item 178: priced on the control and confirmed, naming what runs. */}
               <SpendButton busy={busy !== null}
                            price={!metaRead ? undefined : outstanding > 0 ? outstanding : null}
@@ -509,9 +525,9 @@ export function ExpertPanel({ runId, siteId, tools: given, url, heading, blurb }
                   whole distinction and read as part of the name. */}
               {stored[t.id] && (
                 <span className="brief-ran"
-                      title={`Ran ${stored[t.id].created_at.slice(0, 10)} — `
+                      title={`Ran ${day(stored[t.id].created_at)} — `
                              + `${stored[t.id].findings} finding${stored[t.id].findings === 1 ? "" : "s"}`}>
-                  ✓ {stored[t.id].created_at.slice(0, 10)}
+                  ✓ {day(stored[t.id].created_at)}
                 </span>
               )}
             </SecondaryButton>
@@ -539,7 +555,7 @@ export function ExpertPanel({ runId, siteId, tools: given, url, heading, blurb }
                              confirm={{ title: `Run ${t.name} again?`,
                                         body: <><SpendTarget runId={runId} />
                                           <p>It replaces the report stored from{" "}
-                                            {stored[t.id].created_at.slice(0, 10)}.</p></>,
+                                            {day(stored[t.id].created_at)}.</p></>,
                                         action: `Re-run ${t.name}` }}
                              onSpend={() => run(t.id)}>
                   re-run

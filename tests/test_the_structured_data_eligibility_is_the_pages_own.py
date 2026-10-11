@@ -153,7 +153,10 @@ _SITE_JS = """() => {
     lines: lines.map((l) => ({
       head: [...l.childNodes].filter((n) => !(n instanceof HTMLDetailsElement))
                               .map((n) => n.textContent).join('').trim(),
-      count: (l.querySelector('summary')?.textContent || '').trim(),
+      // Item 270 (row 9): the count is in the line, the reasons under it.
+      count: ((l.firstChild && [...l.childNodes].filter((n) => !(n instanceof HTMLDetailsElement))
+               .map((n) => n.textContent).join('')) || '').split('·').pop().trim(),
+      reasons: (l.querySelector('details')?.textContent || ''),
       pages: [...l.querySelectorAll('details li button')].map((b) => b.textContent.trim()),
     })),
   };
@@ -175,7 +178,8 @@ def test_the_site_view_says_each_verdict_once_with_its_pages(browser, served):
         assert len(heads) == len(set(heads)) == 3, heads
         for line in got["lines"]:
             assert line["count"] and len(line["pages"]) == int(line["count"].split()[0]), line
-        degraded = next(line for line in got["lines"] if DEGRADED[2] in line["head"])
+        degraded = next(line for line in got["lines"] if DEGRADED[1] in line["head"])
+        assert DEGRADED[2] in degraded["reasons"], degraded
         assert degraded["count"] == "2 pages", degraded
         assert sorted(degraded["pages"]) == ["/blog/post", "/three-blocks"], degraded
         # Worst first: the degraded verdict leads the eligible one.

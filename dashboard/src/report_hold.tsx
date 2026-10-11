@@ -47,9 +47,14 @@ export const heldWords = (count: number): string =>
  *  running record - its open Critical and High, whichever audit last
  *  measured them (`open_severe`) - so the link carries no audit narrowing;
  *  `raised=` belongs to the history view. One writing, because three places
- *  say "held" - the landing's lane, the strip's Deliver step and Reports. */
+ *  say "held" - the landing's lane, the strip's Deliver step and Reports.
+ *
+ *  Item 252: `open,regressed`, not `open`. `open_severe` counts both states,
+ *  so a regressed Critical or High was counted by the hold and missing from
+ *  the table its door opened. The record reads the list as its "Open +
+ *  regressed" chip. */
 export function heldRecordHref(siteId: string): string {
-  return `#/sites/${siteId}?tab=all&state=open&sev=critical,high`;
+  return `#/sites/${siteId}?tab=all&state=open,regressed&sev=critical,high`;
 }
 
 /** "held for assessment · 3 Critical or High to assess", and the way to lift

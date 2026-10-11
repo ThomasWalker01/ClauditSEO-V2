@@ -80,8 +80,14 @@ CATEGORIES: tuple[Category, ...] = (
     # --- what you cannot fix by editing the site ------------------------
     Category("backlinks", "Backlinks", OFF_SITE,
              "Referring domains and the anchor text pointing in."),
+    # Item 278 (row 12): what the free checks measure. "NAP consistency"
+    # promised name, address and phone compared against the site's declared
+    # NAP; `nap-inconsistent` compares the phone numbers the pages show, and
+    # nothing compares a name or an address.
     Category("local", "Local & citations", OFF_SITE,
-             "NAP consistency, the business profile and directory presence."),
+             "Phone numbers across the site, local business markup, opening hours and "
+             "location pages; the business profile and directory presence where an "
+             "analysis reads them."),
     Category("ai-surface", "AI surface", OFF_SITE,
              "Whether AI crawlers can reach and quote the site."),
 
@@ -114,6 +120,7 @@ CHECK_CATEGORY: dict[str, str] = {
     # files under the part its brief writes to.
     "img-alt-decorative-nonempty": "images", "img-link-alt-not-destination": "images",
     "img-filename-generic": "images", "img-lcp-lazy": "images",
+    "img-alt-filename": "images",
     "img-dimensions-missing": "images", "img-oversized": "images",
     "img-no-srcset": "images", "img-sizes-wrong": "images",
     "img-legacy-format": "images", "img-weight-budget": "images",
@@ -252,6 +259,11 @@ CHECK_CATEGORY: dict[str, str] = {
     # Body text present only after JavaScript (brief v18 step AZ); the link half
     # of crawl.md's render-only stays with `links-behind-js` above.
     "render-only": "crawl",
+    # Item 247: the page's own scripts failing in the browser. Crawl's, with
+    # the other rendered-pass checks: what fails to run is what a reader
+    # that renders never gets.
+    "scripts-blocked-by-csp": "crawl", "page-script-error": "crawl",
+    "script-failed-to-load": "crawl",
     # crawl.md's brief-only checks (item 137): the two analysis checks and the
     # HELD server-refusal check. Categorised so they render on Crawl and are
     # costed (via TEC.BRIEF_ONLY_CHECKS) as model, though no sweep emits them.
@@ -723,7 +735,11 @@ def refresh_for(key: str) -> dict | None:
     label = BY_KEY[key].label
     return {"dimension": code,
             "also": [l for l in categories_for_dimension(code) if l != label],
-            "per_page": code not in _page_blind()}
+            "per_page": code not in _page_blind(),
+            # Item 278 (row 7): whether any crawl can move this part. OFP reads
+            # backlink providers, so a page count and a page-based time on
+            # its re-check priced a crawl that reads nothing it measures.
+            "crawl_blind": code in _crawl_blind()}
 
 
 def _page_blind() -> frozenset[str]:
@@ -741,6 +757,15 @@ def _page_blind() -> frozenset[str]:
     from clauditseo.engine import registry
 
     return frozenset(registry.page_blind_dims())
+
+
+def _crawl_blind() -> frozenset[str]:
+    """Dimension codes whose coverage no crawl can obtain, from the engine.
+    Imported inside the call for the reason `_page_blind` gives."""
+    import clauditseo.modules  # noqa: F401  (registers the dimensions)
+    from clauditseo.engine import registry
+
+    return frozenset(registry.crawl_blind_dims())
 
 
 def categorise(check_id: str, dimension: str) -> str:

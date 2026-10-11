@@ -54,6 +54,8 @@ export type CrawlDepth = {
   /** Of those, how many answered an error (item 229): the chart counts them,
    *  the "reached" figure beside it does not. */
   errored?: number;
+  /** The pages the bars are drawn over: those that answered (item 275, row 6). */
+  drawn?: number;
   /** The first depth the server calls deep, so "past three" is written down
    *  once, on the server, and read here. */
   deep_from: number;
@@ -148,9 +150,10 @@ export function CrawlDepthBlock({ depth, picked, onPick }: {
         Pages by clicks from the home page. Anything past three is hard for a
         crawler to keep fresh and hard for a person to find; anything at zero
         clicks that is not the home page arrived only through the sitemap.
-        {" "}Over the {depth.crawled} URL{depth.crawled === 1 ? "" : "s"} the crawl fetched
+        {" "}Over the {depth.drawn ?? depth.crawled} URL{(depth.drawn ?? depth.crawled) === 1 ? "" : "s"}
+        {" "}the crawl fetched that answered
         {(depth.errored ?? 0) > 0
-          ? `, including ${depth.errored} that returned an error`
+          ? `; ${depth.errored} that returned an error ${depth.errored === 1 ? "is" : "are"} left out, as the depth check leaves ${depth.errored === 1 ? "it" : "them"}`
           : ""}.
       </p>
     </>

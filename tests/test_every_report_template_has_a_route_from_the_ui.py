@@ -122,6 +122,20 @@ POSTED = re.compile(r'template:\s*"([\w-]+)"')
 #: control that spends is labelled with its verb first.
 GENERATOR = re.compile(r"^(re)?generat", re.I)
 
+
+def _verb_line(caption: str) -> str | None:
+    """The line of a button's text that leads with the verb, or None.
+
+    A spend button's text opens with its spend mark and that mark's words
+    ("$ / spends model tokens: / Generate / · no estimate yet"), and the run
+    report's Generate has been one since item 178. Its identity for the walk
+    is the verb's own line, which is also what it shares with the plain
+    button the same control becomes for a template that spends nothing."""
+    for line in caption.splitlines():
+        if GENERATOR.search(line.strip()):
+            return line.strip()
+    return None
+
 #: An audience value, never a template, and present in the source set because
 #: `<option value="client">` is painted by two screens. It is the decoy the
 #: lens clause uses: the source matcher admits it, and no control can ask for
@@ -234,6 +248,24 @@ def _templates_a_control_can_post(
         route.abort()
 
     page.route("**/api/reports", record)
+    # The hold is answered "not held" for the walk (item 251). The run
+    # templates are posted from the Reports tab, whose Generate is held while
+    # the site has Critical or High findings to assess - as the fixture's
+    # does. Until item 251 they were also posted from `#/reports/<run>`,
+    # which read no hold at all; that unguarded door is retired, so the walk
+    # lifts the hold to measure what this file is about: that a control
+    # exists and what it posts. The hold itself is
+    # `test_the_report_hold_*`'s subject, not this one's.
+    # Answered for whichever audit the screen asks about: the card ignores a
+    # hold that names another run.
+    page.route("**/client-report-hold", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"run_id": r.request.url.split("/api/runs/")[1].split("/")[0],
+                         "held": False, "count": 0})))
+    # The run report writes its plan with a model first, behind a spend
+    # confirmation. The walk answers the confirmation and aborts the plan, so
+    # nothing is bought and the document's own post is what is observed.
+    page.route("**/expert/plan", lambda r: r.abort())
     for name, hash_route in ROUTES:
         screen["name"] = name
         # A clean document per screen rather than a hash change on the last
@@ -272,7 +304,7 @@ def _templates_a_control_can_post(
         # control and the press was silently lost. Measured: `monthly-trend`
         # disappeared from the result while `run`, pressed first on the same
         # screen, survived.
-        for caption in sorted({c for c in captions if GENERATOR.search(c)}):
+        for caption in sorted({v for v in map(_verb_line, captions) if v}):
             for value in values:
                 # No `count()` guard either, and it is the same mistake as
                 # the `is_enabled()` one wearing different clothes: `count()`
@@ -280,8 +312,14 @@ def _templates_a_control_can_post(
                 # caption - `Generating...` - so a name lookup taken straight
                 # after the previous press matched nothing and the option was
                 # skipped. Everything that needs to wait is left to `click`.
-                button = page.get_by_role(
-                    "button", name=caption, exact=True).first
+                # By the verb's own line, which a spend button and the plain
+                # button it becomes for a free template both carry.
+                # Matched on the text content, which has no line breaks: the
+                # verb, not preceded by a letter ("Regenerate" is another
+                # control) and followed by the end or by the spend button's
+                # " · price" tail.
+                button = page.locator("button").filter(has_text=re.compile(
+                    r"(^|[^A-Za-z])" + re.escape(caption) + r"\s*($|·)")).first
                 if value is not None:
                     page.select_option('select[aria-label="template"]', value)
                 try:
@@ -300,10 +338,17 @@ def _templates_a_control_can_post(
                         # for the control to become actionable, so the wait is
                         # left where Playwright does it properly.
                         button.click(timeout=4_000)
+                        confirm = page.locator(".confirm-dialog .confirm-go")
+                        try:
+                            confirm.click(timeout=1_500)
+                        except PlaywrightTimeout:
+                            pass            # no confirmation: the press was the post
                     presses.append(f"{name}/{caption!r}/{value!r} -> posted")
                 except PlaywrightTimeout:
                     presses.append(f"{name}/{caption!r}/{value!r} -> no post")
     page.unroute("**/api/reports", record)
+    page.unroute("**/client-report-hold")
+    page.unroute("**/expert/plan")
     return posted, presses
 
 

@@ -113,7 +113,13 @@ def settled(tmp_path):
     return api, site_id, [s["fingerprint"] for s in states], state_of
 
 
-@pytest.mark.parametrize("state", runs.MODEL_BLIND_STATES)
+#: The states only the operator records. Model-blind and operator-owned were
+#: one list until channel ruling 20261011-0745 made `set-aside` model-blind
+#: and a run's to derive, so the population is the settable list bar "open".
+OPERATOR_OWNED = tuple(s for s in runs.OPERATOR_SETTABLE_STATES if s != "open")
+
+
+@pytest.mark.parametrize("state", OPERATOR_OWNED)
 def test_every_state_the_operator_owns_can_be_set_through_the_api(settled, state):
     """The operator's own judgements are the ones no run can reach, so the
     route is the only way they are ever recorded. One of the two 422'd."""
@@ -123,7 +129,7 @@ def test_every_state_the_operator_owns_can_be_set_through_the_api(settled, state
     resp = api.post(f"/api/sites/{site_id}/states/{fingerprint}",
                     json={"state": state})
     assert resp.status_code == 200, (
-        f"{state!r} is in runs.MODEL_BLIND_STATES — a state a run cannot "
+        f"{state!r} is an operator-owned state — a state a run cannot "
         "derive, so the operator's control is the only thing that can ever "
         f"record it — and the route refuses it: {resp.status_code} "
         f"{resp.text!r}")
@@ -198,7 +204,7 @@ def test_the_route_names_the_states_it_will_take(settled):
                     json={"state": "no-such-state"})
     assert resp.status_code == 422, resp.text
     detail = resp.json().get("detail", "")
-    for state in runs.MODEL_BLIND_STATES:
+    for state in OPERATOR_OWNED:
         assert state in detail, (
             f"the refusal does not name {state!r}, which the route accepts, so "
             f"an operator is told no and not told what to send: {detail!r}")

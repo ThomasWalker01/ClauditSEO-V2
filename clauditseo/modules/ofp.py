@@ -106,6 +106,11 @@ class OffPageModule:
                     if n in own}
             failed = hub.failure_note(only=own) if hub is not None else ""
             needs = sorted({SIGNALS[s] for s in dark})
+            # Item 278: a provider that is configured but was not asked. T1
+            # makes no external call, so a Quick re-check wrote "No backlink
+            # data provider is configured" over a Moz key Admin shows set -
+            # a false statement about the client's setup, into the record.
+            unasked = snap is None and bool(own) and not failed
             findings.append(Finding(
                 dimension=self.code, check_id="backlinks-not-assessed",
                 severity=Severity.INFO, scope_statement=True,
@@ -117,6 +122,8 @@ class OffPageModule:
                 # that is already set.
                 summary=(f"Not assessed: {what}. " + (
                     failed if failed else
+                    "Not requested at this depth; a Standard re-check asks the provider."
+                    if unasked else
                     "No backlink data provider is configured." if snap is None
                     else f"The configured provider "
                          f"({', '.join(snap.sources) or 'unknown'}) does not "
@@ -129,6 +136,7 @@ class OffPageModule:
                 recommendation=(
                     "Check the credentials for the provider above — it is "
                     "configured and refusing." if failed else
+                    f"Re-check at Standard depth to ask {', '.join(sorted(own))}." if unasked else
                     f"Configure {' or '.join(needs)} to assess {what}."),
             ))
 
@@ -159,13 +167,17 @@ class OffPageModule:
         # reported. `low-referring-domains` fires only under the floor, so a
         # site above it had its one paid-for backlink number recorded nowhere
         # the Backlinks part draws - the page read as though nothing was known.
+        # Item 278 (row 3): the floor in the sentence. "The check below"
+        # pointed at a row the part does not draw when the count is above it.
         if snap.referring_domains:
             rd = snap.referring_domains
+            side = ("above" if rd.value > LOW_REFERRING_DOMAINS
+                    else "at" if rd.value == LOW_REFERRING_DOMAINS else "below")
             findings.append(Finding(
                 dimension=self.code, check_id="referring-domains-reported",
                 severity=Severity.INFO, scope_statement=True,
-                summary=f"{rd.value} referring domains ({rd.source}). Recorded for "
-                        "reference; the check below says whether it is low.",
+                summary=f"{rd.value} referring domains ({rd.source}), {side} the floor of "
+                        f"{LOW_REFERRING_DOMAINS} under which this part raises a fault.",
                 subject="referring-domains-count", affected_urls=[],
                 evidence={"referring_domains": rd.value, "source": rd.source,
                           "confidence": rd.confidence},

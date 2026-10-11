@@ -252,8 +252,11 @@ def test_neither_check_list_contains_the_other(site) -> None:
     # brief names all ten of the AIS sweep's reachability and free checks.
     # 41 at item 236: `referring-domains-reported`, the count reported beside
     # `domain-authority-reported`; Backlinks has no brief to name either.
-    assert len(tool_only) == 41, (
-        f"tool ids no brief names moved from 41 to {len(tool_only)}")
+    # 42 at item 272 (row 11): `img-alt-filename`, a free check no brief names.
+    # 37 at item 278 (row 11): the local signals brief names the five LOC checks.
+    # 36 at screen audits round 3 (Images IP-12): images.md names img-alt-filename.
+    assert len(tool_only) == 36, (
+        f"tool ids no brief names moved from 36 to {len(tool_only)}")
     assert brief_only and tool_only, (
         "if either side empties, one list contains the other and a "
         "single-source answer becomes possible — re-decide rather than "
@@ -604,3 +607,47 @@ def test_the_trace_is_the_only_instrument_that_raises_page_weight() -> None:
     assert "page-weight" in fired({url: heavy})
     assert "page-weight" not in fired({})
     assert "page-weight" in prf.TRACE_DERIVED_CHECKS
+
+
+def test_a_part_reads_unmeasured_from_its_own_reference_audit(tmp_path) -> None:
+    """A Links-only re-check is the site's newest reading and ran LNK alone.
+    The not-assessed lines were read off it, so on twenty22 every other part
+    said "TEC did not run in this audit" over checks its own reference crawl
+    had measured the day before. Each part now reads its own audit."""
+    from fastapi.testclient import TestClient
+
+    from clauditseo.api.app import create_app
+
+    db = tmp_path / "clauditseo.db"
+    app = create_app(db_path=db)
+    conn = connect(db)
+    op_id = repo.ensure_default_operator(conn, "Ref")
+    client = repo.create_client(conn, op_id, "Ref Co")
+    site_id = repo.create_site(conn, client, "x.test")
+    traced = {"traced": True, "device_profile": "pixel5", "ttfb_ms": 10.0}
+    full = json.dumps({"start_url": "https://x.test/",
+                       "pages": [{"url": "https://x.test/", "status": 200, "perf": traced}]})
+    links_only = json.dumps({"start_url": "https://x.test/",
+                             "pages": [{"url": "https://x.test/", "status": 200}]})
+    for dims, at, ev in ((["TEC", "ONP", "LNK", "PRF"], "2026-10-02T03:57:00+00:00", full),
+                         (["LNK"], "2026-10-03T01:38:00+00:00", links_only)):
+        run_id = runs.create_run(conn, site_id, dims, "T2")
+        conn.execute("UPDATE audit_runs SET status='complete', crawl_evidence=?, started_at=?,"
+                     " finished_at=? WHERE id=?", (ev, at, at, run_id))
+    conn.commit()
+    from clauditseo.persistence import latest_view
+    latest_view.rebuild(conn, site_id, "test: a full audit, then a Links re-check")
+    conn.close()
+    with TestClient(app) as http:
+        body = http.get(f"/api/sites/{site_id}/anatomy").json()
+    crawl = next(c for c in body["categories"] if c["key"] == "crawl")
+    links = next(c for c in body["categories"] if c["key"] == "links")
+    # The Links part's own audit is the re-check; Crawl's is the full audit.
+    assert crawl["sweep_run"]["dimensions"] == ["TEC", "ONP", "LNK", "PRF"], crawl["sweep_run"]
+    # And the traced pages are the part's own audit's: Mobile read "0 traced
+    # of 45 crawled" off the Links re-check, which traced nothing.
+    mobile = next(c for c in body["categories"] if c["key"] == "mobile")
+    assert mobile["traced_pages"] == 1, mobile["traced_pages"]
+    assert links["sweep_run"]["dimensions"] == ["LNK"], links["sweep_run"]
+    said = " ".join(crawl["not_assessed"].values())
+    assert "TEC did not run" not in said, crawl["not_assessed"]

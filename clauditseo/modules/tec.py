@@ -12,7 +12,8 @@ import re
 from urllib.parse import urlsplit
 
 from clauditseo import urlshape
-from clauditseo.crawler.crawl import normalise_url, strip_tracking_params, tracking_params_in
+from clauditseo.crawler.crawl import (is_edge_path, normalise_url, strip_tracking_params,
+                                      tracking_params_in)
 from clauditseo.crawler.robots import RobotsPolicy, robots_url_for
 from clauditseo.crawler.types import CrawlResult
 from clauditseo.crawler.ua_matrix import (AI_AGENT_CLASSES, BLOCK_CONSEQUENCE, UA_MATRIX_AGENTS,
@@ -115,6 +116,12 @@ DEFAULT_SEVERITY: dict[str, Severity] = {
     # split, 2026-09-09), which already carries the router-only-anchor signal
     # with its whole-site guard; crawl.md:65 cross-references it.
     "render-only": Severity.MEDIUM,
+    # Item 247: the page's own scripts failing in the browser, from the
+    # rendered sample. `scripts-blocked-by-csp` is HIGH where one of the
+    # page's own scripts then throws (emitter).
+    "scripts-blocked-by-csp": Severity.MEDIUM,
+    "page-script-error": Severity.MEDIUM,
+    "script-failed-to-load": Severity.MEDIUM,
     "internal-link-tracking-params": Severity.MEDIUM,
     "http-status-error": Severity.HIGH,          # CRITICAL on 5xx (emitter)
     # MEDIUM (item 137, brief v18 step BA): indexability.md registers it MEDIUM,
@@ -464,9 +471,14 @@ def _mobile_render_checks(code: str, facts, url: str,
             floor = render.get("tap_target_min_px") or 24
             out.append(Finding(
                 dimension=code, check_id="tap-target", severity=Severity.MEDIUM,
-                summary=f"{path}: {len(small)} interactive element(s) smaller "
-                        f"than {floor} x {floor} CSS px, which WCAG 2.2 SC "
-                        f"2.5.8 sets as the minimum.",
+                # Item 274 (row 7): what was measured, and no more. SC 2.5.8
+                # passes an undersized target that has 24 px of clearance
+                # (its spacing exception), which this harness does not test,
+                # so a small box is not by itself a failure of the criterion.
+                summary=f"{path}: {len(small)} interactive element(s) under "
+                        f"{floor} x {floor} CSS px; WCAG 2.2 SC 2.5.8 passes "
+                        f"these only where each has {floor} px of clearance, "
+                        f"which this audit does not measure.",
                 subject=path, affected_urls=[url],
                 evidence={"elements": small[:10], "minimum_px": floor,
                           "viewport": profile, "measured": "lab"},
@@ -478,19 +490,33 @@ def _mobile_render_checks(code: str, facts, url: str,
 
         units = render.get("viewport_unit_elements") or []
         if units:
+            # Item 274 (row 8): two different faults under one check, each
+            # said with its own remedy. On twenty22 both elements were a
+            # modal and its backdrop, fixed-positioned and hidden until
+            # opened, and the row told them to use dvh.
+            fixed = [e for e in units if any("fixed" in str(u) for u in (e.get("used") or []))]
+            sized = [e for e in units if e not in fixed]
+            said, todo = [], []
+            if sized:
+                said.append(f"{len(sized)} element(s) sized in viewport units - on a "
+                            "phone the visible area shrinks as the URL bar appears, "
+                            "so 100vh is taller than the screen")
+                todo.append("Prefer dvh/svh over vh for full-height blocks.")
+            if fixed:
+                said.append(f"{len(fixed)} fixed-positioned element(s), which can "
+                            "cover content when the keyboard or the URL bar moves "
+                            "the visible area")
+                todo.append("Check each fixed element against the keyboard and the "
+                            "URL bar; one hidden until opened (a modal and its "
+                            "backdrop) is not in the way while hidden.")
             out.append(Finding(
                 dimension=code, check_id="viewport-units", severity=Severity.MEDIUM,
-                summary=f"{path}: {len(units)} element(s) sized in viewport "
-                        "units or fixed-positioned — on a phone the visible "
-                        "area shrinks as the URL bar appears, so 100vh is "
-                        "taller than the screen.",
+                summary=f"{path}: " + "; ".join(said) + ".",
                 subject=path, affected_urls=[url],
                 evidence={"elements": units[:10], "viewport": profile,
-                          "measured": "lab"},
+                          "measured": "lab", "sized": len(sized), "fixed": len(fixed)},
                 confidence=Confidence.LOW,
-                recommendation="Prefer dvh/svh over vh for full-height blocks, "
-                               "and check any fixed element against the "
-                               "keyboard and the URL bar.",
+                recommendation=" ".join(todo),
             ))
 
     # The two head-diff checks. Both need BOTH heads; with either missing the
@@ -779,6 +805,7 @@ class TechnicalModule:
         findings += self._link_checks(crawl)
         findings += self._links_behind_js(crawl, context)
         findings += self._render_only(crawl, context)
+        findings += self._script_errors(crawl, context)
         findings += self._canonical_terminal_checks(crawl, context)
         findings += self._url_checks(crawl, context)
         findings += self._parity(crawl)
@@ -1269,6 +1296,156 @@ class TechnicalModule:
                                    "empty shell."))
         return out
 
+    # --- item 247 --------------------------------------------------------
+
+    def _script_errors(self, crawl, context: dict) -> list[Finding]:
+        """A page whose own scripts fail in the browser (item 247).
+
+        Three checks from what the rendered pass heard while each sampled
+        page loaded and settled (`axe._ScriptErrors`, handed over as
+        `context["script_errors"]` the way `rendered_anchors` is):
+
+        - `scripts-blocked-by-csp`: the page's own Content-Security-Policy
+          refuses scripts the page ships. HIGH where one of the page's own
+          scripts then throws, MEDIUM alone. twenty22's home page is the
+          case this was built from: an optimiser rewrote inline scripts into
+          `data:` URIs the policy does not allow, the theme's loader threw,
+          and seven images and a section never appeared.
+        - `page-script-error`: an uncaught exception from a same-site script.
+        - `script-failed-to-load`: a same-site script that failed or 4xx/5xxed.
+
+        Third-party scripts (analytics, beacons) are listed in the evidence
+        and raise nothing on their own: a CSP that blocks a CDN's beacon is
+        the policy working, and a vendor's exception is the vendor's.
+
+        Per page, by ruling (a) of item 246, unless the same script fails the
+        same way on every rendered page: that is the template, and it is one
+        finding across those pages.
+        """
+        by_url = context.get("script_errors")
+        if not by_url:
+            return []
+        host = urlsplit(crawl.start_url).netloc.lower()
+
+        def own(source: str) -> bool:
+            # The page's own: same host, or no host at all - an inline
+            # script, a `data:` or `blob:` the page made, or the browser's
+            # own words for those ("inline", "data", "eval").
+            try:
+                net = urlsplit(source or "").netloc.lower()
+            except ValueError:
+                return True
+            return not net or net == host
+
+        rows: list[tuple[str, tuple, str, dict]] = []   # (check, signature, url, evidence)
+        for url, errs in sorted(by_url.items()):
+            unloaded = int(errs.get("unloaded_images") or 0)
+            blocked = errs.get("csp_blocked") or []
+            thrown = errs.get("exceptions") or []
+            failed = errs.get("failed_loads") or []
+            own_blocked = [c for c in blocked if own(c.get("blocked") or "")]
+            own_thrown = [e for e in thrown if own(e.get("source") or "")]
+            own_failed = [f for f in failed if own(f.get("url") or "")]
+            if own_blocked:
+                rows.append(("scripts-blocked-by-csp",
+                             tuple(sorted((c.get("directive", ""), c.get("blocked", ""))
+                                          for c in own_blocked)),
+                             url, {
+                                 "blocked": own_blocked,
+                                 "directives": sorted({c.get("directive", "")
+                                                       for c in own_blocked}),
+                                 "third_party_blocked": [c for c in blocked
+                                                         if c not in own_blocked],
+                                 "scripts_then_failing": len(own_thrown),
+                                 "images_never_loaded": unloaded}))
+            if own_thrown:
+                rows.append(("page-script-error",
+                             tuple(sorted((e.get("message", ""), e.get("source", ""))
+                                          for e in own_thrown)),
+                             url, {
+                                 "errors": own_thrown,
+                                 "third_party_errors": [e for e in thrown
+                                                        if e not in own_thrown],
+                                 "images_never_loaded": unloaded}))
+            if own_failed:
+                rows.append(("script-failed-to-load",
+                             tuple(sorted((f.get("url", ""), f.get("why", ""))
+                                          for f in own_failed)),
+                             url, {
+                                 "scripts": own_failed,
+                                 "third_party_failed": [f for f in failed
+                                                        if f not in own_failed],
+                                 "images_never_loaded": unloaded}))
+
+        rendered = len(by_url)
+        groups: dict[tuple[str, tuple], list[tuple[str, dict]]] = {}
+        for check, sig, url, ev in rows:
+            groups.setdefault((check, sig), []).append((url, ev))
+
+        out: list[Finding] = []
+        for (check, _), members in groups.items():
+            template = rendered > 1 and len(members) == rendered
+            targets = members if not template else [members[0]]
+            for url, ev in targets:
+                path = urlsplit(url).path or "/"
+                where = (f"every one of the {rendered} rendered pages"
+                         if template else path)
+                urls = [u for u, _ in members] if template else [url]
+                if template:
+                    ev = {**ev, "pages": rendered,
+                          "images_never_loaded": max(e.get("images_never_loaded", 0)
+                                                     for _, e in members)}
+                unloaded = ev.get("images_never_loaded", 0)
+                tail = (f" {unloaded} image{'s' if unloaded != 1 else ''} never "
+                        "loaded." if unloaded else "")
+                # One literal check id per finding, so the registry's drift
+                # guard can read the three off the source.
+                common = dict(dimension=self.code, evidence=ev,
+                              subject="template" if template else path,
+                              affected_urls=urls)
+                if check == "scripts-blocked-by-csp":
+                    n = len(ev["blocked"])
+                    summary = (f"The Content-Security-Policy on {where} blocks "
+                               f"{n} script{'s' if n != 1 else ''} the page itself "
+                               f"ships ({', '.join(ev['directives'])}).")
+                    if ev["scripts_then_failing"]:
+                        k = ev["scripts_then_failing"]
+                        summary += (f" {k} of the page's own scripts then "
+                                    f"fail{'s' if k == 1 else ''}.")
+                    out.append(Finding(
+                        check_id="scripts-blocked-by-csp",
+                        severity=(Severity.HIGH if ev["scripts_then_failing"]
+                                  else Severity.MEDIUM),
+                        summary=summary + tail,
+                        recommendation="Either allow the source in the policy's "
+                                       "script-src, or stop the optimiser rewriting "
+                                       "the page's scripts into a form the policy "
+                                       "refuses. Until one is done, everything those "
+                                       "scripts draw is missing for visitors.",
+                        **common))
+                elif check == "page-script-error":
+                    n = len(ev["errors"])
+                    out.append(Finding(
+                        check_id="page-script-error", severity=Severity.MEDIUM,
+                        summary=f"{n} of the page's own scripts on {where} "
+                                f"fail{'' if n != 1 else 's'} with an "
+                                f"uncaught error.{tail}",
+                        recommendation="Open the page with the browser console "
+                                       "showing and fix the first error named; the "
+                                       "ones after it are usually its consequences.",
+                        **common))
+                else:
+                    n = len(ev["scripts"])
+                    out.append(Finding(
+                        check_id="script-failed-to-load", severity=Severity.MEDIUM,
+                        summary=f"{n} of the page's own scripts on {where} "
+                                f"fail{'' if n != 1 else 's'} to load.{tail}",
+                        recommendation="Restore the script at the address the page "
+                                       "asks for, or remove the reference if it is "
+                                       "no longer used.",
+                        **common))
+        return out
+
     #: The share of this dimension answered without fetching a page —
     #: robots.txt, the sitemap and llms.txt are retrieved in their own right.
     #: The remainder is page-derived, so it drops out when nothing was
@@ -1704,15 +1881,30 @@ class TechnicalModule:
     def _page_checks(self, crawl: CrawlResult,
                      traces: dict | None = None) -> list[Finding]:
         findings: list[Finding] = []
+        # Item 275 (row 10): which crawled pages link to each URL, so a status
+        # card can say where the broken link is - the fix the recommendation
+        # names ("update internal links that point at it") needs the pages.
+        linked_from: dict[str, list[str]] = {}
+        for src in crawl.pages:
+            for out in (src.outlinks or []):
+                key = normalise_url(out)
+                here = urlsplit(src.url).path or "/"
+                if here not in linked_from.setdefault(key, []):
+                    linked_from[key].append(here)
         for page in crawl.pages:
             path = urlsplit(page.url).path or "/"
-            if page.status >= 400:
+            # Item 275 (row 10): a crawl stored before the frontier left the
+            # CDN's paths out still holds them; their status is the CDN's.
+            if page.status >= 400 and not is_edge_path(page.url):
                 findings.append(Finding(
                     dimension=self.code, check_id="http-status-error",
                     severity=Severity.CRITICAL if page.status >= 500 else Severity.HIGH,
                     summary=f"{page.status} response at {path}.",
                     subject=path, affected_urls=[page.url],
-                    evidence={"status": page.status, "requested": page.requested_url},
+                    evidence={"status": page.status, "requested": page.requested_url,
+                              "linked_from": sorted(
+                                  linked_from.get(normalise_url(page.url), [])
+                                  or linked_from.get(normalise_url(page.requested_url or ""), []))[:10]},
                     recommendation="Fix or redirect the broken URL; update internal links "
                                    "that point at it.",
                 ))

@@ -14,6 +14,8 @@
  *  stays `action-primary` blue in both modes (BK).
  */
 import { heldRecordHref } from "./report_hold";
+import { notRunCount } from "./catalogue";
+import { stamp } from "./dates";
 import { LinkButton, SecondaryButton } from "./buttons";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
@@ -65,8 +67,10 @@ type Entry = {
 };
 
 type Current = {
-  outstanding: number; open: number; regressed: number; candidate: number;
+  outstanding: number; open: number; regressed: number; candidate: number; to_confirm?: number;
   accepted_risk: number; withdrawn: number; fixed: number;
+  /** Set aside: the page answers an error (channel ruling 20261011-0745). */
+  set_aside?: number;
   moved: { opened: number; fixed: number; regressed: number };
 } | undefined;
 
@@ -92,7 +96,10 @@ function Lane({ name, cls, entries, head }: {
           {shown.map((e) => (
             <div key={e.key} className={`cl-entry cl-${e.key}`}>
               <dt>{e.label}</dt>
-              <dd className={`fig${e.tone ? ` fig-${e.tone}` : ""}`}>
+              {/* Item 252: a figure is a door to exactly what it counts, or it
+                  is not drawn as a figure - `fig-plain` is muted text with no
+                  chip, so nothing that cannot be pressed looks pressable. */}
+              <dd className={`fig${e.tone ? ` fig-${e.tone}` : ""}${e.href ? "" : " fig-plain"}`}>
                 {e.href
                   ? <a className="fig-link" href={e.href} onClick={goHandler(e.href)}
                        aria-label={e.name}>{e.value}</a>
@@ -158,14 +165,7 @@ export function ago(iso: string | null | undefined, now: number = Date.now()): s
  *  Local time, because the reader's other clock is their own. The zone is
  *  named where two stamps must be compared across machines; here the point is
  *  that two stamps on one screen are in one zone. */
-export function stamp(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return "—";
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} `
-    + `${p(d.getHours())}:${p(d.getMinutes())}`;
-}
+export { stamp };
 
 /** What sentence three calls each step. A template, not a triage special
  *  case (channel ruling 20260917-0045): "Triage is what is left.", "The
@@ -336,8 +336,11 @@ export function ModeArith({ page, parts, standing, siteOnly = 0 }: {
  *  a gradient: no Critical or High may be unassessed when the client report is
  *  generated. Said only while it holds the report, because a green "clear"
  *  beside a percentage reads as a second progress bar. */
-export function IntegrityLine({ headline, checking = false }: {
+export function IntegrityLine({ headline, checking = false, siteId }: {
   headline: Headline | null;
+  /** The site, for the hold's door (item 259): the line is the screen's
+   *  stated blocker and had no control beside it. */
+  siteId?: string;
   /** The guard has not been read yet (item 179, 08-6): the held button is
    *  described by this line, so it says what it is waiting on. */
   checking?: boolean;
@@ -351,9 +354,22 @@ export function IntegrityLine({ headline, checking = false }: {
   }
   const n = headline?.integrity?.count ?? 0;
   if (!n) return null;
+  // Item 259 (landing UX-01, IP-07): the way to lift the hold beside it, the
+  // door `ReportHeld` draws on Reports and Home and that the landing's line
+  // lacked. Worded from `open_severe`'s own vocabulary - "still open", which
+  // is open or regressed - not "not yet assessed". The id stays on the
+  // sentence alone: it describes the held button, and "Open the record" is
+  // not part of why the button is held.
+  const record = siteId ? heldRecordHref(siteId) : null;
   return (
-    <span className="integrity-line" id="integrity-line" role="note">
-      Client report held: {n} Critical or High not yet assessed.
+    <span className="integrity-line" role="note">
+      <span id="integrity-line">
+        Client report held: {n} Critical or High still open.
+      </span>
+      {record && (
+        <>{" "}<a className="report-held-go" href={record}
+                   onClick={goHandler(record)}>Open the record</a></>
+      )}
     </span>
   );
 }
@@ -475,9 +491,18 @@ export function ClientLanes({ siteId, page, current, categories, headline, lanes
                    // onto the same place goes with the sale.
                    ...link(outstanding, "outstanding", "outstanding") });
   }
-  if (!page && current && current.candidate > 0) {
-    waiting.push({ key: "candidate", value: current.candidate, tone: "quiet",
-                   label: "Seen once", ...link(current.candidate, "candidate", "seen once") });
+  // Item 250: two figures, because they wait for two different things - the
+  // operator's answer, and the automatic checks' next reading. Each opens the
+  // Record chip that counts the same rows.
+  const toConfirm = current?.to_confirm ?? 0;
+  const seenOnce = (current?.candidate ?? 0) - toConfirm;
+  if (!page && toConfirm > 0) {
+    waiting.push({ key: "to-confirm", value: toConfirm, tone: "quiet",
+                   label: "To confirm", ...link(toConfirm, "to-confirm", "to confirm") });
+  }
+  if (!page && seenOnce > 0) {
+    waiting.push({ key: "candidate", value: seenOnce, tone: "quiet",
+                   label: "Seen once", ...link(seenOnce, "candidate", "seen once") });
   }
   // The parts are not in this lane (item 169). A part is a breakdown of the
   // standing, not a task, so every part sits in the strip under the lanes
@@ -491,7 +516,7 @@ export function ClientLanes({ siteId, page, current, categories, headline, lanes
   // part with analyses at all can be unread - Local's briefs enumerate no
   // checks, and it read "nothing to say" while four analyses were never run.
   const unread = unreadParts(categories);
-  const unmeasured = categories.filter((c) => Object.keys(c.not_assessed ?? {}).length > 0);
+  const unmeasured = unmeasuredParts(categories);
   const measured: Entry[] = [];
   if (!page && headline) {
     const cov = headline.coverage;
@@ -502,7 +527,13 @@ export function ClientLanes({ siteId, page, current, categories, headline, lanes
   }
   measured.push({ key: "unmeasured", value: unmeasured.length, tone: unmeasured.length ? "warn" : undefined,
                   label: page ? "Parts not measured on this page"
-                              : "Parts this audit did not fully measure" });
+                              : "Parts this audit did not fully measure",
+                  // Item 252: the one figure here with no door. The catalogue
+                  // narrowed to these parts, each header naming what was not
+                  // assessed on its own page.
+                  ...door(unmeasured.length, `#/sites/${siteId}?tab=analyses&only=unmeasured`,
+                          `${unmeasured.length} part${unmeasured.length === 1 ? "" : "s"} this audit did not fully measure`
+                          + " — open them in the catalogue") });
   measured.push({ key: "unread", value: unread.length, tone: unread.length ? "warn" : undefined,
                   label: `Parts ${NOT_READ} on this audit`,
                   ...(unread.length ? {
@@ -519,7 +550,9 @@ export function ClientLanes({ siteId, page, current, categories, headline, lanes
     // price of pressing its Run all - one server sum - with the remainders
     // named where the operator can act on them.
     const b = lanes.batch;
-    const notRun = b ? b.listed : lanes.available.filter((a) => a.type !== "triage").length;
+    // The fallback is the catalogue's own count too (item 252), not a second
+    // filter that counted the client plan.
+    const notRun = b ? b.listed : (notRunCount(lanes) ?? 0);
     const plan = b?.partless.find((x) => x.tool === "plan");
     const rest = [
       plan ? `client plan${plan.est_cost_default != null ? ` ${money(plan.est_cost_default)}` : ""}, from Reports` : "",
@@ -617,6 +650,10 @@ export function ClientLanes({ siteId, page, current, categories, headline, lanes
       settled.push({ key: "withdrawn", value: current.withdrawn, tone: "quiet",
                      label: "Withdrawn", ...link(current.withdrawn, "withdrawn", "withdrawn") });
     }
+    if ((current.set_aside ?? 0) > 0) {
+      settled.push({ key: "set-aside", value: current.set_aside!, tone: "quiet",
+                     label: "On an error page", ...link(current.set_aside!, "set-aside", "on an error page") });
+    }
   }
 
   return (
@@ -701,6 +738,13 @@ export function unreadParts(categories: Category[]): Category[] {
     && (!c.brief_run || (c.brief_run.audits_since ?? null) !== 0));
 }
 
+/** Which parts the audit did not fully measure: at least one of the part's
+ *  checks was not assessed. One rule for the landing's figure and for the
+ *  catalogue narrowing its door opens (item 252). */
+export function unmeasuredParts(categories: Category[]): Category[] {
+  return categories.filter((c) => Object.keys(c.not_assessed ?? {}).length > 0);
+}
+
 /** One part as a link, drawn the same way wherever it is drawn: the landing's
  *  strip (item 169, item 172's chip) and the part view's switcher (item 185).
  *
@@ -759,6 +803,7 @@ function PartLink({ siteId, c, pops, unread, open = false, note = true }: {
                   + (c.total.value > 0 && c.findings.length
                      ? `, worst ${worst(c.findings)}` : "")
                    + (isUnread ? `, ${NOT_READ}` : "")
+                   + ((c.seen_once?.value ?? 0) > 0 ? `, ${c.seen_once!.value} seen once` : "")
                    + (open ? " — the part you are reading" : " — open the part")}>
       <span className="parts-name">{c.label}</span>
       {" "}
@@ -786,6 +831,23 @@ function PartLink({ siteId, c, pops, unread, open = false, note = true }: {
                           ? ` tone tone-sev-${worst(c.findings)}` : "")}>
         <Counted count={c.total} pops={pops} />
       </span>
+      {/* Item 278 (row 5): what is filed and not yet confirmed, beside the
+          count, as the catalogue says it. A bare "1" on Local read as the
+          part's whole story while a second row waited to be confirmed. */}
+      {/* Item 270 (row 5): the switcher on a part page too, where page mode
+          counts the page's own; `note` governs the unread line, not this. */}
+      {(c.seen_once?.value ?? 0) > 0 && (
+        // In the part view's sticky switcher the clause reads "+N" (the
+        // words stay for a screen reader): "· 10 seen once" on four pills
+        // wrapped the strip to a third row and scrolled it inside the
+        // pinned header, against item 185's two-row height.
+        <span className="muted parts-seen-once">
+          <span className="parts-seen-sep">{" "}· </span>
+          <span className="parts-seen-plus" aria-hidden="true">{" "}+</span>
+          <Counted count={c.seen_once!} pops={pops} />
+          <span className="parts-seen-word"> seen once</span>
+        </span>
+      )}
       {/* Item 239 step 6: out of date by the part's reference crawl - a word
           beside the count, not a colour alone. */}
       {c.sweep_run && ageTone(ageDays(c.sweep_run.at), c.age_thresholds ?? undefined) === "stale" && (

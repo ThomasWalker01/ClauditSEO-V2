@@ -27,6 +27,11 @@ from tests.conftest import FixtureSite
 FAST = TierBudget(max_pages=30, request_timeout_s=5, wall_clock_s=30, delay_s=0)
 
 
+
+#: Item 278 (row 11): these clauses moved to `migration-redirects`, which
+#: refuses to run without the one input the crawl cannot produce.
+MIGRATION_MAP = {"REDIRECT_MAP": "/old/ -> /"}
+
 def _page(title: str, body: str, canonical: str | None = "self",
           robots: str | None = None) -> str:
     head = (f"<title>{title}</title>"
@@ -966,19 +971,19 @@ def test_a_cached_replay_still_records_the_report_against_this_run(tmp_path, sit
     ev = snapshot(crawl(site_fixture.base_url + "/", Tier.T2, budget=FAST))
     conn, run_id = _db(tmp_path, ev)
     cfg = dataclasses.replace(Settings(), anthropic_api_key="")
-    # `local-signals`, not `security`: this clause needs a context with
+    # `migration-redirects`, not `security`: this clause needs a context with
     # nothing run-specific in it, and the Security brief names its run. It was
     # `llms-txt-builder` until that brief retired (item 145).
-    run_expert(conn, run_id, "local-signals", ev, Site(domain="fixture.local"),
-               cfg, StubExpert())
+    run_expert(conn, run_id, "migration-redirects", ev, Site(domain="fixture.local"),
+               cfg, StubExpert(), operator_inputs=MIGRATION_MAP)
 
     other = runs.create_run(conn, repo.list_sites(
         conn, repo.list_clients(conn)[0]["id"])[0]["id"], ["TEC"], "T2")
     runs.store_evidence(conn, other, ev)
-    replay = run_expert(conn, other, "local-signals", ev,
-                        Site(domain="fixture.local"), cfg, StubExpert())
+    replay = run_expert(conn, other, "migration-redirects", ev,
+                        Site(domain="fixture.local"), cfg, StubExpert(), operator_inputs=MIGRATION_MAP)
     assert replay["cached"] is True
-    assert expert_report(conn, other, "local-signals") is not None
+    assert expert_report(conn, other, "migration-redirects") is not None
     conn.close()
 
 
@@ -1116,6 +1121,13 @@ high | sitemap-coverage | Organic sessions fell 755501 percent since the rebuild
 """
 
 
+def _confirm_waiting(conn, site_id):
+    """The operator's Confirm on every finding that waits for one."""
+    from clauditseo.persistence import runs as _runs
+    for fp in _runs.awaiting_confirmation(conn, site_id):
+        _runs.set_state(conn, site_id, fp, "open")
+
+
 def _run_declared(tmp_path, site_fixture, report=_DECLARED_REPORT):
     """Drive the real production path, in the real order.
 
@@ -1131,16 +1143,24 @@ def _run_declared(tmp_path, site_fixture, report=_DECLARED_REPORT):
     # feature is generic, and `_DECLARED_REPORT` is the legacy pipe-index shape.
     # `crawl`, `indexability` (brief v18 step BA) and `urls` (brief v19 step BB)
     # are contract briefs that read a JSON block instead, so the legacy path —
-    # which the remaining briefs still use — is driven through `local-signals`
-    # (it was `llms-txt-builder` until item 145 retired that brief),
+    # which the remaining briefs still use — is driven through `migration-redirects`
+    # (it was `llms-txt-builder` until item 145 retired that brief, then `local-signals` until item 278 row 11 rewrote it),
     # a site-scoped legacy brief that is NOT split (a split brief asks twice and
     # a stub returns its report both times, doubling the findings index so the
     # first strip leaves the second — which the split hosts mobile-viewport and
     # https-security would). Its context echoes the crawled URL list, so a
     # URL-sourced digit still grounds. This clause has moved once per brief that
     # took the contract shape; it left `url-hygiene` when item 141 retired it.
-    out = run_expert(conn, run_id, "local-signals", ev, Site(domain="fixture.local"),
-                     cfg, StubExpert(report))
+    # `migration-redirects` is the last site-scoped legacy brief left (item 278
+    # row 11 rewrote `local-signals`), and it is split. It is asked once here,
+    # as a brief that is not split is, so the stub's index is not doubled.
+    from unittest import mock
+
+    from clauditseo.analysts import expert as _expert
+    with mock.patch.dict(_expert.SPLIT_BRIEFS):
+        _expert.SPLIT_BRIEFS.pop("migration-redirects", None)
+        out = run_expert(conn, run_id, "migration-redirects", ev, Site(domain="fixture.local"),
+                         cfg, StubExpert(report), operator_inputs=MIGRATION_MAP)
     assert out["status"] == "ok", out
     return conn, run_id, out
 
@@ -1157,7 +1177,7 @@ def test_a_declared_figure_is_marked_in_production_call_order(tmp_path, site_fix
     assert out["figures_to_verify"], "the brief must declare an ungrounded figure"
 
     row = conn.execute(
-        "SELECT evidence FROM findings WHERE run_id=? AND dimension='EXP:local-signals'",
+        "SELECT evidence FROM findings WHERE run_id=? AND dimension='EXP:migration-redirects'",
         (run_id,)).fetchone()
     assert row, "the brief finding was not recorded"
     assert json.loads(row["evidence"]).get("figure_unverified") is True, (
@@ -1169,6 +1189,9 @@ def test_a_declared_figure_is_marked_in_production_call_order(tmp_path, site_fix
     from clauditseo.reporting.render import ANALYST_FIGURE_NOTE
     site_id = conn.execute("SELECT site_id FROM audit_runs WHERE id=?",
                            (run_id,)).fetchone()["site_id"]
+    # A legacy brief's finding waits for the operator (item 250): it reaches a
+    # client document once confirmed, not by being reported.
+    _confirm_waiting(conn, site_id)
     section, _ = _expert_section(conn, tool_runs_for(conn, site_id), site_id, "client")
     assert "755501" in section, "the brief finding did not reach the document"
     assert ANALYST_FIGURE_NOTE in section, (
@@ -1214,7 +1237,7 @@ def test_a_measured_figure_is_not_marked(tmp_path, site_fixture):
     conn, run_id, _ = _run_declared(tmp_path, site_fixture, report)
     row = conn.execute(
         "SELECT summary, evidence FROM findings WHERE run_id=?"
-        " AND dimension='EXP:local-signals'", (run_id,)).fetchone()
+        " AND dimension='EXP:migration-redirects'", (run_id,)).fetchone()
     assert row and "alt attribute" in row["summary"]
     assert json.loads(row["evidence"]).get("figure_unverified") is not True, (
         f"a measured figure was marked as analyst-derived: {row['summary']!r}")
@@ -1253,7 +1276,7 @@ def test_a_figure_stated_only_in_the_findings_index_is_still_declared(
         f"got {out['figures_to_verify']}")
 
     row = conn.execute(
-        "SELECT evidence FROM findings WHERE run_id=? AND dimension='EXP:local-signals'",
+        "SELECT evidence FROM findings WHERE run_id=? AND dimension='EXP:migration-redirects'",
         (run_id,)).fetchone()
     assert json.loads(row["evidence"]).get("figure_unverified") is True
 
@@ -1261,6 +1284,9 @@ def test_a_figure_stated_only_in_the_findings_index_is_still_declared(
     from clauditseo.reporting.render import ANALYST_FIGURE_NOTE
     site_id = conn.execute("SELECT site_id FROM audit_runs WHERE id=?",
                            (run_id,)).fetchone()["site_id"]
+    # A legacy brief's finding waits for the operator (item 250): it reaches a
+    # client document once confirmed, not by being reported.
+    _confirm_waiting(conn, site_id)
     section, _ = _expert_section(conn, tool_runs_for(conn, site_id), site_id, "client")
     assert ANALYST_FIGURE_NOTE in section, (
         "the figure reached the client document unmarked")

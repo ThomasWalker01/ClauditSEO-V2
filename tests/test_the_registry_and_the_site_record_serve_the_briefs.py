@@ -81,7 +81,8 @@ def test_the_registry_lists_the_briefs_checks_with_the_operators_defaults():
     # (llms-txt-coverage/-thin/-conflict/-authored, id-page-absent,
     # entity-type-generic, entity-footprint-unlinked, entity-alignment,
     # entity-enrichment, answer-liftable).
-    assert len(only) == 93, sorted(only)
+    # Item 272 (row 9): img-oversized and img-weight-budget are free now.
+    assert len(only) == 91, sorted(only)
     # TEC joins ONP/LNK/CNT since item 137 (brief v18 step AZ); PRF joins since
     # item 141 (brief v19 step BC) for the Speed brief's analysis checks.
     #
@@ -171,8 +172,10 @@ def test_the_site_patch_writes_every_field_and_the_record_route_reads_them_back(
 def test_no_brief_list_remains_in_typescript():
     for name in ("PHASE_GROUPS", "PAGE_EXPERTS", "ONPAGE_EXPERTS"):
         assert not any(name in p.read_text(encoding="utf-8") for p in SRC.glob("*.ts*")), name
-    views = (SRC / "views.tsx").read_text(encoding="utf-8")
-    assert 'x.type === "page"' in views, "the run page's page briefs come from the lanes payload"
+    # The page-level analyses moved to the dossier with the page-detail
+    # screen's retirement (item 251); they still come from the lanes payload.
+    dossier = (SRC / "dossier.tsx").read_text(encoding="utf-8")
+    assert 'x.type === "page"' in dossier, "the dossier's page briefs come from the lanes payload"
     admin = (SRC / "admin.tsx").read_text(encoding="utf-8")
     assert "lanes.parts" in admin, "the workbench groups by the payload's parts"
 
@@ -232,6 +235,12 @@ def test_admin_sites_shows_the_fields_and_saves_them(served):
                              "AI crawler policy", "Blocked at the firewall on purpose",
                              "AI real-visitor data source",
                              "Third-party map",
+                             # Item 277 (row 4): the Indexability inputs.
+                             "Intended noindex", "Migration map", "Parameter rules",
+                             # The Content briefs' inputs (screen audits round
+                             # 3, Admin AC-01).
+                             "Word floors", "Mandatory formats", "Authors", "Proof assets",
+                             "Competitors", "Keyword data", "Top 10 corpus", "Publish history",
                              "Active probing authorised", "Reputation source",
                              "Plugin directory feed"], got
     assert got["brand"] == "Acme" and got["strategy"] == "neighbourhood", got

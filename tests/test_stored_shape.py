@@ -293,6 +293,87 @@ EXPECTED: dict[str, dict[str, set[str]]] = {
             "title", "url", "viewport_tags", "word_count", "x_robots_tag",
         },
     },
+    # 0.29.0 changes no stored shape: Links files one finding per page (item
+    # 251), which moves the Links score and so the version. The row and the
+    # evidence are as 0.28.0 left them.
+    "0.29.0": {
+        "run_columns": {
+            "analyst_enabled", "composite_score", "costs", "created_at",
+            "created_by", "dimensions", "engine_version", "error",
+            "findings", "finished_at", "has_evidence", "id", "kind",
+            "crawled_paths", "progress", "scope", "site_id",
+            "effective_scope", "site_reading",
+            "started_at", "status",
+            "subscores", "tier",
+            "scan_scope", "scan_depth", "scan_url",
+            "known_paths", "scope_source",
+        },
+        "subscore": {
+            "applicable", "coverage", "detail", "score", "unmeasured",
+            "weight",
+        },
+        "subscore_detail": {
+            "deduction", "eligible_pages", "finding_counts",
+            "nominal_weight", "per_check",
+        },
+        "per_check": {"affected", "deduction", "eligible", "pages", "rate"},
+        "evidence_page": {
+            "a11y", "canonical", "click_depth", "content_dates", "content_hash",
+            "opening", "content_type", "discovered_via", "elapsed_ms", "h1",
+            "has_post_form",
+            "headers", "heading_levels", "heading_total", "headings",
+            "hreflang", "image_total", "images", "jsonld_blocks",
+            "jsonld_raw", "lang",
+            "link_header_canonical", "links", "local_schema",
+            "main_region", "meta_description", "meta_robots", "nap_mentions",
+            "image_inventory", "profile_links", "schema_inventory",
+            "outline", "outlinks", "perf",
+            "redirect_chain", "redirect_statuses", "requested_url",
+            "schema_types", "status",
+            "title", "url", "viewport_tags", "word_count", "x_robots_tag",
+        },
+    },
+    # 0.28.0 adds `known_paths` and `scope_source` to the run row (item 253):
+    # what the run's own evidence says the site has, for the page floor,
+    # and whether its scope was posted or derived from its tier. A run
+    # from before carries neither; a reader takes NULL as "not said".
+    "0.28.0": {
+        "run_columns": {
+            "analyst_enabled", "composite_score", "costs", "created_at",
+            "created_by", "dimensions", "engine_version", "error",
+            "findings", "finished_at", "has_evidence", "id", "kind",
+            "crawled_paths", "progress", "scope", "site_id",
+            "effective_scope", "site_reading",
+            "started_at", "status",
+            "subscores", "tier",
+            "scan_scope", "scan_depth", "scan_url",
+            "known_paths", "scope_source",
+        },
+        "subscore": {
+            "applicable", "coverage", "detail", "score", "unmeasured",
+            "weight",
+        },
+        "subscore_detail": {
+            "deduction", "eligible_pages", "finding_counts",
+            "nominal_weight", "per_check",
+        },
+        "per_check": {"affected", "deduction", "eligible", "pages", "rate"},
+        "evidence_page": {
+            "a11y", "canonical", "click_depth", "content_dates", "content_hash",
+            "opening", "content_type", "discovered_via", "elapsed_ms", "h1",
+            "has_post_form",
+            "headers", "heading_levels", "heading_total", "headings",
+            "hreflang", "image_total", "images", "jsonld_blocks",
+            "jsonld_raw", "lang",
+            "link_header_canonical", "links", "local_schema",
+            "main_region", "meta_description", "meta_robots", "nap_mentions",
+            "image_inventory", "profile_links", "schema_inventory",
+            "outline", "outlinks", "perf",
+            "redirect_chain", "redirect_statuses", "requested_url",
+            "schema_types", "status",
+            "title", "url", "viewport_tags", "word_count", "x_robots_tag",
+        },
+    },
     # 0.17.0 adds `has_post_form` to every page record (brief v16h): whether
     # the page carries a `<form method=post>`. The headers grid names the odd
     # route and, where that route takes a customer's details, says it is the

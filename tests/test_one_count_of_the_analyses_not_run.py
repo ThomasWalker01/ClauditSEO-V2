@@ -113,8 +113,12 @@ def test_the_control_that_opens_the_catalogue_counts_what_it_opens():
     a catalogue listing 23: the client plan writes to no part, is not in the
     drawer, and is reached from Reports."""
     cat = (SRC / "catalogue.tsx").read_text(encoding="utf-8")
-    m = re.search(r"export function notRunCount[\s\S]{0,400}?\n\}", cat)
-    assert m, "notRunCount not found"
+    # Item 252: the predicate lives in `notRunList`, which `notRunCount`
+    # counts and every "Run the N" narrows - one list, so one count.
+    count = re.search(r"export function notRunCount[\s\S]{0,400}?\n\}", cat)
+    assert count and "notRunList(lanes).length" in count.group(0), "notRunCount keeps its own filter"
+    m = re.search(r"export function notRunList[\s\S]{0,400}?\n\}", cat)
+    assert m, "notRunList not found"
     body = m.group(0)
     for clause in ('x.part !== "none"', 'x.part !== "report"', 'x.type !== "triage"'):
         assert clause in body, f"{clause} missing from notRunCount:\n{body}"

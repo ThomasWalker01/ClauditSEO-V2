@@ -333,10 +333,15 @@ export function CanonicalChainsBlock({ chains, chain, page, onPage, onCheck,
             chain to walk from it.
           </p>
         )}
-        <Legend />
+        <Legend kinds={chain ? [chain.kind] : []} />
       </section>
     );
   }
+  // Item 277 (row 11): a page with no canonical has no chain to draw - one
+  // dot and the words "no canonical" - so at site scope those pages are one
+  // line, and the grid is the chains that go somewhere.
+  const missing = chains.chains.filter((c) => c.relation === "missing");
+  const drawn = chains.chains.filter((c) => c.relation !== "missing");
   if (!chains.chains.length) {
     // The item's second degradation, and it is a sentence rather than an
     // empty grid: 226 identical self-loops is not a picture.
@@ -352,12 +357,20 @@ export function CanonicalChainsBlock({ chains, chain, page, onPage, onCheck,
   return (
     <section className="cc-root">
       {head}
-      <div className="cc-grid">
-        {chains.chains.map((c) => (
-          <ChainCard key={c.url} chain={c} onPage={onPage} onCheck={onCheck}
-                     checks={checks} />
-        ))}
-      </div>
+      {missing.length > 0 && (
+        <p className="cc-missing">
+          {missing.length} page{missing.length === 1 ? " declares" : "s declare"} no
+          canonical: {missing.map((c) => c.path).join(", ")}.
+        </p>
+      )}
+      {drawn.length > 0 && (
+        <div className="cc-grid">
+          {drawn.map((c) => (
+            <ChainCard key={c.url} chain={c} onPage={onPage} onCheck={onCheck}
+                       checks={checks} />
+          ))}
+        </div>
+      )}
       {chains.more > 0 && (
         <p className="cc-more">
           {chains.more} more chain{chains.more === 1 ? "" : "s"} below these.{" "}
@@ -375,15 +388,20 @@ export function CanonicalChainsBlock({ chains, chain, page, onPage, onCheck,
         {chains.healthy} of {chains.total} crawled pages canonicalise to
         themselves.
       </p>
-      <Legend />
+      <Legend kinds={drawn.map((c) => c.kind)} />
     </section>
   );
 }
 
-function Legend() {
+/** The key, for the kinds drawn above it (item 277, row 11): a key naming
+ *  "self-canonical" over a grid that never draws one is a word with nothing
+ *  to point at. */
+function Legend({ kinds }: { kinds: Chain["kind"][] }) {
+  const shown = LEGEND.filter(([kind]) => kinds.includes(kind));
+  if (!shown.length) return null;
   return (
     <div className="cc-legend">
-      {LEGEND.map(([kind, words]) => (
+      {shown.map(([kind, words]) => (
         <span key={kind} className={`cc-key cc-${kind}`}>
           <i aria-hidden="true" />{words}
         </span>

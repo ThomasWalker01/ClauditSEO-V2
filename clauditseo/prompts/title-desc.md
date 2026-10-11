@@ -37,12 +37,15 @@ to the Headings analysis, which receives each page's triple from this one.
 For every page in {{PAGE_SET}}: (1) classify the page type; (2) assess the
 seven checks below using the automatic checks' results and the stored extracts;
 (3) produce a replacement title and/or description for every FAIL and WARN,
-built to the active strategy. Assessment stays diagnostic; replacements stay
+built to the active strategy, that fits inside the cut (BOUNDS): a
+replacement wider than the cut is dropped by the reader together with the
+finding it answers, so where none fits, hold the row and say why. Assessment stays diagnostic; replacements stay
 prescriptive. Do not blend the two.
 
 CHECK SET (use these ids verbatim):
   ONP/title-missing           No <title>, empty, or placeholder text
-  ONP/title-length            Outside {{TITLE_MIN}}–{{TITLE_MAX}} characters
+  ONP/title-length            Under {{TITLE_MIN}} characters, or wider than
+                              {{TITLE_PX}} px on mobile (cut)
   ONP/title-duplicate         Identical to another page's title in the set after
                               trimming and case-folding; near-duplicate (only a
                               number, date or single word differs) is WARN
@@ -50,7 +53,8 @@ CHECK SET (use these ids verbatim):
                               active strategy (below); "Other" pages are exempt
                               unless a location or service is clearly targeted
   ONP/meta-desc-missing       No meta description, empty, or placeholder text
-  ONP/meta-desc-length        Outside {{DESC_MIN}}–{{DESC_MAX}} characters
+  ONP/meta-desc-length        Under {{DESC_MIN}} characters, or wider than
+                              {{DESC_PX}} px on desktop (cut)
   ONP/meta-desc-duplicate     Identical to another page's description in the
                               set; near-duplicate is WARN
 
@@ -91,8 +95,12 @@ stated and the inference is listed under `assumptions`.
                         area. Used only under the `neighbourhood` strategy.
   TITLE STRATEGY:       {{TITLE_STRATEGY}} — `triple` (default) or
                         `neighbourhood`.
-  BOUNDS:               {{TITLE_MIN}}/{{TITLE_MAX}}; {{DESC_MIN}}/{{DESC_MAX}}
-                        — the same bounds the automatic checks' length checks use.
+  BOUNDS:               title at least {{TITLE_MIN}} characters and at most
+                        {{TITLE_PX}} px wide on mobile; description at least
+                        {{DESC_MIN}} characters and at most {{DESC_PX}} px wide
+                        on desktop — the same bounds the automatic checks'
+                        length checks use. {{TITLE_MAX}} and {{DESC_MAX}}
+                        characters are a guide to those widths, not the test.
                         Under `neighbourhood`, TITLE_MAX is a soft ceiling of
                         240 characters.
                         The bounds are interpolated and never written out

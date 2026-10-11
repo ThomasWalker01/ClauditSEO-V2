@@ -45,6 +45,11 @@ def _open(base, site_id, report_state="leave", fn=None):
         try:
             pg.goto(f"{base}/#/sites/{site_id}", wait_until="load")
             pg.wait_for_selector("nav.seq-chapters .seq-step", timeout=30_000)
+            # The strip draws before the site's payload lands, its Deliver
+            # chapter reading "not started" until then; under load 300 ms was
+            # not enough (three cases read the placeholder in the 10 October
+            # suite and passed alone).
+            pg.wait_for_load_state("networkidle", timeout=30_000)
             pg.wait_for_timeout(300)
             return fn(pg)
         finally:

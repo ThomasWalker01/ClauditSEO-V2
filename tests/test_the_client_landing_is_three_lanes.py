@@ -146,12 +146,19 @@ def test_the_integrity_line_says_the_report_is_held(served):
     base, ids = served
     head = httpx.get(f"{base}/api/sites/{ids['site']}/anatomy", timeout=30).json()["headline"]
     n = (head.get("integrity") or {}).get("count", 0)
-    line = _page(served, lambda pg: pg.evaluate(
-        "() => document.querySelector('.integrity-line')?.textContent || null"))
+    got = _page(served, lambda pg: pg.evaluate("""() => {
+        const l = document.querySelector('.integrity-line');
+        const a = l && l.querySelector('a.report-held-go');
+        return l && { text: l.textContent, href: a && a.getAttribute('href'),
+                      described: (document.getElementById('integrity-line') || {}).textContent }; }"""))
     if n:
-        assert line and f"{n} Critical or High" in line, (n, line)
+        assert got and f"{n} Critical or High still open" in got["text"], (n, got)
+        # Item 259: the blocker's door beside it - the hold's own address -
+        # and not part of the held button's description.
+        assert got["href"] == f"#/sites/{ids['site']}?tab=all&state=open,regressed&sev=critical,high", got
+        assert "Open the record" not in got["described"], got
     else:
-        assert line is None, "a clear report drew a held line"
+        assert got is None, "a clear report drew a held line"
 
 
 
@@ -530,7 +537,11 @@ def test_the_landing_reads_as_a_task_list_not_a_ledger(served):
                  // the reference's transparent chip, and still a fixed gutter.
                  chip: (cs(fig, 'backgroundColor') !== 'rgba(0, 0, 0, 0)'
                         || cs(fig, 'borderTopStyle') !== 'none'
-                        || fig.classList.contains('fig-quiet')) ? 'chip' : 'none' };
+                        || fig.classList.contains('fig-quiet')
+                        // Item 252: a count with no door is plain muted text
+                        // in the same gutter - the quiet chip's drawing, by
+                        // rule rather than by tone.
+                        || fig.classList.contains('fig-plain')) ? 'chip' : 'none' };
       });
       const lanes = [...document.querySelectorAll('.cl-landing .cl-lane')].map((l) =>
         ['Top', 'Right', 'Bottom', 'Left'].every((side) => cs(l, 'border' + side + 'Style') !== 'none'));

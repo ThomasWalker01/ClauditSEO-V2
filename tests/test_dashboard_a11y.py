@@ -1309,7 +1309,6 @@ PAINTED_BY_NOTHING = {
     "row-model": "analyses.tsx:222; styles.css:1622 names it in prose and the "
                  "rule beside that comment targets `input, select, textarea`",
     "to-confirm-runnable": "sits beside .to-confirm on probes.tsx:140, which paints it",
-    "wb-toggle": "workbench.tsx:157; a disclosure caret taking its parent's ink",
     "intl-gate": "part identity on a .now-card in part_page.tsx's IntlNow; "
                  ".now-card paints it, the name is for the render tests",
     "intl-now": "part identity on a .now-card in IntlNow, which .now-card paints",

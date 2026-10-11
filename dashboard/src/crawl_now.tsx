@@ -9,6 +9,7 @@
  *  as null). The UA-string caveat is stated once, beneath the matrix — a 403
  *  to a UA string is evidence of server-side filtering, not proof of what the
  *  named crawler actually sees. */
+import { MEASURE_WORD } from "./measure";
 /** One agent's row in the UA matrix: its robots verdict and what the server
  *  returned to that UA string on the home page and the probe pages. */
 export type UaRow = {
@@ -35,6 +36,9 @@ export type CrawlNow = {
   in_sitemap: number;
   reached: number;
   render_only: number;
+  /** The pages the rendered pass visited, which `render-only` is read on;
+   *  null where it rendered none (item 275). */
+  render_read?: number | null;
   sitemap_files: number;
   venn: {
     reached_not_in_sitemap: number;
@@ -167,6 +171,35 @@ function ParitySection({ parity }: { parity: MobileParity | null | undefined }) 
   );
 }
 
+/** An agent robots.txt allows, sent, and served 2xx on every probed page:
+ *  the rows that say nothing new, folded (item 275, row 11). */
+function servedEverywhere(r: UaRow): boolean {
+  return r.robots === "allow" && r.sent !== false
+    && r.fetched.length > 0 && r.fetched.every((f) => f.status !== null && f.status >= 200 && f.status < 300);
+}
+
+function UaMatrixRow({ r }: { r: UaRow }) {
+  return (
+    <tr>
+      <td>{r.agent}</td>
+      <td>{r.class || "—"}</td>
+      <td>
+        <span className={`str-badge str-${r.robots === "allow" ? "pass" : "fail"}`}>
+          {r.robots === "allow" ? "allow" : "disallow /"}
+        </span>
+      </td>
+      {r.fetched.map((f) => (
+        <td key={f.url}>
+          <span className={`str-badge str-${r.sent === false ? "held" : statusKind(f.status)}`}>
+            {r.sent === false ? "not sent" : f.status === null ? "not fetched" : f.status}
+          </span>
+        </td>
+      ))}
+      <td className="cn-note">{r.note || "—"}</td>
+    </tr>
+  );
+}
+
 /** The pass/fail/held badge kind for a fetched-status cell: 2xx passes, a
  *  null was never fetched (held — not judged), anything else is the server
  *  saying no. Reuses the `str-badge` classes the title/description card
@@ -176,11 +209,28 @@ function statusKind(status: number | null): "pass" | "fail" | "held" {
   return status >= 200 && status < 300 ? "pass" : "fail";
 }
 
+/** The Crawl part's verdict, from the crawl's own counts (item 275, row
+ *  12): what the model's prose said in its own figures, said in the
+ *  engine's, so the sentence and the tiles under it cannot disagree. */
+export function crawlVerdict(now: CrawlNow): string {
+  const v = now.venn;
+  const s = (n: number) => (n === 1 ? "" : "s");
+  const gaps = [
+    v.published_not_reached
+      ? `${v.published_not_reached} sitemap URL${s(v.published_not_reached)} the crawl did not reach` : "",
+    v.reached_not_in_sitemap
+      ? `${v.reached_not_in_sitemap} reached page${s(v.reached_not_in_sitemap)} in no sitemap` : "",
+  ].filter(Boolean);
+  return `The crawl reached ${now.reached} of ${now.published} published URL${s(now.published)}`
+    + (gaps.length ? `; ${gaps.join(" and ")}.` : ", and every one is in a sitemap.");
+}
+
 export function CrawlNowBlock({ now }: { now: CrawlNow }) {
   const v = now.venn;
   return (
     <div className="crawl-now">
       <h3>What the site has now</h3>
+      <p className="cn-verdict">{crawlVerdict(now)}</p>
       <div className="cn-kv">
         <div>
           <span className="cn-l">Published</span>
@@ -211,8 +261,16 @@ export function CrawlNowBlock({ now }: { now: CrawlNow }) {
         </div>
         <div>
           <span className="cn-l">Render-only</span>
-          <b>{now.render_only}</b>
-          <span className="cn-s">content present only after JavaScript</span>
+          {/* Item 275: of the pages the rendered pass visited, or not
+              measured - a 0 beside the crawl's own counts read as the site. */}
+          {now.render_read
+            ? <b>{now.render_only}</b>
+            : <b className="cn-unmeasured">—</b>}
+          <span className="cn-s">
+            {now.render_read
+              ? `of ${now.render_read} page${now.render_read === 1 ? "" : "s"} the rendered pass visited: content present only after JavaScript`
+              : `${MEASURE_WORD["not-measured"]}: the rendered pass visited no page in this audit`}
+          </span>
         </div>
       </div>
 
@@ -252,27 +310,29 @@ export function CrawlNowBlock({ now }: { now: CrawlNow }) {
               </tr>
             </thead>
             <tbody>
-              {now.ua_matrix.map((r) => (
-                <tr key={r.agent}>
-                  <td>{r.agent}</td>
-                  <td>{r.class || "—"}</td>
-                  <td>
-                    <span className={`str-badge str-${r.robots === "allow" ? "pass" : "fail"}`}>
-                      {r.robots === "allow" ? "allow" : "disallow /"}
-                    </span>
-                  </td>
-                  {r.fetched.map((f) => (
-                    <td key={f.url}>
-                      <span className={`str-badge str-${r.sent === false ? "held" : statusKind(f.status)}`}>
-                        {r.sent === false ? "not sent" : f.status === null ? "not fetched" : f.status}
-                      </span>
-                    </td>
-                  ))}
-                  <td className="cn-note">{r.note || "—"}</td>
-                </tr>
+              {/* Item 275 (row 11): the rule blocks and refusals first - the
+                  rows that say something - and the agents served on every
+                  probed page folded beneath, said by their count. */}
+              {now.ua_matrix.filter((r) => !servedEverywhere(r)).map((r) => (
+                <UaMatrixRow key={r.agent} r={r} />
               ))}
             </tbody>
           </table>
+          {now.ua_matrix.some(servedEverywhere) && (
+            <details className="cn-ok-agents">
+              <summary className="muted">
+                {now.ua_matrix.filter(servedEverywhere).length} agents allowed by robots.txt and
+                served on every probed page
+              </summary>
+              <table className="cn-matrix">
+                <tbody>
+                  {now.ua_matrix.filter(servedEverywhere).map((r) => (
+                    <UaMatrixRow key={r.agent} r={r} />
+                  ))}
+                </tbody>
+              </table>
+            </details>
+          )}
           <p className="cn-caveat">
             This measures the UA string&rsquo;s treatment, not the real
             crawler&rsquo;s visit: a 403 to a UA test is evidence of server-side

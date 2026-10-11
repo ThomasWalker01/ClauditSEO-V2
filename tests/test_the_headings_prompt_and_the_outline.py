@@ -78,7 +78,10 @@ def test_the_snapshot_carries_the_outline_and_the_engine_says_so():
     # not about which version that is - so the number moves and the point of
     # asserting it does not: a snapshot whose shape changed without the
     # version changing is what this line catches.
-    assert ENGINE_VERSION == "0.27.0"
+    # ... and 0.28.0 for the run row's `known_paths` and `scope_source`
+    # (item 253).
+    # ... and 0.29.0 for Links filing one finding per page (item 251).
+    assert ENGINE_VERSION == "0.29.0"
     crawl = CrawlResult(start_url="https://x.test/", tier=Tier.T2, pages=[_page()])
     rec = snapshot(crawl)["pages"][0]
     assert rec["main_region"] == "<main>"
@@ -94,7 +97,7 @@ def test_both_prompts_load_and_conform_and_the_stopgap_is_images():
     # The Images brief took the part at brief v15 step AQ.
     # Sixteen: plus `img-logo` (AU6) and `img-heavy` (AU7), less
     # `img-review-schema`, which step AS moved to Structured data.
-    assert by["images"].part == "images" and len(by["images"].checks) == 16
+    assert by["images"].part == "images" and len(by["images"].checks) == 17
     assert conforms("images")
     assert EXPERT_TOOLS["headings"]["build"] is _headings_context
 

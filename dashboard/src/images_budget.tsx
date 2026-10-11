@@ -51,6 +51,8 @@ export type ImageBudget = { floor_kb: number; image_kb: number;
  *  `unmeasured` or `unplaced` and the block says so in words. */
 export type ImageDot = {
   src: string; page: string; w: number; h: number; kb: number;
+  /** The viewport width the box was measured at (item 272, row 7). */
+  at?: number | null;
   bytes_per_pixel: number | null; alt_missing: boolean; decorative: boolean;
   state: "ok" | "warn" | "bad" | "mute";
   /** One dot per distinct image (item 241): the paths it is on, how many
@@ -65,9 +67,14 @@ export type ImageBudgetPayload = {
   unmeasured: number; unplaced: number; pages: number;
   /** Placements drawn, and the pages the browser pass looked at (item 241). */
   placements: number; weighed_pages: number;
+  /** Each page's own count (item 272, row 7). */
+  per_page?: Record<string, { total: number; unmeasured: number; unplaced: number;
+                              placed: number }>;
   recorded: boolean;
   /** Whether the audit measured images in a browser (item 205). */
   measured: boolean | "unavailable";
+  /** Whether any image was seen as a page's largest paint (item 272). */
+  lcp_found?: boolean;
   tier?: string | null; started_at?: string | null;
 };
 
@@ -75,6 +82,20 @@ const KB = 1024;
 /** The x axis, item 241: from a 40-pixel square to at least 800×600. */
 const PX_AXIS_LO = 40;
 const PX_AXIS_MIN = 800 * 600;
+
+/** The page-mode note, reconciled as site mode's is (item 272, row 7):
+ *  "11 images on /: 7 distinct drawn, 2 with no rendered box, 3 repeat
+ *  placements". It read "7 distinct images on /" over a wall of 11. */
+export function pageNote(t: { total: number; unmeasured: number; unplaced: number; placed: number }
+                           | undefined, distinct: number, scope: string): string {
+  const s = (n: number) => (n === 1 ? "" : "s");
+  if (!t) return `${distinct} distinct image${s(distinct)} ${scope}.`;
+  const parts = [`${distinct} distinct drawn`];
+  if (t.placed > distinct) parts.push(`${t.placed - distinct} repeat placement${s(t.placed - distinct)}`);
+  if (t.unplaced) parts.push(`${t.unplaced} with no rendered box`);
+  if (t.unmeasured) parts.push(`${t.unmeasured} not weighed`);
+  return `${t.total} image${s(t.total)} ${scope}: ${parts.join(", ")}.`;
+}
 
 /** "on /about/" or "on 26 pages" - where a distinct image is placed. */
 const onPages = (d: ImageDot) =>
@@ -88,6 +109,9 @@ const KB_TICKS = [10, 20, 50, 100, 200, 500];
 
 /** The plot box inside the viewBox, in the viewBox's own units. */
 const L = 70, R = 1080, T = 20, B = 380;
+/** "1 byte", "1.5 bytes" (item 272, row 12): the site record's ceiling is
+ *  often 1, and "1 bytes a pixel" was on screen. */
+const bytes = (n: number) => `${n} ${n === 1 ? "byte" : "bytes"}`;
 
 const pathOf = (u: string) => { try { return new URL(u).pathname || "/"; } catch { return u; } };
 
@@ -212,9 +236,12 @@ export function BytesForPixels({ payload, page, picked = null, onPick }: {
   samples.push(pxMax);
   const band = samples.map((px) => `${lx(px)},${ly(Math.max(ceiling(px), budget.floor_kb))}`)
                       .join(" ");
+  // Where the per-pixel arm meets the flat per-file one, within the axis.
+  const flatAt = Math.min(Math.max((budget.image_kb * KB) / budget.bytes_per_pixel,
+                                   PX_AXIS_LO * PX_AXIS_LO * 4), pxMax);
 
   const named = (d: ImageDot) =>
-    `${fileOf(d.src)}, ${d.w} by ${d.h} pixels, ${d.kb} kilobytes`
+    `${fileOf(d.src)}, ${d.w} by ${d.h} pixels${d.at ? ` at ${d.at} wide` : ""}, ${d.kb} kilobytes`
     + (d.weight_source === "header" ? " by the server's size header" : "")
     + (d.alt_missing ? ", no alt text" : "") + `, ${onPages(d)}`;
 
@@ -231,14 +258,17 @@ export function BytesForPixels({ payload, page, picked = null, onPick }: {
       <svg className={`ib-scatter${pickedKey ? " ib-has-pick" : ""}`} viewBox="0 0 1100 420" role="group"
            aria-label={`${here.length} images ${scope}, plotted by rendered size against `
                        + `transferred weight, against a ceiling of `
-                       + `${budget.bytes_per_pixel} bytes a pixel and a `
+                       + `${bytes(budget.bytes_per_pixel)} a pixel and a `
                        + `${budget.floor_kb} KB floor`}>
         <polygon className="ib-band"
-                 points={`${lx(samples[0])},${ly(budget.floor_kb)} ${band} ${R},${B} `
-                         + `${lx(samples[0])},${B}`} />
+                 points={`${lx(samples[0])},${ly(budget.floor_kb)} ${band} `
+                         + `${R},${ly(budget.floor_kb)}`} />
         <polyline className="ib-ceiling" points={band} />
-        <text className="ib-ceiling-name" x={lx(pxMax * 0.42)}
-              y={ly(Math.max(ceiling(pxMax * 0.42), budget.floor_kb)) - 8}>
+        {/* Item 272 (row 12): anchored at the bend, left of the flat
+            segment, and 14 above the line, so it neither runs along the flat
+            part nor sits on the dots under it. */}
+        <text className="ib-ceiling-name" x={lx(flatAt) - 6} textAnchor="end"
+              y={ly(Math.max(ceiling(flatAt), budget.floor_kb)) - 14}>
           budget for its size
         </text>
         <line className="ib-floor" x1={L} y1={ly(budget.floor_kb)} x2={R}
@@ -270,7 +300,7 @@ export function BytesForPixels({ payload, page, picked = null, onPick }: {
                   className={`ib-dot ib-${d.state}${d.weight_source === "header" ? " ib-header" : ""}`
                              + (pickedKey && dotKey(d) === pickedKey ? " ib-picked" : "")}
                   aria-pressed={Boolean(pickedKey && dotKey(d) === pickedKey)}
-                  cx={lx(d.w * d.h)} cy={ly(d.kb)} r={d.state === "mute" ? 3 : 4.5}
+                  cx={Math.min(lx(d.w * d.h), R - 6)} cy={ly(d.kb)} r={d.state === "mute" ? 3 : 4.5}
                   role="button" tabIndex={0} aria-label={named(d)}
                   onMouseEnter={(e) => setTip({ dot: d, x: e.clientX, y: e.clientY })}
                   onMouseMove={(e) => setTip({ dot: d, x: e.clientX, y: e.clientY })}
@@ -302,12 +332,15 @@ export function BytesForPixels({ payload, page, picked = null, onPick }: {
         {/* Item 241: placements and distinct images are two numbers, and
             the chart draws the second. */}
         {page
-          ? `${here.length} distinct image${here.length === 1 ? "" : "s"} ${scope}.`
+          ? pageNote(payload.per_page?.[pathOf(page)], here.length, scope)
           : `${payload.placements} placement${payload.placements === 1 ? "" : "s"} of `
             + `${here.length} distinct image${here.length === 1 ? "" : "s"} weighed, `
             + `of ${payload.total} images the crawl recorded.`}
+        {/* Item 272 (row 8): the 48 is the pages with a stored snapshot, not
+            the crawl's 45, and says so - two page counts on one screen with
+            nothing to tell them apart read as one disagreeing with itself. */}
         {!page && payload.weighed_pages < payload.pages
-          ? ` Weighed on ${payload.weighed_pages} of ${payload.pages} pages.`
+          ? ` Weighed on ${payload.weighed_pages} of the ${payload.pages} pages with a stored snapshot.`
           : ""}
         {!page && payload.unmeasured > 0
           ? ` ${payload.unmeasured} carry no transferred weight, so they are not plotted.`
@@ -318,14 +351,14 @@ export function BytesForPixels({ payload, page, picked = null, onPick }: {
         {!page && payload.drawable > here.length
           ? ` This chart stops at ${here.length} of ${payload.drawable} it could draw.`
           : ""}
-        {" "}The ceiling is {budget.bytes_per_pixel} bytes a rendered pixel and{" "}
+        {" "}The ceiling is {bytes(budget.bytes_per_pixel)} a rendered pixel and{" "}
         {budget.image_kb} KB a file, from the site record.
       </p>
       {tip && (
         <div className="ib-tip" style={{ left: tip.x + 14, top: tip.y + 14 }}>
           <code>{tip.dot.src}</code>
           <div className="ib-tip-line">
-            {tip.dot.w}&times;{tip.dot.h} drawn &middot; {tip.dot.kb} KB
+            {tip.dot.w}&times;{tip.dot.h} drawn{tip.dot.at ? ` at ${tip.dot.at}` : ""} &middot; {tip.dot.kb} KB
             {tip.dot.bytes_per_pixel != null
               ? ` · ${tip.dot.bytes_per_pixel} B/px` : ""}
             {tip.dot.alt_missing ? <b className="ib-tip-bad"> &middot; no alt</b> : null}
@@ -508,7 +541,7 @@ export function ImageWall({ inventory, page, budget, picked = null, onPage }: {
         {" "}<code>img-alt-missing</code> for the red and <code>img-heavy</code>
         {" "}for the amber.
         {budget
-          ? ` Over budget means past ${budget.bytes_per_pixel} bytes a rendered `
+          ? ` Over budget means past ${bytes(budget.bytes_per_pixel)} a rendered `
             + `pixel or ${budget.image_kb} KB a file.`
           : ""}
         {weighed.length < rows.length

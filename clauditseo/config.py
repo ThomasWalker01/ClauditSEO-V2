@@ -114,7 +114,7 @@ class Settings:
     default_locale: str = field(default_factory=lambda: _env("CLAUDITSEO_LOCALE", "en-AU"))
     # Single-operator auth: set CLAUDITSEO_TOKEN to require Bearer auth on /api/*.
     api_token: str = field(default_factory=lambda: _env("CLAUDITSEO_TOKEN"))
-    # 'anthropic' (default) or 'mock' — mock enables the analyst band and chat
+    # 'anthropic' (default) or 'mock' — mock enables the analyst band
     # without any key, spending nothing (useful for demos and tests).
     llm_provider: str = field(default_factory=lambda: _env("CLAUDITSEO_LLM_PROVIDER", "anthropic"))
 

@@ -56,6 +56,8 @@ claim, and only OFP meets it.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 import clauditseo.modules  # noqa: F401  (registers the dimensions)
@@ -307,3 +309,40 @@ def test_a_page_capable_section_keeps_its_page_refresh(served, browser_page):  #
     assert browser_page.query_selector(".sec-refresh-page"), (
         f"Local & citations lost its page refresh on {path}: {text!r}")
     assert "for this page" in text, text
+
+
+@live
+def test_a_part_no_crawl_moves_prices_no_pages(served, browser_page):  # noqa: F811
+    """Item 278 (row 7). Backlinks' re-check read "53 pages · Quick · ~2m"
+    for a check that reads no page, and Quick's pulse never asks the
+    provider. The drawer drops the page count and the page-based time, hides
+    the Pages select, starts at Standard, and says why where it is read."""
+    from clauditseo import anatomy as an
+    offer = an.refresh_for(BLIND_SECTION)
+    assert offer["per_page"] is False and offer["crawl_blind"] is True, offer
+    assert an.refresh_for("headings")["crawl_blind"] is False
+    base, ids = served
+    browser_page.goto(f"{base}/#/sites/{ids['site']}?tab=findings", wait_until="load")
+    browser_page.wait_for_selector(".anat-layout", timeout=20_000)
+    _open(browser_page, "Backlinks")
+    browser_page.wait_for_timeout(1_000)
+    got = browser_page.evaluate("""() => {
+      const d = document.querySelector('.reaudit');
+      return {
+        pressed: [...d.querySelectorAll('.reaudit-depth button')]
+          .filter((b) => b.getAttribute('aria-pressed') === 'true').map((b) => b.textContent.trim()),
+        primary: d.querySelector('.reaudit-primary').textContent.trim(),
+        select: d.querySelectorAll('.reaudit-pages').length,
+        said: (d.querySelector('.reaudit-domain')?.textContent || '').replace(/\\s+/g, ' '),
+        inDetails: !!d.querySelector('details .reaudit-domain'),
+        cost: d.querySelector('.reaudit-cost').textContent,
+      };
+    }""")
+    assert got["pressed"] == ["Standard · free"], got
+    assert got["primary"] == "Re-check Backlinks · Standard · free", got
+    assert got["select"] == 0, got
+    assert "reads the domain rather than any page" in got["said"] and not got["inDetails"], got
+    assert got["cost"].startswith("Not timed by pages"), got
+    # The run the drawer starts is the depth it shows: one rule for both.
+    pane = (Path(__file__).resolve().parents[1] / "dashboard" / "src" / "anatomy.tsx").read_text(encoding="utf-8")
+    assert "DEPTH_TIER[depthFor(current.refresh, depth)!]" in pane

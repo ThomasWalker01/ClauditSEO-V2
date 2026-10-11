@@ -592,9 +592,10 @@ def test_the_payload_carries_the_block_keys_and_the_row_fields() -> None:
 
     runs = (Path(__file__).resolve().parents[1] / "clauditseo" / "persistence"
             / "runs.py").read_text(encoding="utf-8")
-    for key in ("brief_templates", "brief_locales", "brief_fixes",
-                "brief_schema"):
+    for key in ("brief_locales", "brief_fixes", "brief_schema"):
         assert f'"{key}": brief_' in runs, key
+    # Item 274 (row 4): the templates carry the automatic checks' verdict.
+    assert '"brief_templates": template_verdicts(brief_templates' in runs
     for field in ("fix_id", "suppressed", "confidence"):
         assert f'"{field}": r.get("{field}")' in runs, field
 
@@ -807,7 +808,11 @@ def test_a_not_applicable_part_is_not_worded_not_assessed() -> None:
     settled state. Two states, two words."""
     src = _src("part_page.tsx")
     phrase = 'part.gate?.state === "na" ? "not applicable" : "not assessed"'
-    assert src.count(phrase) == 2
+    # Item 274 (row 13): the checks table's line under a gated part now says
+    # its checks cannot have findings, behind a disclosure; the page line
+    # keeps this phrase.
+    assert src.count(phrase) == 1
+    assert '.map(([reason, ids]) => part.gate?.state === "na" ? (' in src
 
 
 def test_the_verdict_and_confidence_tones_exist_in_the_vocabulary() -> None:

@@ -416,6 +416,19 @@ _ERROR_LEAK = re.compile(
 HSTS_FULL_AGE = 31_536_000
 CERT_EXPIRY_DAYS = 14
 
+#: Checks this sweep tests only in part, with what it does not test (screen
+#: audits round 3, Security AC-01). Its silence on them is not a pass: the
+#: clean line said "clean on every reading" of a certificate chain it never
+#: walked and of CMS endpoints that answered a challenge page.
+PARTLY_MEASURED = {
+    "cert-chain": f"expiry inside {CERT_EXPIRY_DAYS} days only; the chain and OCSP "
+                  "stapling are not tested",
+    "cms-xmlrpc": "an answer of 200 only; a challenge or block page reads as no fault",
+    "cms-login-exposed": "an answer of 200 only; a challenge or block page reads as no fault",
+    "cms-registration-open": "an answer of 200 only; a challenge or block page reads as "
+                             "no fault",
+}
+
 _MAX_AGE = re.compile(r"max-age\s*=\s*(\d+)", re.I)
 _VERSIONED = re.compile(r"\d+\.\d+")
 _GENERATOR = re.compile(r"<meta[^>]+name=[\"']generator[\"'][^>]*content=[\"']([^\"']+)", re.I)
@@ -481,6 +494,10 @@ _LEAK = re.compile(
     r"(pass(word|wd)?|secret|api[_-]?key|token)\s*[:=]\s*\S{4,}"
     r"|\b(?:staging|stage|dev|test|uat)\.[a-z0-9-]+\.[a-z]{2,}"
     r"|\b(?:localhost|127\.0\.0\.1)(?::\d+)?\b", re.I)
+
+
+#: The CSP directives that govern script (item 276, row 5).
+SCRIPT_DIRECTIVES = ("script-src", "script-src-elem", "script-src-attr")
 
 
 def _header(headers: dict, key: str) -> str | None:
@@ -690,10 +707,19 @@ class SecurityModule:
             weak = []
             if csp is None:
                 weak.append("Report-Only only - it enforces nothing")
-            script_src = next((d for d in policy.split(";") if d.strip().startswith("script-src")), "")
-            for token in ("'unsafe-inline'", "'unsafe-eval'", " data:", " blob:"):
-                if token in f" {script_src}":
-                    weak.append(f"{token.strip()} in script-src")
+            # Item 276 (row 5): every script directive, each by its name. The
+            # first directive that STARTED with "script-src" was the only one
+            # read, so a policy leading with `script-src-elem` had its
+            # `script-src` unread, and a gap in `-elem` was said of
+            # `script-src`.
+            for directive in policy.split(";"):
+                name, _, value = directive.strip().partition(" ")
+                if name not in SCRIPT_DIRECTIVES:
+                    continue
+                sources = value.split()
+                for token in ("'unsafe-inline'", "'unsafe-eval'", "data:", "blob:"):
+                    if token in sources:
+                        weak.append(f"{token} in {name}")
             if re.search(r"(^|\s)\*(\s|;|$)", policy):
                 weak.append("a wildcard source")
             if "frame-ancestors" not in policy:

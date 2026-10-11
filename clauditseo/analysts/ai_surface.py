@@ -49,6 +49,14 @@ CANDIDATE_SOURCE = re.compile(
 NEEDS_UNRUN = "part has not run"
 NEEDS_FREE_ONLY = "part ran free-only, this check is analysis"
 NEEDS_BLOCKED = re.compile(r"^blocked: \S.*$")
+#: The fourth form (item 267, row 11): the owning automatic check ran on the
+#: audit and raised nothing. That is a pass, not an unavailable read; filed as
+#: "blocked", it put four passes under "Reads not available".
+NEEDS_RAN_CLEAN = "ran clean"
+#: The wording the engine supplied for that case before the fourth form, so a
+#: stored analysis that copied it reads as what it is.
+_LEGACY_RAN_CLEAN = re.compile(
+    r"^blocked: the owning check ran on this audit and raised no open row\b")
 
 #: Where each read-through renders, from its owning check (third addition).
 READ_SCOPE = {"LNK/hub-unlinked": "entity", "INT/lang-en-absent": "site",
@@ -61,7 +69,7 @@ PAGE_SET_CAP = 40
 
 def needs_is_valid(value: str) -> bool:
     v = (value or "").strip()
-    return v in (NEEDS_UNRUN, NEEDS_FREE_ONLY) or bool(NEEDS_BLOCKED.match(v))
+    return v in (NEEDS_UNRUN, NEEDS_FREE_ONLY, NEEDS_RAN_CLEAN) or bool(NEEDS_BLOCKED.match(v))
 
 
 def count_client_to_supply(value: Any) -> int:
@@ -111,6 +119,8 @@ def read_block(parsed, data: dict, reads: list[str], checks: list[str]) -> None:
         item = {"check": str(entry.get("check") or "").strip(),
                 "part": str(entry.get("part") or "").strip(),
                 "needs": str(entry.get("needs") or "").strip()}
+        if _LEGACY_RAN_CLEAN.match(item["needs"]):
+            item["needs"] = NEEDS_RAN_CLEAN
         if item["check"] not in reads_set:
             parsed.dropped.append({"row": entry, "reason": f"absent_reads entry for "
                                    f"{item['check']}, which the header does not read"})
@@ -141,21 +151,58 @@ PER_AGENT_FREE = ("edge-blocks-ai-ua", "ua-sensitive")
 HOLD = "hold"
 
 
-def police_row(check: str, raw: dict, *, llms_txt_build: bool = False
+def police_row(check: str, raw: dict, *, llms_txt_build: bool = False,
+               unassessed: dict[str, str] | None = None,
+               raised: dict[str, set[str]] | None = None
                ) -> tuple[dict | None, str | None, list[str]]:
     """One AI surface row, judged. Returns (the row as it may be stored or
     None, the reason it was dropped, notes on what was changed). A reason of
-    `HOLD` means the row belongs in not_assessable, not in the drops."""
+    `HOLD` means the row belongs in not_assessable, not in the drops.
+
+    `unassessed` and `raised` are the run's sweep (item 267): the free checks
+    it could not assess, with why, and the paths it raised each check on.
+    None where the caller gave no run."""
     notes: list[str] = []
     row = dict(raw)
     bare = check.partition("/")[2]
+    # Item 267 (row 13): a row about an llms.txt that exists nowhere. With the
+    # build input off nothing was authored, and where the sweep raised
+    # `llms-txt-missing` the site publishes none either, so a conflict "in the
+    # authored llms.txt" is about no file at all. On twenty22 it was a MEDIUM
+    # candidate awaiting Confirm. Where the site has its own file, a conflict
+    # may be about that one, and the row stands.
+    if not llms_txt_build and raised is not None and "llms-txt-missing" in raised:
+        said = " ".join(str(row.get(k) or "") for k in ("evidence", "replacement", "note")).lower()
+        if bare == "llms-txt-conflict" or "authored llms.txt" in said:
+            return None, ("names an llms.txt that does not exist: this run built none "
+                          "(the build input is off) and the site publishes none"), notes
     if bare in PER_AGENT_FREE:
         return None, (f"{check} is raised per crawler by the automatic checks from the "
                       "crawler access test; an analysis row keyed by page would merge crawlers the site "
                       "record tells apart"), notes
     from clauditseo.checks import check_cost
     if check_cost(check) == "free":
-        return None, "free check; the automatic checks measure it, the analysis may only read it", notes
+        why = (unassessed or {}).get(check)
+        if why:
+            # Item 267. On twenty22 the brief's `entity-unresolvable` row was
+            # dropped because "the automatic checks measure it", on a page
+            # whose free line says the check was not assessed ("sameas_sources
+            # on the site record is empty"). A check the sweep did not measure
+            # is not the sweep's: the row is kept, to confirm, and says so.
+            notes.append(f"the automatic checks did not assess {bare}: {why}")
+            return row, None, notes
+        if raised is None:
+            return None, "free check; the automatic checks measure it, the analysis may only read it", notes
+        # The drop names what the sweep found, so the reader can see the
+        # check was measured rather than take it on trust.
+        # A site row names no page (`llms-txt-missing`, `affected_urls=[]`):
+        # raised, on no page, which is not the same as not raised.
+        paths = raised.get(bare)
+        found = ("did not raise it" if paths is None
+                 else f"raised it on {len(paths)} page{'s' if len(paths) != 1 else ''}" if paths
+                 else "raised it for the site")
+        return None, (f"free check; the automatic checks measured it and {found}, "
+                      "so the analysis may only read it"), notes
     if bare == "llms-txt-authored" and not llms_txt_build:
         return None, ("llms-txt-authored may only be emitted when LLMS_TXT_BUILD is true, "
                       "and this run's is false"), notes
@@ -169,7 +216,12 @@ def police_row(check: str, raw: dict, *, llms_txt_build: bool = False
             # not a forbidden source.
             base = re.split(r"\s*[·|—-]\s*\[NOT SUPPLIED\]", source)[0].strip()
             if isinstance(c, dict) and CANDIDATE_SOURCE.match(base):
-                (kept if str(c.get("sentence") or "").strip() else held).append(c)
+                # Item 267 (row 6): a sentence that opens on the client's
+                # blank is not a sentence to place - it waits on the field
+                # it names, as an empty one does.
+                sentence = str(c.get("sentence") or "").strip()
+                (kept if sentence and not sentence.lower().startswith(CLIENT_TO_SUPPLY)
+                 else held).append(c)
             else:
                 dropped.append(source or "(none)")
         if dropped:
@@ -181,7 +233,11 @@ def police_row(check: str, raw: dict, *, llms_txt_build: bool = False
                 return None, "every enrichment candidate named a source the prompt forbids", notes
             return None, HOLD, notes
         if held:
-            notes.append(f"{len(held)} candidate(s) held: the record field they need is empty")
+            fields = "; ".join(
+                f"{c.get('entity') or '?'} ({str(c.get('source') or '?').split('·')[0].strip()})"
+                for c in held[:4])
+            notes.append(f"{len(held)} candidate(s) held: the record field they need is "
+                         f"empty or waits on the client - {fields}")
         row["candidates"] = kept
     if bare == "answer-liftable":
         words = str(row.get("passage") or "").split()
@@ -422,9 +478,10 @@ def _read_rows(conn, site_id: str, reads: list[str]) -> list[dict]:
 
 
 def absent_needs(conn, site_id: str, run_id: str | None, check: str) -> str:
-    """Which of the three absences a read with no rows is, from the record:
-    the owning dimension did not run in the audit, or it did and the check
-    is analysis no brief has answered, or something else, named."""
+    """Which absence a read with no rows is, from the record: the owning
+    dimension did not run in the audit; it did and the check is analysis no
+    brief has answered; it ran and raised nothing (`ran clean`, item 267 row
+    11); or something else, named."""
     from clauditseo.checks import brief_only_checks
     dim = check.split("/", 1)[0]
     dims: set[str] = set()
@@ -448,8 +505,7 @@ def absent_needs(conn, site_id: str, run_id: str | None, check: str) -> str:
                 "no open row, so there is nothing to read through")
     if dim not in dims:
         return NEEDS_UNRUN
-    return ("blocked: the owning check ran on this audit and raised no open row, so "
-            "there is nothing to read through")
+    return NEEDS_RAN_CLEAN
 
 
 def read_state(conn, site_id: str, run_id: str | None, reads: list[str]) -> tuple[list[dict], str]:
@@ -588,6 +644,9 @@ def build(ev: dict, site: Any, conn=None, run_id: str | None = None, **_) -> dic
 # --- the part page's reachability "now" (free) -----------------------------
 
 #: What a state means, as the site tab's last column says it (mockup v2).
+#: The answers that mean the edge turned the agent away.
+REFUSED_STATUSES = frozenset({401, 403, 429, 451})
+
 STATE_WORDS = {
     "stated": "Blocked in robots.txt. Someone decided this.",
     "edge policy": "Blocked at the firewall, and the site record says on purpose; robots.txt does not say so.",
@@ -664,6 +723,13 @@ def reachability_payload(conn, run_id: str | None, site: Any) -> dict | None:
             got = "/".join(str(s) for s in sorted(statuses)) or "not assessed"
             shown = "differs" if token in differs else ("same" if statuses else "not assessed")
             state = "reachable" if statuses else "not assessed"
+            # A refusal is read off the status itself, not only off a filed
+            # `edge-blocks-ai-ua` row (screen audits round 3): a run that
+            # filed no AIS rows drew 403 as "reachable · Let in and shown
+            # the page" for four crawlers the site turns away.
+            if statuses & REFUSED_STATUSES:
+                shown = "—"
+                state = "edge policy" if token in declared else "unstated block"
         rows.append({"agent": token, "class": klass, "robots_token": ua is None,
                      "told": told, "got": got, "shown": shown, "state": state,
                      "declared": token in declared,
@@ -673,13 +739,24 @@ def reachability_payload(conn, run_id: str | None, site: Any) -> dict | None:
     from clauditseo.modules.pagefacts import rendered_words
     from clauditseo.persistence.runs import _text_blocks_for_run
     text_blocks = _text_blocks_for_run(conn, run_id) or {}
-    shares = []
+    # Item 267 (row 18): no cap. A page whose initial HTML counts more words
+    # than its rendered text was capped at 100% and counted as fully served;
+    # the two counts are not comparable there (the rendered pass reads the
+    # visible text, the initial count every word), so it is set aside and
+    # said, and the share is stated with both counts.
+    shares, pairs, incomparable = [], [], 0
     for p in ev.get("pages") or []:
         rendered = rendered_words(text_blocks.get(p.get("url") or "") or [])
         if rendered >= 100 and isinstance(p.get("word_count"), int):
-            shares.append(min(p["word_count"] / rendered, 1.0))
+            if p["word_count"] > rendered:
+                incomparable += 1
+                continue
+            shares.append(p["word_count"] / rendered)
+            pairs.append((p["word_count"], rendered))
     shares.sort()
     median = shares[len(shares) // 2] if shares else None
+    pairs.sort(key=lambda w: w[0] / w[1])
+    initial_words, rendered_words_mid = pairs[len(pairs) // 2] if pairs else (None, None)
     field_source = (getattr(site, "ai_field_data_source", None) or "").strip() or None
     return {
         "rows": rows,
@@ -688,7 +765,8 @@ def reachability_payload(conn, run_id: str | None, site: Any) -> dict | None:
         "field_source": field_source,
         "render": {"median_share": round(median, 3) if median is not None else None,
                    "pages": len(shares), "below": sum(1 for s in shares if s < 0.5),
-                   "threshold": 0.5},
+                   "threshold": 0.5, "not_comparable": incomparable,
+                   "initial_words": initial_words, "rendered_words": rendered_words_mid},
         "llms_txt_status": ev.get("llms_txt_status"),
         "unmeasured": ("Whether any AI system fetches, indexes, cites or summarises this "
                        "site is not observable from a crawl; nothing above claims it is."),
@@ -730,6 +808,28 @@ def llms_inventory(evidence: dict) -> dict[str, str | None]:
         if p.get("requested_url") and _key(p["requested_url"]) != _key(url):
             out.setdefault(_key(p["requested_url"]), f"redirects to {url}")
     return out
+
+
+#: The holds that wait on the file itself (item 267, row 13).
+_FILE_HOLDS = ("AIS/llms-txt-coverage", "AIS/llms-txt-thin")
+
+
+def police_absent_llms(parsed, build: bool) -> None:
+    """Where no llms.txt was built, say so in the slot's words (item 267, row
+    13). The model wrote the `{{LLMS_TXT_BUILD}}` slot's VALUE into the held
+    reason - "file was absent and false was false at sweep time" - so the
+    coverage and thin holds are templated from the slot's name; and a
+    Declined item may not point at the llms.txt section the page does not
+    draw."""
+    if build or parsed.ai_surface is None or parsed.ai_surface.get("llms_txt_file"):
+        return
+    for hold in parsed.not_assessable:
+        if isinstance(hold, dict) and hold.get("check") in _FILE_HOLDS:
+            hold["needs"] = ("the build input is off (LLMS_TXT_BUILD), so no llms.txt "
+                             "was authored to read")
+    for d in parsed.ai_surface.get("declined") or []:
+        if isinstance(d, dict) and "llms.txt section" in str(d.get("handled_at") or "").lower():
+            d["handled_at"] = "no llms.txt was built on this run (the build input is off)"
 
 
 def police_llms_file(parsed, evidence: dict, build: bool) -> None:

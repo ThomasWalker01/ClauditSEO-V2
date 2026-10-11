@@ -249,9 +249,11 @@ def test_the_pane_is_stamped_with_the_run_that_moved_it(
     browser_page.wait_for_selector(".cur-when", timeout=20_000)
     stamp = browser_page.eval_on_selector(".cur-when", "el => el.innerText")
 
-    assert mover["started_at"][:10] in stamp, (
+    # The run's local day, which is what the screen prints (item 248).
+    from tests import localtime
+    assert localtime.day(mover["started_at"]) in stamp, (
         f"the pane is stamped {stamp!r}; the run that last moved the counts "
-        f"beside it is a {mover['kind']} of {mover['started_at'][:10]}")
+        f"beside it is a {mover['kind']} of {localtime.day(mover['started_at'])}")
     # Rendered text, not a `title` — a stated limitation on a displayed value
     # has to reach a keyboard, which is the provenance invariant's frame
     # clause.

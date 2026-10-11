@@ -304,6 +304,9 @@ def test_a_breadth_scaled_share_is_not_comparable_with_a_coverage_only_one(tmp_p
     # A second run on the same site, this one with a crawl that knows the
     # site's declared size — so `measured_share` scales by breadth.
     result = _run(_Hub())
+    # The six pages the evidence below says were fetched (item 253: the page
+    # floor is asked of what the run read).
+    result.crawled_paths = {f"/p{n}" for n in range(6)}
     run_id = runs_repo.create_run(conn, site_id, DIMS, "T2")
     runs_repo.store_evidence(conn, run_id, {
         "stats": {"eligible": 6, "fetched": 6, "blocked_by_robots": 0},
@@ -357,6 +360,9 @@ def test_every_stored_trend_point_records_the_scope_it_was_computed_under(tmp_pa
     # A run that stored its crawl evidence, so the scope dict is non-empty
     # and a bare `{"basis": ...}` cannot pass for carrying the frame.
     result = _run(_Hub())
+    # The six pages the evidence below says were fetched (item 253: the page
+    # floor is asked of what the run read).
+    result.crawled_paths = {f"/p{n}" for n in range(6)}
     run_id = runs_repo.create_run(conn, site_id, DIMS, "T2")
     runs_repo.store_evidence(conn, run_id, {
         "stats": {"eligible": 6, "fetched": 6, "blocked_by_robots": 0},

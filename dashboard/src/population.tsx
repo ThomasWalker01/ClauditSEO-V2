@@ -60,7 +60,10 @@ export type Count = {
 };
 
 export type Populations = {
-  crawl: { size: number | null; basis: string; paths: string[] };
+  crawl: { size: number | null; basis: string; paths: string[];
+           /** Fetched by this run and left out of it: answered an error
+            *  (item 275, row 7). */
+           errored_paths?: string[] };
   site: { size: number | null; basis: string; paths: string[] };
   record: { size: number | null; basis: string; paths: string[] };
   /** The page's own scope, whose extent is 150 BJ's site size — the part
@@ -260,7 +263,7 @@ export function CoverageLine({ headline, page }: {
  *  to what the cell used to show on its own, with a denominator that is now
  *  correct and a population on each half. */
 export function Prevalence({ prev, pops, unit = "pages", title }: {
-  prev: { count: Count; unfetched: number };
+  prev: { count: Count; unfetched: number; errored?: number };
   pops: Populations | null;
   unit?: string;
   title?: string;
@@ -268,6 +271,12 @@ export function Prevalence({ prev, pops, unit = "pages", title }: {
   return (
     <>
       <Counted count={prev.count} pops={pops} unit={unit} title={title} />
+      {(prev.errored ?? 0) > 0 && (
+        <span className="prev-outside muted" data-errored={String(prev.errored)}
+              title="Pages this audit fetched that answered an error, so no check read them.">
+          {" · "}{prev.errored} fetched with an error
+        </span>
+      )}
       {prev.unfetched > 0 && (
         <span className="prev-outside muted" data-outside={String(prev.unfetched)}
               title={"Pages the record holds this fault on that this audit did "
@@ -297,7 +306,7 @@ export function Prevalence({ prev, pops, unit = "pages", title }: {
  *  dressed as a page ratio. */
 export function prevalence(urls: string[], pops: Populations | null,
                            siteScope = false):
-    { count: Count; unfetched: number } {
+    { count: Count; unfetched: number; errored?: number } {
   const named = urls.filter(Boolean).map(pathKey);
   const distinct = new Set(named);
   if (siteScope || distinct.size === 0) {
@@ -316,6 +325,10 @@ export function prevalence(urls: string[], pops: Populations | null,
   }
   const fetched = new Set(crawl.paths);
   const inside = [...distinct].filter((p) => fetched.has(p));
+  // Item 275 (row 7): of the rest, the ones this run fetched and found an
+  // error on are said as that, not as pages it never looked at.
+  const erroredSet = new Set(crawl.errored_paths ?? []);
+  const errored = [...distinct].filter((p) => !fetched.has(p) && erroredSet.has(p)).length;
   return { count: makeCount(inside.length, "crawl", crawl.size),
-           unfetched: distinct.size - inside.length };
+           unfetched: distinct.size - inside.length - errored, errored };
 }

@@ -603,19 +603,6 @@ def test_a_report_with_no_composite_says_so_rather_than_printing_none(
         f"a score that was never computed cannot carry a confidence: {headline[0]!r}"
 
 
-def test_the_chat_summary_does_not_raise_on_a_run_with_no_composite(
-        db_with_an_unscorable_run):
-    """`f"{score:.1f}"` raises TypeError on None, so the assistant answering
-    "what is the latest run" fails outright rather than saying what happened."""
-    from clauditseo.api import chat
-
-    conn, site_id, _run_ids = db_with_an_unscorable_run
-    for question in ("what is the latest run?", "how is the score trending?"):
-        reply = chat.answer(conn, site_id, question)
-        assert reply["answer"], question
-        assert "None" not in reply["answer"], question
-
-
 # --- the client is told about their site, not about our plumbing ------------
 
 VENDORS = ("PageSpeed", "CrUX", "Moz", "OpenPageRank", "DataForSEO")

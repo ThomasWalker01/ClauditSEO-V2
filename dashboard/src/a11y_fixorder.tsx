@@ -61,6 +61,16 @@ const KIND_WORD: Record<string, string> = {
  *  forty draw the same shape. */
 const PLOT = 180;
 
+/** The shortest bar, in px: tall enough to hold its count at the plot's type
+ *  size. Three bars of 4, 3 and 2 instances were drawn 3 px tall. */
+const MIN_BAR = 16;
+
+/** A step's kind in a word or two, for the line under its label: the part of
+ *  `KIND_WORD` before its dash. */
+export function kindShort(kind: string): string {
+  return (KIND_WORD[kind] ?? kind).split(" — ")[0];
+}
+
 export function stepTone(step: FixStep): string {
   return KIND_TONE[step.kind] ?? "mute";
 }
@@ -83,9 +93,11 @@ function pathOnly(url: string): string {
 }
 
 /** Block 1. */
-export function FixOrderWaterfall({ order, onStep }: {
+export function FixOrderWaterfall({ order, onStep, selected = null }: {
   order: FixOrder | null | undefined;
-  onStep?: (step: FixStep) => void;
+  onStep?: (step: FixStep, i: number) => void;
+  /** The bar last pressed, by its index in `order.steps`. */
+  selected?: number | null;
 }) {
   if (!order) {
     return (
@@ -109,7 +121,7 @@ export function FixOrderWaterfall({ order, onStep }: {
           <b>{order.total}</b> instance{order.total === 1 ? "" : "s"} open now
         </span>
         {after != null && (
-          <Pill tone="state-fixed" className="fixorder-after">
+          <Pill tone="count-info" className="fixorder-after" title="a projection, not a state (item 279, row 10)">
             after step {after}: {remainder[after - 1]} left
           </Pill>
         )}
@@ -123,15 +135,21 @@ export function FixOrderWaterfall({ order, onStep }: {
           The difference is instances no step could be built for.
         </p>
       )}
-      <ol className="fixorder-plot" style={{ height: `${PLOT + 46}px` }}>
+      <ol className="fixorder-plot" style={{ height: `${PLOT + 62}px` }}>
         {order.steps.map((s, i) => (
           <li key={`${s.check}-${s.kind}-${i}`} className="fixorder-step">
+            {/* Item 279 (row 3): at least MIN_BAR tall, so the smallest
+                bars are something to press and still hold their count; they
+                were drawn 3 px. A bar with no check behind it opens
+                nothing, so it is not offered as a control. */}
             <button type="button"
                     className={`fixorder-bar tone-${stepTone(s)}`}
-                    style={{ height: `${Math.max(3, (s.instances / tallest) * PLOT)}px` }}
+                    style={{ height: `${Math.max(MIN_BAR, (s.instances / tallest) * PLOT)}px` }}
                     title={stepTitle(s)}
                     aria-label={`${s.label}, ${s.instances} instances, ${KIND_WORD[s.kind]}`}
-                    onClick={() => onStep?.(s)}>
+                    aria-pressed={s.check ? selected === i : undefined}
+                    disabled={!s.check || !onStep}
+                    onClick={() => onStep?.(s, i)}>
               <span className="fixorder-n">{s.instances}</span>
             </button>
             {/* The remainder after this step, as a dashed rule across the
@@ -139,7 +157,10 @@ export function FixOrderWaterfall({ order, onStep }: {
             <i className="fixorder-rest"
                style={{ bottom: `${(remainder[i] / tallest) * PLOT}px` }}
                aria-hidden="true" />
-            <span className="fixorder-label">{s.label}</span>
+            <span className="fixorder-label">
+              {s.label}
+              <span className="fixorder-kind">{kindShort(s.kind)}</span>
+            </span>
           </li>
         ))}
       </ol>

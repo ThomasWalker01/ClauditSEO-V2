@@ -24,41 +24,47 @@
  *  description supplies strings (brief v14) without forking the layout.
  *  A part with no renderer keeps the old page.
  */
+import { Envelope, Report } from "./expert";
 import { Markdown } from "./markdown";
 import { Working } from "./working";
 import { stamp } from "./client_lanes";
 import { MeasuredAge, dayOf } from "./age";
 import { SecondaryButton } from "./buttons";
 import { sourceWord } from "./glossary";
-import { Legend } from "./glossary";
+import { Legend, entry } from "./glossary";
 import { Fragment, ReactNode, useCallback, useEffect, useRef, useState } from "react";
-import { Category, ContentBlock, EntityMatrix, Facts, ImageRecord, LinkIn, LinkOut, SchemaBlock } from "./anatomy";
+import { Category, ContentBlock, EntityMatrix, Facts, ImageRecord, LinkIn, LinkOut, SchemaBlock,
+         templatesOf } from "./anatomy";
 import { BytesForPixels, ImageDot, ImageWall, PickedImage, fileOf, fileSrc, imageKey,
          dotKey } from "./images_budget";
 import { OutlineLadder, SkipsByTemplate } from "./headings_outline";
-import { BarrierOverlay, FixOrderWaterfall, ShotBoxes } from "./a11y_fixorder";
+import { BarrierOverlay, FixOrderWaterfall, kindShort, ShotBoxes } from "./a11y_fixorder";
 import { HeadersGridBlock } from "./headers_grid";
-import { LengthStrips, SnippetCard } from "./title_snippet";
+import { LengthStrips, SnippetCard, SnippetField, fired } from "./title_snippet";
 import { costOf } from "./cost";
 import { Analysis, Lanes } from "./analyses";
 import { FindingState, api, isCoverageNote } from "./api";
 import { Card, ErrorNote, money } from "./components";
 import { SpendButton, SpendTarget } from "./spend";
-import { SECS_PER_PAGE, human } from "./scanmatrix";
+import { estimate, humanEst, usePace, type Estimate } from "./scanmatrix";
 import { SchemaGraphView } from "./schema_graph";
 import { goHandler, goto, withPart } from "./nav";
 import { Narrow, NarrowKind, narrowFromHash, pagePredicate, setNarrowInHash } from "./narrow";
 import { CrawlDepthBlock, depthPicked } from "./crawl_depth";
 import { CrawlNowBlock } from "./crawl_now";
-import { AiLlmsFile, AiReachability, AiReachabilityPage, AiRegister, AiSurfaceFixBody } from "./ai_surface";
+import { AiLlmsFile, AiReachability, AiReachabilityPage, AiRegister, AiSurfaceFixBody, aiSurfaceCopy } from "./ai_surface";
 import { IndexabilityNowBlock } from "./indexability_now";
 import { UrlsNowBlock } from "./urls_now";
 import { SpeedActions, SpeedNowBlock } from "./speed_now";
 import { CanonicalChainsBlock } from "./canonical_chains";
+import { TargetLocales } from "./intl_target";
 import { Pill, type Tone } from "./pill";
 import { MEASURE_WORD, MeasureLine, measureOf } from "./measure";
 import { Counted, Populations, Prevalence, coverageNotes, makeCount, pathKey,
          prevalence } from "./population";
+import { clock, day } from "./dates";
+import { CONFIRM_SAYS, ConfirmControls, TO_CONFIRM_LEGEND, candidateWord } from "./to_confirm";
+import { FixTick, type Markable, useFixLoop, useSeed } from "./fixloop";
 
 /** What a check means in the words a client uses. The check id stays on
  *  the card in code — this is the sentence above it, not a replacement
@@ -90,6 +96,7 @@ const PLAIN: Record<string, string> = {
   "img-alt-decorative-nonempty": "Decorative image with alt text",
   "img-link-alt-not-destination": "Linked image alt doesn't say where it goes",
   "img-filename-generic": "Filename says nothing",
+  "img-alt-filename": "Alt repeats the filename",
   "img-lcp-lazy": "Main image loads late",
   "img-dimensions-missing": "No width and height",
   "img-oversized": "Larger than shown",
@@ -160,7 +167,8 @@ const PLAIN: Record<string, string> = {
 const ID_WORDS: [RegExp, string][] = [
   [/\bllms txt\b/g, "llms.txt"], [/\brobots txt\b/g, "robots.txt"], [/\bsecurity txt\b/g, "security.txt"],
   [/\bcss js\b/g, "CSS/JS"], [/\beeat\b/g, "E-E-A-T"], [/\bcwv\b/g, "Core Web Vitals"],
-  [/\b(lcp|cls|inp|ttfb|tbt|css|js|html|url|urls|nap|gbp|ssl|tls|dns|cdn|ai|og|jsonld|h1|h2)\b/g, "\u0000$1"],
+  // Item 267 (row 19): and `ua` and `id` ("ai crawler ua", "id page absent").
+  [/\b(lcp|cls|inp|ttfb|tbt|css|js|html|url|urls|nap|gbp|ssl|tls|dns|cdn|ai|og|jsonld|h1|h2|ua|id)\b/g, "\u0000$1"],
 ];
 
 export const plainName = (checkId: string) => {
@@ -168,13 +176,30 @@ export const plainName = (checkId: string) => {
   let words = checkId.replace(/^[A-Z0-9]+\//, "").replace(/^EXP:[^/]*\//, "").replace(/-/g, " ");
   for (const [pat, rep] of ID_WORDS) words = words.replace(pat, rep);
   words = words.replace(/\u0000(\w+)/g, (_, w: string) => (w === "jsonld" ? "JSON-LD" : w.toUpperCase()));
+  // A file name keeps its case: "llms.txt missing", not "Llms.txt missing".
+  if (/^\S*\.\S/.test(words)) return words;
   return words.replace(/^[a-z]/, (c) => c.toUpperCase());
 };
 
 /** Where a held check's missing input is set. A `needs` naming a field of
  *  the site record links to the form that holds it; one naming the page's
  *  own content has nowhere to send anybody, and says so instead. */
-const RECORD_WORDS = /gbp|categor|service area|location entit|neighbourhood|sub-service|page type|brand|strateg|provenance/i;
+// Item 267 (row 14): and the record's own field names, which a held reason
+// quotes as written ("sub_services, locations and authors on the site
+// record are empty"), so the card links to the form for four more fields.
+// Items 270 (row 11) and 271 (row 12): and the schema fields the record
+// supplies (geo, priceRange, openingHours, areaServed, the ID page) and a
+// page's triple, so each such hold links to the form too.
+const RECORD_WORDS = /gbp|categor|service area|location entit|neighbourhood|sub-service|sub_services|\blocations\b|\bauthors\b|sameas|page type|brand|strateg|provenance|\bgeo\b|pricerange|openinghours|areaserved|id page|\btriple\b|primary entity|intended[_ -]noindex|noindex list|migration[_ ]map|parameter[_ ]rules/i;
+
+/** A held reason as the table and the card say it (item 267, row 14): a
+ *  reason that is already a sentence ("no /llms.txt existed at sweep
+ *  time") reads as given; a noun phrase ("a reputation source") reads as
+ *  what is needed. "needs no /llms.txt existed" was neither. */
+export function heldSays(needs: string): string {
+  return /\b(is|are|was|were|has|have|had|existed|ran|returned|raised|did|does)\b/i.test(needs)
+    ? needs : `needs ${needs}`;
+}
 
 export function heldLink(needs: string): { href: string; label: string } | null {
   if (!RECORD_WORDS.test(needs)) return null;
@@ -189,6 +214,26 @@ const pathOf = (u: string) => { try { return new URL(u).pathname || "/"; } catch
 export const SECTIONS: [string, string][] = [["free", "Free checks"],
                                              ["model", "Analysis"]];
 
+/** Item 266 (row 3): the sections in the order Fixes reads them - the one
+ *  holding the most severe fix first, so the worst thing on the page is the
+ *  first thing read. On URLs every free card was `low` and the one `medium`
+ *  sat under Analysis, below all of them. On a tie the usual order stands,
+ *  free first, so the order moves only when there is a reason, and the
+ *  section that moved says it (answer 20261004-0011-266-fix-order-across-
+ *  sections). Holds, coverage notes and verdicts are not fixes and do not
+ *  rank a section. */
+export function sectionsByWorst<F extends { severity: string; needs?: string | null;
+                                            coverageNote?: boolean; override?: boolean;
+                                            sources: string[] }>(
+  fixes: F[], sectionOf: (f: F) => string,
+): [string, string][] {
+  const worst = (section: string) => Math.min(RANK.length, ...fixes
+    .filter((f) => !f.needs && !f.coverageNote && !closedByAnalysis(f)
+                   && sectionOf(f) === section)
+    .map((f) => RANK.indexOf(f.severity)).filter((n) => n >= 0));
+  return [...SECTIONS].sort(([a], [b]) => worst(a) - worst(b));
+}
+
 /** Whether the cost filter has folded a section away (brief v17 step
  *  AV4). Never its heading and never its count: the fold is an offer to
  *  spend, and an offer nobody can see is a section that was deleted. */
@@ -200,11 +245,28 @@ export const folded = (cost: string, section: string) =>
 type Fix = {
   key: string; check: string; checkId: string; page: string;
   severity: string; sources: string[]; candidate: boolean;
+  /** Item 250: the candidate waits for the operator (the server's rule). */
+  toConfirm?: boolean;
   current: string; replacement: string | null; note: string;
+  /** What a length row measured on the page, and how far past the cut
+   *  (item 273, rows 4 and 5). */
+  said?: string | null; overPx?: number | null;
   needs?: string;
   /** The analysis read this before the automatic checks cleared it on
    *  every page it names: when (item 239 step 4). */
   supersededOn?: string | null;
+  /** Item 271: the targets the automatic checks raised for this check that
+   *  this analysis card names - the same fault, filed on the other end. */
+  corroboratedBy?: string[];
+  /** Item 269: the analysis's row is a PASS-OVERRIDE - a verdict that the
+   *  flag is not a fault ("No consolidation"), not a fault of its own. */
+  override?: boolean;
+  /** Item 251: when the automatic checks measured this, at which tier, and
+   *  when the analysis that wrote it ran. */
+  measuredAt?: string | null; measuredTier?: string | null; analysedAt?: string | null;
+  /** Item 249: the automatic checks can raise this check, have read the
+   *  page since the analysis, and have not raised it. */
+  unseenSince?: string | null;
   /** How many pages this one row covers. A template image's finding is
    *  folded by the engine into one row over every page it appears on
    *  (brief v16 step AU4), and this is that number - the record's own,
@@ -215,6 +277,25 @@ type Fix = {
    *  checks table counted that alone, so a site-wide fault the engine files
    *  as ONE finding over 31 pages read "1 of 45 pages crawled". */
   urls?: string[];
+  /** The automatic row behind the card, for the fix loop (item 279, row 6):
+   *  its fingerprint, whether a re-check can read it (the server's
+   *  `names_a_page`), and when a fix was marked. */
+  sweepFp?: string | null;
+  namesAPage?: boolean;
+  /** The analyses whose rows are on this card (item 275, row 5): Crawl's
+   *  part draws `LNK/depth-deep` rows the Links analysis wrote, and its
+   *  accounting counted them as its own. */
+  briefs?: string[];
+  attemptedAt?: string | null;
+  /** The automatic check's own advice, and the elements it names - axe's
+   *  selectors or the links' hrefs - from its evidence (item 279, row 5). */
+  recommendation?: string | null;
+  targets?: string[];
+  /** The pages the check found, where it kept fewer in `urls` (item 276). */
+  affectedTotal?: number | null;
+  /** The record says this came back after a fix (screen audits round 3,
+   *  Security IP-01: the table read "open" on four regressed rows). */
+  regressed?: boolean;
   /** Not a finding: a coverage note, carried so the check table can keep its
    *  row while the Fixes block drops it (`isCoverageNote`, item 180). */
   coverageNote?: boolean;
@@ -239,7 +320,7 @@ type Fix = {
   template?: string | null;
   /** The page's outline as the crawl kept it, where the site view carries it
    *  (item 224) - the Headings diff's baseline with no page in hand. */
-  baseline?: Pick<Facts, "outline" | "headings"> | null;
+  baseline?: (Pick<Facts, "outline" | "headings"> & { captured_at?: string | null }) | null;
   kind?: string | null;
   group?: string | null;
   /** The sources a link-suggestion row proposes, each with the anchor and
@@ -447,8 +528,109 @@ const RANK = ["critical", "high", "medium", "low", "info"];
 /** Checks whose rows are one per agent or entity, all on the start URL (item
  *  145): keyed by page alone, fifteen agents' edge blocks read as one card at
  *  the worst severity, and a declared LOW sat inside an undeclared HIGH. */
+/** What a brief writes for "the whole site" in a row's page: `*`, nothing,
+ *  or `all`. The same set as `runs.SITE_WIDE_PAGES`. */
+export const SITE_WIDE_PAGES = new Set(["*", "", "all"]);
+
 export const PER_SUBJECT_CHECKS = new Set(["edge-blocks-ai-ua", "ua-sensitive",
   "entity-unnamed", "ai-crawler-blocked"]);
+
+/** Item 271 (row 4): analysis checks owed a row on every page an automatic
+ *  check raised - `contract.REQUIRED_BY`, by bare id. */
+export const REQUIRED_BY: Record<string, string[]> = {
+  "link-suggestion": ["inlinks-low", "orphan"],
+};
+
+/** The pages a check is owed a row on, from the open automatic rows of its
+ *  triggers; null where it is owed none. */
+export function owedPages(checkId: string, fixes: { checkId: string; page: string;
+                                                    urls?: string[]; sources: string[] }[]) {
+  const triggers = REQUIRED_BY[checkId];
+  if (!triggers) return null;
+  const on = fixes.filter((f) => triggers.includes(f.checkId) && f.sources.includes("sweep"));
+  const pages = new Set(on.flatMap((f) => (f.urls?.length ? f.urls : [f.page])).map(pathOf)).size;
+  return pages ? { triggers: [...new Set(on.map((f) => f.checkId))], pages } : null;
+}
+
+/** Item 251: whether the automatic checks' reading outranks an analysis's
+ *  hold on a check - a free check they measured after the analysis wrote it.
+ *  The table then reads the check clean, and the hold stays under Fixes with
+ *  its date. One rule, read by both (item 276 row 4 found a line pointing at
+ *  a "not assessable" row the table did not draw). */
+export function sweepOutranks(part: Category, full: string, checkId: string,
+                              sweepAt: string | null | undefined,
+                              unmeasured: Map<string, unknown>): boolean {
+  const briefAt = part.brief_run?.at ?? null;
+  return Boolean(sweepAt && briefAt
+                 && new Date(sweepAt).getTime() > new Date(briefAt).getTime())
+    && costOf(part, full) === "free" && !unmeasured.has(checkId)
+    // Nor where the sweep tests the check only in part (screen audits round
+    // 3, Security AC-01): its silence on cert-chain is an expiry date, not a
+    // chain, and the analysis's hold on the rest stands.
+    && !part.partly_measured?.[checkId];
+}
+
+/** The checks table's row for a check, by its full id, as an element id. */
+export const checkRowId = (full: string) => `check-row-${full.replace(/[^A-Za-z0-9-]/g, "-")}`;
+
+/** One card's "fixed?" control and its re-check (item 279, row 6). The tick
+ *  is the fix loop's own, with its three readable refusals; the re-check
+ *  asks the verify route about this card's row alone. */
+function CardDone({ m, loop }: { m: Markable; loop: ReturnType<typeof useFixLoop> }) {
+  const said = loop.outcome[m.fingerprint];
+  return (
+    <div className="fix-done">
+      <span className="fix-lbl">Fixed? </span>
+      <FixTick f={m} marked={loop.marked} onMark={loop.mark} />
+      {loop.marked.has(m.fingerprint) && m.names_a_page && (
+        <SecondaryButton busy={loop.verifying} onClick={() => loop.verify([m.fingerprint])}>
+          re-check this page
+        </SecondaryButton>
+      )}
+      {said && <span className="muted" role="status"> · {DONE_WORD[said]}</span>}
+      {loop.error && <span className="muted" role="alert"> · {loop.error}</span>}
+    </div>
+  );
+}
+
+/** A re-check's verdict, in the card's words. */
+const DONE_WORD: Record<string, string> = {
+  cleared: "cleared on the re-check",
+  still: "still there on the re-check",
+  undecided: "not checked: the re-check could not read it",
+  unchanged: "unchanged",
+};
+
+/** The event a control outside Fixes sends to open one check's group. */
+const FIX_OPEN = "clauditseo:fix-open";
+
+/** Open a check's group under Fixes and bring its first card into view. */
+export function openFixGroup(check: string) {
+  if (check) window.dispatchEvent(new CustomEvent(FIX_OPEN, { detail: check }));
+}
+
+/** Item 267 (row 4): a Fixes group's label, counted as the table counts.
+ *  It counted cards and called them pages: four crawlers' edge blocks on
+ *  the one page "/" read "4 pages" beside a table reading 3 of 3 probed.
+ *  Pages are the distinct paths every card names; a per-subject check says
+ *  its subjects first ("4 crawlers · 3 pages"). A group naming no page says
+ *  how many cards it holds, not "0 pages". */
+export function groupCount(checkId: string, cards: { page: string; urls?: string[] }[]): string {
+  const plural = (n: number, w: string, ws = `${w}s`) => `${n} ${n === 1 ? w : ws}`;
+  const paths = new Set(cards.flatMap((f) => (f.urls?.length ? f.urls : [f.page]))
+                             .filter(Boolean).map(pathOf));
+  const pages = paths.size ? plural(paths.size, "page") : "";
+  if (PER_SUBJECT_CHECKS.has(checkId)) {
+    const subj = checkId === "entity-unnamed" ? plural(cards.length, "entity", "entities")
+                                              : plural(cards.length, "crawler");
+    return pages ? `${subj} · ${pages}` : subj;
+  }
+  // Item 275 (row 8): where one page carries more than one card (the
+  // automatic checks' and an analysis's on `/`), the cards are said too,
+  // so "2 pages" is never two cards on one page.
+  if (pages && cards.length > paths.size) return `${pages} · ${plural(cards.length, "card")}`;
+  return pages || plural(cards.length, "card");
+}
 
 /** Whether a check is this part's, by the SAME rule the engine files it
  *  under (item 136o): its check is one the part enumerates, OR its id
@@ -467,6 +649,23 @@ export function belongsTo(part: Pick<Category, "brief_checks" | "check_prefixes"
     || (part.filed_checks ?? []).includes(checkId);
 }
 
+/** Item 269. A card the analysis closed and nothing else raised: its row is
+ *  a PASS-OVERRIDE ("No consolidation on present evidence"), which the
+ *  cannibalisation prompt emits to say a flag is not a fault. On twenty22's
+ *  Content three such rows were drawn as Medium faults with a copy button
+ *  and counted in ANALYSIS, PAGES and the strip. Where the automatic checks
+ *  raised the check on the same page the card still counts - as theirs. */
+export const closedByAnalysis = (f: Pick<Fix, "override" | "sources">): boolean =>
+  Boolean(f.override) && !f.sources.includes("sweep");
+
+/** Item 270. An analysis row the automatic checks have since cleared on every
+ *  page it names, and that they do not raise themselves. It said so on its
+ *  card ("superseded on ...") and was still a card and a count: on twenty22's
+ *  Structured data 43 `schema-orphan-instance` rows read as 66 free-check
+ *  cards behind a "show all 43" button, over a check the sweep raised once. */
+export const overtaken = (f: Pick<Fix, "supersededOn" | "sources">): boolean =>
+  Boolean(f.supersededOn) && !f.sources.includes("sweep");
+
 export function fixesOf(part: Category, states: FindingState[], page: string): Fix[] {
   const belongs = belongsTo(part);
   const mine = states.filter(
@@ -482,13 +681,34 @@ export function fixesOf(part: Category, states: FindingState[], page: string): F
     if (seen) {
       if (!seen.sources.includes(word)) seen.sources.push(word);
       seen.urls = [...new Set([...(seen.urls ?? []), ...s.affected_urls])];
+      seen.affectedTotal = Math.max(seen.affectedTotal ?? 0, s.affected_total ?? 0) || null;
       // The brief's row carries the copy; the sweep's carries the reading.
       if (word === "brief" && s.proposed) seen.replacement = s.proposed;
-      if (word === "sweep") seen.current = s.summary;
+      if (word === "sweep") {
+        seen.sweepFp = s.fingerprint;
+        seen.namesAPage = s.names_a_page;
+        seen.attemptedAt = s.attempted_at ?? null;
+        seen.current = s.summary;
+        seen.recommendation = s.recommendation ?? seen.recommendation;
+        seen.targets = s.targets?.length ? s.targets : seen.targets;
+        // The page's string and its overage are the measurement's, whichever
+        // row was read first (screen audits round 3, title-desc AC-04: 17 of
+        // 30 merged cards lost both and sorted last).
+        seen.said = s.said ?? seen.said;
+        seen.overPx = s.over_px ?? seen.overPx;
+      }
+      // Each source's own date (item 251).
+      if (word === "sweep") {
+        seen.measuredAt = s.measured_at ?? seen.measuredAt;
+        seen.measuredTier = s.measured_tier ?? seen.measuredTier;
+      } else {
+        seen.analysedAt = s.analysed_at ?? s.measured_at ?? seen.analysedAt;
+      }
       // And the brief's row carries what it is about (brief v15): the
       // image, the checks its one replacement closes, and whether the
       // change is a template's. A sweep row read first must not lose them.
       if (word === "brief") {
+        if (s.brief && !(seen.briefs ?? []).includes(s.brief)) seen.briefs = [...(seen.briefs ?? []), s.brief];
         seen.image = s.image ?? seen.image;
         seen.alsoResolves = s.also_resolves?.length ? s.also_resolves : seen.alsoResolves;
         seen.kind = s.kind ?? seen.kind;
@@ -499,24 +719,43 @@ export function fixesOf(part: Category, states: FindingState[], page: string): F
           if (!(seen.images ?? []).includes(im)) seen.images = [...(seen.images ?? []), im];
         }
         seen.supersededOn = s.superseded_on ?? seen.supersededOn;
+        seen.override = s.brief_status === "PASS-OVERRIDE";
+        seen.unseenSince = s.unseen_since ?? seen.unseenSince;
         seen.rollout = s.rollout ?? seen.rollout;
         seen.payload = s.payload ?? seen.payload;
       }
       if (RANK.indexOf(s.severity) < RANK.indexOf(seen.severity)) seen.severity = s.severity;
       seen.candidate = seen.candidate && s.state === "candidate";
+      seen.toConfirm = seen.candidate && Boolean(seen.toConfirm || s.to_confirm);
+      seen.regressed = seen.regressed || s.state === "regressed";
       continue;
     }
     by.set(key, {
       key, check: `${s.dimension}/${s.check_id}`, checkId: s.check_id, page: url,
       pages: s.affected_urls.length, urls: [...s.affected_urls], coverageNote: isCoverageNote(s),
+      affectedTotal: s.affected_total ?? null,
+      recommendation: word === "sweep" ? s.recommendation ?? null : null,
+      sweepFp: word === "sweep" ? s.fingerprint : null,
+      namesAPage: word === "sweep" ? s.names_a_page : false,
+      briefs: word === "brief" && s.brief ? [s.brief] : [],
+      attemptedAt: word === "sweep" ? s.attempted_at ?? null : null,
+      targets: word === "sweep" ? s.targets ?? [] : [],
       block: s.block ?? null, where: s.where ?? null,
       severity: s.severity, sources: [word], candidate: s.state === "candidate",
+      toConfirm: s.state === "candidate" && Boolean(s.to_confirm),
+      regressed: s.state === "regressed",
       current: s.summary, replacement: s.proposed ?? null, note: "",
+      said: s.said ?? null, overPx: s.over_px ?? null,
       image: s.image ?? null,
       images: [...new Set([...(s.images ?? []), ...(s.image ? [s.image] : [])])],
       alsoResolves: s.also_resolves ?? [],
       fingerprints: [s.fingerprint],
       supersededOn: s.superseded_on ?? null,
+      override: word === "brief" && s.brief_status === "PASS-OVERRIDE",
+      measuredAt: word === "sweep" ? s.measured_at ?? null : null,
+      measuredTier: word === "sweep" ? s.measured_tier ?? null : null,
+      analysedAt: word === "brief" ? s.analysed_at ?? s.measured_at ?? null : null,
+      unseenSince: s.unseen_since ?? null,
       kind: s.kind ?? null, group: s.group ?? null, template: s.template ?? null,
       baseline: part.page_outlines?.[url] ?? null,
       suggestions: s.suggestions ?? [],
@@ -553,7 +792,10 @@ export function fixesOf(part: Category, states: FindingState[], page: string): F
   // into "N checks pass on this page" - `img-sitemap-missing` read as
   // passing on Birch's home page while the brief was saying site-wide
   // that it could not judge it.
-  const onPage = (u: string) => !page || u === "*" || !u || pathOf(u) === pathOf(page);
+  // Item 269 (row 3): and `all`, which the Content analysis wrote for the same
+  // thing. Its `cannibalisation` hold on page `all` dropped on narrowing, so
+  // `/` counted the check among the 12 that pass there.
+  const onPage = (u: string) => !page || !u || SITE_WIDE_PAGES.has(u) || pathOf(u) === pathOf(page);
   const held: Fix[] = [...heldOnly, ...(part.brief_held ?? [])]
     .filter((h) => onPage(h.page))
     .map((h) => ({
@@ -567,6 +809,19 @@ export function fixesOf(part: Category, states: FindingState[], page: string): F
     .filter((h) => ![...by.values()].some((f) => f.checkId === h.checkId
                                                  && pathOf(f.page) === pathOf(h.page)));
   const order = (f: Fix) => `${RANK.indexOf(f.severity)}|${f.checkId}|${pathOf(f.page)}`;
+  // Item 271: the automatic checks file `broken-internal` on the broken
+  // TARGET and the analysis on the SOURCE page that links to it, so the two
+  // never share a card and the analysis's read "candidate" over a 404 the
+  // free checks had measured. A source card naming a target the automatic
+  // checks raised for the same check is said to be corroborated by them.
+  const sweepOnly = [...by.values()].filter((f) => f.sources.length === 1 && f.sources[0] === "sweep");
+  for (const f of by.values()) {
+    if (f.sources.length !== 1 || f.sources[0] !== "brief") continue;
+    const said = `${f.current ?? ""} ${f.replacement ?? ""}`;
+    const hits = sweepOnly.filter((s) => s.checkId === f.checkId && s.page !== f.page
+      && pathOf(s.page) !== "/" && said.includes(pathOf(s.page)));
+    if (hits.length) f.corroboratedBy = [...new Set(hits.map((s) => pathOf(s.page)))];
+  }
   return [...by.values(), ...held].sort((a, b) => order(a).localeCompare(order(b)));
 }
 
@@ -598,7 +853,10 @@ export type Line = { level: number; text: string; inMain: boolean | null; next: 
                     /** Where a sub-service heading points, on a row that
                      *  names one (brief v14 step AP): a path, or the one
                      *  placeholder permitted anywhere on this page. */
-                    link?: string };
+                    link?: string;
+                    /** The model wrote `[proposed]` on it (item 268): its
+                     *  own word for a new heading, now a flag, not text. */
+                    proposed?: boolean };
 
 export function outlineOf(facts: Facts, cap: number = OUTLINE_SHOWN): Line[] {
   // The cap sits between the field and the map on purpose: it is the bound
@@ -644,18 +902,37 @@ export function parseOutline(replacement: string | null): Line[] {
   for (const part of replacement.split(" / ")) {
     const m = /^h([1-6])\s+([\s\S]*)$/.exec(part.trim());
     if (!m) continue;
-    const [text, ...rest] = m[2].split(" → ");
+    const [raw, ...rest] = m[2].split(" → ");
     const after = rest.join(" → ").trim();
+    // Item 268: the model's tokens are fields, not heading text. `[proposed]`
+    // was drawn beside the card's own "[proposed]" chip, and an `[answer
+    // stub: ...]` was part of the heading the diff then failed to match.
+    const stub = /\[answer stub:\s*([^\]]*)\]/i.exec(raw);
+    const proposed = /\[proposed\]/i.test(raw);
+    const text = raw.replace(/\[proposed\]/gi, "").replace(/\[answer stub:[^\]]*\]/gi, "")
+      .replace(/\s+/g, " ").trim();
     // A target path or the placeholder is a link; anything else after the
     // arrow is the words that follow the heading, which is context.
     const link = /^(\/|\[TO CONFIRM)/.test(after) ? after : undefined;
-    out.push({ level: Number(m[1]), text: text.trim(), inMain: null,
-               next: link ? "" : after, link });
+    out.push({ level: Number(m[1]), text, inMain: null,
+               next: link ? "" : (after || stub?.[1]?.trim() || ""), link, proposed });
   }
   return out;
 }
 
-const norm = (t: string) => t.trim().toLowerCase().replace(/\s+/g, " ");
+/** Item 268: the key two spellings of one heading share. Case, spacing,
+ *  apostrophes ("Lets" and "Let's", curly and straight) and a trailing `?`
+ *  are how a heading is written, not which heading it is: matched on exact
+ *  text, "Lets find the right steps together" read as removed and "Let's
+ *  find ..." as proposed, and seven FAQ questions the same. */
+export const outlineKey = (t: string) => t.normalize("NFKC").toLowerCase()
+  .replace(/['‘’ʼ`´]/g, "").replace(/\s+/g, " ").trim().replace(/\?+$/, "").trim();
+const norm = outlineKey;
+
+/** What `copy outline` copies (item 268): the parsed lines, one `Hn text`
+ *  each, with the model's tokens and stubs left out. */
+export const outlineCopy = (replacement: string | null) =>
+  parseOutline(replacement).map((l) => `H${l.level} ${l.text}`).join("\n");
 
 /** Write a brief for the page in hand (brief v17 step AX).
  *
@@ -668,16 +945,22 @@ const norm = (t: string) => t.trim().toLowerCase().replace(/\s+/g, " ");
  *  question about which page, and a control that has to ask is a control
  *  that should not have been offered.
  */
-export function WriteBrief({ runId, page }: { runId: string | null; page: string }) {
+export function WriteBrief({ runId, page, price = null }:
+                           { runId: string | null; page: string; price?: number | null }) {
+  // `price`: the lanes payload's, for the content brief (item 269, row 11).
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<string | null>(null);
+  // The brief as written, to read where it was asked for (item 269, row 11):
+  // "brief written for /" named a document nothing on screen opened.
+  const [written, setWritten] = useState<Envelope | null>(null);
   const [error, setError] = useState<string | null>(null);
   if (!page || !runId) return null;
   return (
     <span className="write-brief">
-      {/* Item 178: priced in words and confirmed. The content brief has no
-          estimate on this screen, so it says so rather than leaving no price. */}
-      <SpendButton className="write-brief-btn" busy={busy} price={null}
+      {/* Item 178: priced in words and confirmed. Item 269 (row 11): the
+          price is the lanes payload's, where it has one; where it has none
+          the button says so rather than leaving no price. */}
+      <SpendButton className="write-brief-btn" busy={busy} price={price}
                    title={`Writes a content brief for ${pathOf(page)} from what this `
                           + "audit found. Spends tokens; adds no findings."}
                    confirm={{ title: `Write a content brief for ${pathOf(page)}?`,
@@ -689,8 +972,9 @@ export function WriteBrief({ runId, page }: { runId: string | null; page: string
                      setBusy(true);
                      setError(null);
                      try {
-                       await api.post(`/api/runs/${runId}/expert/content-brief`,
-                                      { url: page });
+                       const got = await api.post<Envelope>(
+                         `/api/runs/${runId}/expert/content-brief`, { url: page });
+                       setWritten(got && typeof got === "object" ? got : null);
                        setDone(pathOf(page));
                      } catch (e) {
                        setError((e as Error).message);
@@ -706,6 +990,13 @@ export function WriteBrief({ runId, page }: { runId: string | null; page: string
         {busy ? <Working>writing…</Working> : done ? `brief written for ${done}` : ""}
       </span>
       {error && <span className="muted write-brief-error">{error}</span>}
+      {written && (
+        <details className="write-brief-read">
+          <summary>read the brief</summary>
+          <Report title={`Content brief for ${done ?? pathOf(page)}`} result={written}
+                  runId={runId} />
+        </details>
+      )}
     </span>
   );
 }
@@ -715,10 +1006,23 @@ export function WriteBrief({ runId, page }: { runId: string | null; page: string
  *  is free at every depth and the choice was noise. */
 function Actions({ part, page, sweep, brief, pages, estSeconds, estCost,
                    onRecheck, onRerun, busy, briefNote,
-                   recheckConfirm = null }: {
+                   recheckConfirm = null, cardDates = [], tool = null, others = [],
+                   estRuns = null, rereads = null, lastCost = null }: {
+  /** The last recorded cost here, where it is the price shown (item 276,
+   *  row 11): above the median, so the median is not what is quoted. */
+  lastCost?: number | null;
+  /** Item 271 (row 10): what the price is the median of, and what a re-run
+   *  would re-read - the analysis's rows, and how many sit on pages the
+   *  automatic checks still raise. */
+  estRuns?: number | null; rereads?: { rows: number; raised: number } | null;
+  /** The analysis the paid button runs, and the others that write to this
+   *  part (item 269, row 5). The price is the named one's. */
+  tool?: string | null; others?: string[];
+  /** When each card's own row was measured (item 274, row 5). */
+  cardDates?: string[];
   part: Category; page: string;
   sweep: SweepRun | null; brief: Category["brief_run"];
-  pages: number | null; estSeconds: number | null; estCost: number | null;
+  pages: number | null; estSeconds: Estimate | null; estCost: number | null;
   onRecheck: () => void; onRerun: () => void;
   busy: "sweep" | "brief" | null; briefNote: string | null;
   /** The confirmation the re-check opens in site mode, where the press
@@ -756,8 +1060,16 @@ function Actions({ part, page, sweep, brief, pages, estSeconds, estCost,
    *  against the part's reference crawl (`/api/runs/<id>/expert/...`, item
    *  239 step 5), so its scope is that audit - not the record, not the site,
    *  and not the part's checks. The confirmation states the crawl and its date. */
-  const briefScope = page ? "this page" : "this audit";
-  const dim = part.refresh?.dimension ?? "ONP";
+  // Item 269 (row 5): the run is posted against the part's reference crawl
+  // with no page in it, so in page mode it is still the whole audit; "this
+  // page" named a scope the request did not carry.
+  const briefScope = page ? "this audit, all pages" : "this audit";
+  // Item 274: no fallback. A part no automatic check covers (International)
+  // has no dimension, and "ONP" here dated it by the On-page sweep.
+  const dim = part.refresh?.dimension ?? null;
+  /** Item 274, finishing item 232: with nothing to re-check, the re-check is
+   *  held and says why. It was enabled, left-most, and did nothing. */
+  const noRecheck = part.refresh ? null : "no automatic check covers this part";
   // `stamp`, not a third spelling of the slice (audit F11): this one had the
   // replace and the slice the other way round, which is why a grep for the
   // other order missed it.
@@ -766,8 +1078,10 @@ function Actions({ part, page, sweep, brief, pages, estSeconds, estCost,
    *  button offered "Run analysis" and the line under it said none "has run"
    *  - as if one were owed - over a card saying it was not applicable. */
   const gated = part.gate?.state === "na";
-  const gatedWhy = "not applicable on this site: it presents one locale. It runs once a "
-    + "target locale is stated for it, or a crawl reaches a second locale";
+  // Item 274: the gate's own first sentence, not a second wording of it.
+  const gatedWhy = part.gate?.why
+    || (part.gate?.reason ?? "").split(/(?<=\.)\s/)[0].replace(/\.$/, "")
+    || "not applicable on this site";
   return (
     <div className="part-actions">
       <div className="part-acts">
@@ -782,7 +1096,7 @@ function Actions({ part, page, sweep, brief, pages, estSeconds, estCost,
             dashed on clear - the same row, two held looks, by accident. */}
         <SecondaryButton className="act-sweep"
                 busy={busy === "sweep"}
-                why={busy === "brief" ? "the analysis is running" : null}
+                why={noRecheck ?? (busy === "brief" ? "the analysis is running" : null)}
                 onClick={onRecheck}>
           {/* Item 183: the part's name, and how many other parts the same checks
               re-check - "Re-check TEC" on Crawl, Indexability and URLs re-checked
@@ -796,27 +1110,55 @@ function Actions({ part, page, sweep, brief, pages, estSeconds, estCost,
               twenty22's one-page T1 "~2s" is true by accident, and on Acme
               it would promise a fraction of what the press costs. "free" is
               true either way - no model runs - so it stays. */}
-          {page && estSeconds !== null ? ` · ${human(estSeconds)}` : ""}
+          {page && estSeconds !== null ? ` · ${humanEst(estSeconds)}` : ""}
         </SecondaryButton>
         {/* Item 178: held with its reason in text, priced in words, and
             confirmed. "Run" until an analysis has run on this part: "Re-run"
             over "no analysis has run on this part" named a result that did not
             exist (05-2, 07-11). */}
+        {part.catalogued === false && !brief ? (
+          // Item 279 (row 8): no analysis is catalogued for this part, so a
+          // disabled paid button offered a spend that cannot exist.
+          <span className="muted">{briefNote ?? "no analysis writes to this part"}</span>
+        ) : (
         <SpendButton className="act-brief" price={estCost}
                      busy={busy === "brief"}
+                     // Item 274 (row 6): the brief has changed since the analysis
+                     // shown was written; the heading says so, and so does the
+                     // control that would apply the change.
+                     title={brief?.brief_changed
+                       ? "The brief has changed since this analysis was written: a re-run applies it"
+                       : undefined}
                      why={briefNote ?? (gated ? gatedWhy
                        : busy === "sweep" ? "the automatic checks are starting" : null)}
-                     confirm={{ title: `${brief ? "Re-run" : "Run"} the ${part.label} analysis?`,
+                     confirm={{ title: `${brief ? "Re-run" : "Run"} the ${tool ?? part.label} analysis?`,
                                 body: <><SpendTarget page={page ? pathOf(page) : null}
                                                      pages={page ? null : pages} />
                                   <p>{brief
                                     ? "It replaces the analysis stored for this part."
+                                      + (brief.brief_changed
+                                        ? " The brief has changed since that analysis was written, and this run applies it."
+                                        : "")
                                     : gated ? "The locale check found this analysis does not apply."
                                     : "Nothing has analysed this part on this audit yet."}</p></>,
                                 action: `${brief ? "Re-run" : "Run"} the analysis` }}
                      onSpend={onRerun}>
-          {`${brief ? "Re-run" : "Run"} analysis · ${briefScope}`}
+          {`${brief ? "Re-run" : "Run"} ${tool ? `${tool} analysis` : "analysis"} · ${briefScope}`}
         </SpendButton>
+        )}
+        {(estRuns || rereads || lastCost != null) && (
+          <span className="muted">
+            {estRuns ? ` median of ${estRuns} run${estRuns === 1 ? "" : "s"}` : ""}
+            {lastCost != null ? " what the last run here cost" : ""}
+            {rereads ? `${estRuns || lastCost != null ? " ·" : ""} re-reads ${rereads.rows} row${rereads.rows === 1 ? "" : "s"}`
+              + ` · ${rereads.raised} on pages the automatic checks still raise` : ""}
+          </span>
+        )}
+        {others.length > 0 && (
+          <span className="muted">
+            {" "}Also writing here: {others.join(", ")} - run from the Analyses list.
+          </span>
+        )}
         <span className="muted act-busy" role="status" aria-live="polite">
           {/* Keyed, so going from one wait straight to the other starts
               the clock again rather than carrying the first one's. */}
@@ -830,7 +1172,7 @@ function Actions({ part, page, sweep, brief, pages, estSeconds, estCost,
           a second region the reader has to connect to it. */}
       {recheckConfirm}
       <div className="part-prov">
-        {sweep && (
+        {sweep && dim && (
           <span className="prov-line">
             <i className="prov-dot prov-sweep" aria-hidden="true" />
             {" "}automatic checks {when(sweep.at)} · {sweep.tier} · {dim}
@@ -854,11 +1196,20 @@ function Actions({ part, page, sweep, brief, pages, estSeconds, estCost,
         )}
         {/* Rule 3: a part whose items were measured on different days says
             its range, and how many pages were re-checked since its crawl. */}
-        {part.measured_range && (part.measured_range.from.slice(0, 10) !== part.measured_range.to.slice(0, 10)
-                                 || part.measured_range.rechecked_pages > 0) && (
+        {/* Item 274 (row 5): and where any card was measured on a day
+            other than the automatic checks' own, which the range read from
+            the record's items did not see (13 cards, 12 counted). */}
+        {(() => {
+          const differ = sweep?.at ? cardDates.some((d) => day(d) !== day(sweep.at)) : false;
+          return part.measured_range && (day(part.measured_range.from) !== day(part.measured_range.to)
+                                         || part.measured_range.rechecked_pages > 0) || differ;
+        })() && (
           <span className="prov-line prov-range muted">
-            Measured {dayOf(part.measured_range.from)} to {dayOf(part.measured_range.to)}
-            {part.measured_range.rechecked_pages > 0
+            Measured {dayOf([part.measured_range?.from, sweep?.at, ...cardDates]
+                              .filter((d): d is string => Boolean(d)).sort()[0] ?? "")} to{" "}
+            {dayOf([part.measured_range?.to, sweep?.at, ...cardDates]
+                     .filter((d): d is string => Boolean(d)).sort().slice(-1)[0] ?? "")}
+            {part.measured_range && part.measured_range.rechecked_pages > 0
               ? ` · ${part.measured_range.rechecked_pages === 1 ? "one page"
                   : `${part.measured_range.rechecked_pages} pages`} re-checked ${dayOf(part.measured_range.rechecked_at)}`
               : ""}
@@ -868,18 +1219,45 @@ function Actions({ part, page, sweep, brief, pages, estSeconds, estCost,
           <span className="prov-line">
             <i className="prov-dot prov-brief" aria-hidden="true" />
             {" "}analysis {brief.tool} {when(brief.at)}
-            {" · "}<MeasuredAge iso={brief.at} th={part.age_thresholds} />
+            {/* Item 267 (row 15): what it read is the crawl, so the age is the
+                crawl's - "read the crawl of 18 Sept, measured 13 days ago" -
+                where the analysis says which crawl that was. */}
+            {brief.crawl_at
+              ? <>{" · "}read the crawl of {dayOf(brief.crawl_at)},{" "}
+                  <MeasuredAge iso={brief.crawl_at} th={part.age_thresholds} /></>
+              : <>{" · "}<MeasuredAge iso={brief.at} th={part.age_thresholds} /></>}
             {brief.model ? ` · ${brief.model}` : ""}
             {/* Item 209: the accounting once, where the price is read. "10
                 rows · USD 0.47" over a run that returned 29 hid that two
                 thirds of what was paid for was refused. */}
-            {brief.rows != null
-              ? ((part.brief_dropped ?? 0) > 0
-                  ? ` · ${brief.rows + (part.brief_dropped ?? 0)} rows returned · ${brief.rows} kept`
-                    + ` · ${part.brief_dropped} dropped`
-                  : ` · ${brief.rows} row${brief.rows === 1 ? "" : "s"}`)
-              : ""}
-            {brief.cost != null ? ` · ${money(brief.cost)}` : ""}
+            {(part.brief_runs?.length ?? 0) > 1 ? (
+              // Item 269 (row 4): several analyses write to this part. Each
+              // is its own line below, and this one names them and sums
+              // what they cost; a count across tools is no run's count.
+              <>
+                {" · "}{part.brief_runs!.length} analyses: {part.brief_runs!.map((b) => b.tool).join(", ")}
+                {part.brief_runs!.some((b) => b.cost != null)
+                  ? ` · ${money(part.brief_runs!.reduce((s, b) => s + (b.cost ?? 0), 0))} in all` : ""}
+              </>
+            ) : (
+              <>
+                {brief.rows != null
+                  ? ((part.brief_dropped ?? 0) > 0
+                      ? ` · ${brief.rows + (part.brief_dropped ?? 0)} rows returned · ${brief.rows} kept`
+                        + ` · ${part.brief_dropped} dropped`
+                      : ` · ${brief.rows} row${brief.rows === 1 ? "" : "s"}`)
+                  : ""}
+                {/* Items 277 (row 9), 273 (row 8): the holds, so the
+                    provenance and the accounting under the cards are one
+                    arithmetic. */}
+                {(() => {
+                  // In checks, as the accounting says them (item 276, row 3).
+                  const n = new Set((part.brief_held ?? []).map((h) => h.check.split("/").pop())).size;
+                  return n > 0 ? ` · ${n} check${n === 1 ? "" : "s"} held` : "";
+                })()}
+                {brief.cost != null ? ` · ${money(brief.cost)}` : ""}
+              </>
+            )}
           </span>
         ) : (
           <span className="prov-line muted">
@@ -888,6 +1266,21 @@ function Actions({ part, page, sweep, brief, pages, estSeconds, estCost,
           </span>
         )}
       </div>
+      {(part.brief_runs?.length ?? 0) > 1 && (
+        <ul className="prov-runs muted">
+          {part.brief_runs!.map((b) => (
+            <li key={b.tool}>
+              analysis {b.tool} · {stamp(b.at)}
+              {(b.audits_since ?? 0) > 0
+                ? ` · ${b.audits_since} audit${b.audits_since === 1 ? "" : "s"} since` : ""}
+              {b.crawl_at ? ` · read the crawl of ${stamp(b.crawl_at)}` : ""}
+              {b.model ? ` · ${b.model}` : ""}
+              {` · ${b.rows + b.dropped} rows returned · ${b.rows} kept · ${b.dropped} dropped`}
+              {b.cost != null ? ` · ${money(b.cost)}` : ""}
+            </li>
+          ))}
+        </ul>
+      )}
       {/* The reason is beside the control it holds (item 178), not a second
           copy under the provenance. */}
     </div>
@@ -900,11 +1293,27 @@ function Badge({ kind, children }: { kind: "pass" | "fail" | "held"; children: R
   return <span className={`str-badge str-${kind}`}>{children}</span>;
 }
 
+/** A length badge graded as the check grades it (item 273, row 3): pixels
+ *  against the cut at the viewport the check fires at, characters against
+ *  the minimum. A character range said "in range" over a 561 px title the
+ *  check had raised. */
+export function lengthGrade(f: SnippetField): { pass: boolean; says: string } {
+  const v = fired(f);
+  const chars = f.chars ?? (f.text ?? "").length;
+  if (f.min_chars && chars < f.min_chars) {
+    return { pass: false, says: `${chars} chars · under ${f.min_chars}` };
+  }
+  const where = f.fires === "mobile" ? "mobile" : "desktop";
+  return v.state === "ok" || v.state === "mute"
+    ? { pass: true, says: `${Math.round(f.px)} px · fits the ${v.limit_px} px cut on ${where}` }
+    : { pass: false, says: `${Math.round(f.px)} px · cut at ${v.limit_px} px on ${where}` };
+}
+
 /** Block 2, Title & description's renderer: the page's own strings, with
  *  a plain result preview so a 272-character description is visible
  *  rather than stated. */
-function TitleDescNow({ facts, part, bounds }: {
-  facts: Facts; part: Category; bounds: Bounds;
+function TitleDescNow({ facts, part, bounds, fixes = [] }: {
+  facts: Facts; part: Category; bounds: Bounds; fixes?: Fix[];
 }) {
   // Part B's desktop/mobile toggle. Pure display: the string's pixel width
   // is fixed and the payload carries both cut lines, so a press switches
@@ -918,18 +1327,25 @@ function TitleDescNow({ facts, part, bounds }: {
   const desc = facts.meta_description ?? "";
   const canonical = facts.canonical ?? "";
   const inRange = (n: number, lo: number, hi: number) => n >= lo && n <= hi;
-  const titleHeld = held("title-entity-alignment");
+  // Item 273 (row 13): said once. Where the hold has its own card below,
+  // the badge here repeated it 55 lines apart.
+  const titleHeld = fixes.some((f) => f.checkId === "title-entity-alignment" && f.needs)
+    ? undefined : held("title-entity-alignment");
   const cut = desc.length > bounds.descMax ? desc.slice(0, bounds.descMax) + " …" : desc;
   return (
     <Card className="now-card">
-      <h4>What the page has now</h4>
+      <h3>What the page has now</h3>
       <dl className="now-strings">
         <dt>Title</dt>
         <dd>
           {title ? <span className="now-str">{title}</span>
                  : <span className="muted">no title</span>}
           <div className="now-badges">
-            {title && (
+            {title && facts.snippet?.title && (() => {
+              const g = lengthGrade(facts.snippet.title);
+              return <Badge kind={g.pass ? "pass" : "fail"}>{g.says}</Badge>;
+            })()}
+            {title && !facts.snippet?.title && (
               <Badge kind={inRange(title.length, bounds.titleMin, bounds.titleMax) ? "pass" : "fail"}>
                 {title.length} chars ·{" "}
                 {inRange(title.length, bounds.titleMin, bounds.titleMax)
@@ -948,7 +1364,11 @@ function TitleDescNow({ facts, part, bounds }: {
           {desc ? <span className="now-str">{desc}</span>
                 : <span className="muted">no description</span>}
           <div className="now-badges">
-            {desc && (
+            {desc && facts.snippet?.description && (() => {
+              const g = lengthGrade(facts.snippet.description);
+              return <Badge kind={g.pass ? "pass" : "fail"}>{g.says}</Badge>;
+            })()}
+            {desc && !facts.snippet?.description && (
               <Badge kind={inRange(desc.length, bounds.descMin, bounds.descMax) ? "pass" : "fail"}>
                 {desc.length} chars ·{" "}
                 {inRange(desc.length, bounds.descMin, bounds.descMax)
@@ -991,14 +1411,29 @@ function TitleDescNow({ facts, part, bounds }: {
 function TitleDescFixBody({ fix, facts }: { fix: Fix; facts: Facts | null }) {
   const now = fix.checkId.startsWith("meta-desc") ? facts?.meta_description
             : fix.checkId.startsWith("title") ? facts?.title : null;
-  const current = now || fix.current;
+  // Item 273 (row 4): on the site view the page's own string comes from the
+  // finding; the engine's sentence goes under it, and the string is struck
+  // only where a replacement stands under it.
+  const current = now || fix.said || null;
+  const sentence = fix.current && fix.current !== current ? fix.current : null;
+  const keep = isKeep(fix);
   return (
     <>
       <p className="fix-now">
         <span className="fix-lbl">Now</span>
-        {current ? <s>{current}</s> : <span className="muted">nothing on the page</span>}
+        {current
+          ? (fix.replacement && !keep ? <s>{current}</s> : <span>{current}</span>)
+          : <span className="muted">{sentence ? "" : "nothing on the page"}</span>}
+        {/* Item 273 (row 5): the overage and the length on each card. */}
+        {fix.overPx != null && current
+          ? <span className="muted fix-meta"> {Math.round(fix.overPx)} px over · {current.length} chars</span>
+          : null}
       </p>
-      {fix.replacement && (
+      {sentence && <p className="muted fix-meta">{sentence}</p>}
+      {fix.replacement && keep && (
+        <p className="fix-new muted">The analysis keeps the text as it is: no change.</p>
+      )}
+      {fix.replacement && !keep && (
         <p className="fix-new">
           <span className="fix-lbl">Replace with</span>
           <span className="fix-rep">{fix.replacement}</span>
@@ -1118,11 +1553,19 @@ function HeadingsFixBody({ fix, facts }: { fix: Fix; facts: Facts | null }) {
       </p>
     );
   }
-  const byText = new Map(before.map((l, i) => [norm(l.text), { line: l, i }]));
-  /** What happened to one line of the corrected outline, in a word. */
+  // The first line of each spelling (screen audits round 3, headings AC-03):
+  // last-wins matched a typo fix to a later duplicate.
+  const byText = new Map<string, { line: Line; i: number }>();
+  before.forEach((l, i) => { if (!byText.has(norm(l.text))) byText.set(norm(l.text), { line: l, i }); });
+  /** What happened to one line of the corrected outline, in a word.
+   *  Screen audits round 3 (headings AC-03): a line the key matches differs
+   *  at most in case, spacing or an apostrophe, which is how a heading is
+   *  written and not a change - 263 "reworded" marks on one page were letter
+   *  case. `[proposed]` is the model's own flag, for a heading where none
+   *  stands; any other line without a match is a rewording. */
   const change = (line: Line): string | null => {
     const was = byText.get(norm(line.text));
-    if (!was) return "[proposed]";
+    if (!was) return line.proposed ? "[proposed]" : "reworded";
     if (was.line.level === line.level) return null;
     if (was.line.level === 1 && fix.checkId === "h1-multiple") {
       return "demoted; the subject stays as h1";
@@ -1136,35 +1579,64 @@ function HeadingsFixBody({ fix, facts }: { fix: Fix; facts: Facts | null }) {
   marks.forEach((m, i) => { if (m) { keep.add(i); if (i > 0) keep.add(i - 1); } });
   const shown = after.map((line, i) => ({ line, mark: marks[i], i }))
                      .filter(({ i }) => keep.has(i));
-  // A heading the corrected outline does not carry is cut - unless it sits
-  // outside the main region, which a brief rewriting the page's own
-  // outline never claims to touch. Striking the site's navigation would
-  // read as "delete this heading", which is not what was proposed.
-  const cut = before.filter((l) => l.inMain !== false
-                                   && !after.some((a) => norm(a.text) === norm(l.text)));
+  // Item 268. "Now" is the page as it stands, so it is drawn from `before`
+  // in document order. It was the corrected outline's matched lines in the
+  // corrected outline's order, then the cut lines after them, so on
+  // /contact-us/ an H1 read below the H2 and H3 it heads and the H3 that
+  // skipped a level was not marked at all.
+  //
+  // A line is struck where the corrected outline does not carry it at its
+  // level - unless it sits outside the main region, which a brief rewriting
+  // the page's own outline never claims to touch: striking the site's
+  // navigation would read as "delete this heading". On a level-skip card
+  // the heading that skipped is marked, by the engine's rule (a level more
+  // than one below the heading before it, `onp.heading_outline_state`).
+  const carried = new Map(after.map((l) => [norm(l.text), l]));
+  const skipCard = fix.checkId === "heading-skip";
+  const was = before.map((l, i) => {
+    const now = carried.get(norm(l.text));
+    return {
+      line: l, i,
+      struck: now ? now.level !== l.level : l.inMain !== false,
+      skipped: skipCard && i > 0 && l.level > before[i - 1].level + 1,
+    };
+  });
+  // The lines that change, one line of context above each, and the line a
+  // proposed heading would follow - still in the page's order.
+  const keepWas = new Set<number>();
+  was.forEach(({ struck, skipped }, i) => {
+    if (struck || skipped) { keepWas.add(i); if (i > 0) keepWas.add(i - 1); }
+  });
+  marks.forEach((m, i) => {
+    if (m !== "[proposed]" || i === 0) return;
+    const above = byText.get(norm(after[i - 1].text));
+    if (above) keepWas.add(above.i);
+  });
   const stub = fix.checkId === "h2-question-unanswered";
+  // Item 268 (row 4): which crawl "Now" is. The analysis may have read an
+  // older one, and a diff against a page that has since changed reads as a
+  // change nobody asked for.
+  const readAt = facts ? (facts.dated?.outline ?? facts.captured_at)
+                       : (fix.baseline as { captured_at?: string | null } | null)?.captured_at;
   return (
     <>
+      {/* Item 268 (row 3): the analysis's evidence above the diff, as the
+          no-outline branches draw it. Ten of twelve cards carried an outline
+          and so showed none: "Redundant h2s" struck three H3s and never named
+          an h2. */}
+      {fix.current && <p className="fix-why">{fix.current}</p>}
       <p className="fix-now">
         <span className="fix-lbl">Now</span>
+        {readAt && <span className="muted fix-meta"> · crawl of {day(readAt)}</span>}
       </p>
       <ol className="outline outline-was">
-        {shown.map(({ line, mark, i }) => {
-          const was = byText.get(norm(line.text));
-          if (!was) return null;
-          return (
-            <li key={`was-${i}`} className={`out-line${mark ? " out-struck" : ""}`}
-                style={{ marginLeft: `${(was.line.level - 1) * 1.1}rem` }}>
-              <code className="out-lvl">H{was.line.level}</code>{" "}
-              <span className="out-text">{was.line.text}</span>
-            </li>
-          );
-        })}
-        {cut.map((l, i) => (
-          <li key={`cut-${i}`} className="out-line out-struck"
-              style={{ marginLeft: `${(l.level - 1) * 1.1}rem` }}>
-            <code className="out-lvl">H{l.level}</code>{" "}
-            <span className="out-text">{l.text}</span>
+        {was.filter(({ i }) => keepWas.has(i)).map(({ line, i, struck, skipped }) => (
+          <li key={`was-${i}`}
+              className={`out-line${struck ? " out-struck" : ""}${skipped ? " out-skip" : ""}`}
+              style={{ marginLeft: `${(line.level - 1) * 1.1}rem` }}>
+            <code className="out-lvl">H{line.level}</code>{" "}
+            <span className="out-text">{line.text}</span>
+            {skipped && <span className="out-tag out-skipped">skipped a level</span>}
           </li>
         ))}
       </ol>
@@ -1538,6 +2010,12 @@ function ImagesFixBody({ fix, facts }: { fix: Fix; facts: Facts | null }) {
     <div className="img-diff">
       <div className="img-panel">
         <span className="fix-lbl">Now</span>
+        {/* Item 272 (row 5): at site scope there is no page in hand, so no
+            stored record of the image; the card says what the finding says
+            rather than drawing an empty `<img>`. */}
+        {!before.length ? (
+          <p className="muted">{fix.current || fix.image || "the image as it stands"}</p>
+        ) : (
         <pre className="md-code img-markup" tabIndex={0}><code>
           {"<img"}
           {before.map((a) => (
@@ -1548,6 +2026,7 @@ function ImagesFixBody({ fix, facts }: { fix: Fix; facts: Facts | null }) {
           ))}
           {"\n>"}
         </code></pre>
+        )}
       </div>
       <div className="img-panel">
         <span className="fix-lbl">Replace with</span>
@@ -1616,6 +2095,9 @@ type Renderer = {
    *  checks table and fixes still narrow to the page; only the picture is
    *  withheld until a page block is designed for them. */
   noPageBlock?: boolean;
+  /** The checks table at page scope too (item 265): Speed's checks are read
+   *  per traced page, so a page in hand has its own table under its trace. */
+  pageChecks?: boolean;
   /** The part's site-wide picture, drawn inside the site-scope else-branch,
    *  immediately before the free-checks table (item 139a). Site-scope-only by
    *  construction: a page in scope takes the `now` path above, and this slot is
@@ -1638,9 +2120,26 @@ type Renderer = {
                    *  by the population rather than deciding for itself what
                    *  its number is a share of. */
                   pops?: Populations | null;
-                  onPage?: (url: string) => void }) => JSX.Element | null;
+                  onPage?: (url: string) => void;
+                  /** The site, and the re-read after a block edits its record
+                   *  (International's target locales). */
+                  siteId?: string; onChanged?: () => void }) => JSX.Element | null;
+  /** What the part draws below Fixes at site scope (item 267, row 10: the
+   *  AI surface Register, which is read after the fixes, not before). */
+  siteFoot?: (p: { part: Category }) => JSX.Element | null;
   /** What the copy button copies, in the words of the thing copied. */
   copyLabel?: string;
+  /** What a card offers to copy where it has no replacement (item 279,
+   *  row 5: Accessibility's first selector); null for nothing. */
+  copyFrom?: (fix: Fix) => string | null;
+  /** Whether the card's replacement is one the body drew (item 272, row 5):
+   *  Images drew "copy markup" on cards whose replacement held no `<img>`,
+   *  so the operator copied text the card never showed. */
+  copyWhen?: (fix: Fix) => boolean;
+  /** What the copy button copies, where it is not the replacement verbatim
+   *  (Headings: the parsed outline, item 268; AI surface: the payload the
+   *  card shows, item 267). */
+  copyText?: (replacement: string, fix: Fix) => string;
   /** Checks that cannot be judged without a list on the site record. One
    *  muted line naming the input, not a held card per page (brief v14
    *  step AP): the answer is the same on every page, and saying it twelve
@@ -1877,6 +2376,15 @@ function SchemaNow({ facts, part, page, fixes, glow, onFix }: {
  *  pretending otherwise would show an operator a diff they cannot apply.
  *  A `content-first` row shows no code at all, because there is nothing to
  *  paste until the content exists. */
+/** A one-line replacement over 80 characters, laid out (item 270, row 17):
+ *  a JSON-LD block the model wrote on one line read as a 400-character
+ *  scroll beside a laid-out Now. Anything that is not JSON stays as written. */
+export function laidOut(text: string): string {
+  const t = text.trim();
+  if (t.length <= 80 || t.includes("\n") || !/^[[{]/.test(t)) return text;
+  try { return JSON.stringify(JSON.parse(t), null, 2); } catch { return text; }
+}
+
 function SchemaFixBody({ fix, facts }: { fix: Fix; facts: Facts | null }) {
   const before = (facts?.schema_inventory ?? []).find(
     (b, n) => fix.block === `${(b.type ?? "block").split(",")[0].trim()}#${n + 1}`);
@@ -1897,7 +2405,7 @@ function SchemaFixBody({ fix, facts }: { fix: Fix; facts: Facts | null }) {
     <>
       <div className="img-diff">
         <div className="img-panel">
-          <h5 className="muted">Now</h5>
+          <p className="fix-lbl muted">Now</p>
           {/* Focusable because it scrolls: a region a mouse can scroll
               and a keyboard cannot is unreachable for anyone not using
               one (axe: scrollable-region-focusable). */}
@@ -1909,11 +2417,14 @@ function SchemaFixBody({ fix, facts }: { fix: Fix; facts: Facts | null }) {
           </pre>
         </div>
         <div className="img-panel">
-          <h5 className="muted">Replace with</h5>
-          <pre className="img-markup out-new" tabIndex={0}>{fix.replacement ?? ""}</pre>
+          <p className="fix-lbl muted">Replace with</p>
+          <pre className="img-markup out-new" tabIndex={0}>{laidOut(fix.replacement ?? "")}</pre>
         </div>
       </div>
-      {fix.where && <p className="muted fix-meta">Where: {fix.where}</p>}
+      {/* Item 270 (row 17): "Where: markup" on a card that is the markup
+          says nothing the two panels above it do not. */}
+      {fix.where && !["markup", (fix.kind ?? "").toLowerCase()].includes(fix.where.trim().toLowerCase())
+        && <p className="muted fix-meta">Where: {fix.where}</p>}
     </>
   );
 }
@@ -2074,12 +2585,35 @@ function LinksFixBody({ fix }: { fix: Fix; facts: Facts | null }) {
       </div>
     );
   }
+  // Item 271 (row 7): the finding's sentence is why, not text to strike.
+  // An anchor card strikes the old anchor alone and sets the new beside it,
+  // read from the replacement's own `'old' → 'new' (→ /target)` entries.
+  const swaps = fix.kind === "anchor" ? anchorSwaps(fix.replacement ?? "") : [];
   return (
     <div className="fix-links">
-      {fix.current && <p className="fix-now"><s>{fix.current}</s></p>}
-      {fix.replacement && <p className="fix-rep">{fix.replacement}</p>}
+      {fix.current && <p className="fix-why">{fix.current}</p>}
+      {swaps.length ? swaps.map((s, i) => (
+        <p key={i} className="fix-rep">
+          <s>{s.from}</s>{" → "}<span className="fix-anchor">{s.to}</span>
+          {s.target && <span className="muted"> (→ {s.target})</span>}
+        </p>
+      )) : fix.replacement && <p className="fix-rep">{fix.replacement}</p>}
     </div>
   );
+}
+
+/** One anchor change per entry of an anchor card's replacement, as the
+ *  Links prompt writes it: `'Learn more' → 'what Birch Events does' (→
+ *  /birch-events-what-we-do)`, entries separated by `;`. An entry that does
+ *  not read that way yields nothing, and the card falls back to the text. */
+export function anchorSwaps(replacement: string): { from: string; to: string; target: string | null }[] {
+  const out: { from: string; to: string; target: string | null }[] = [];
+  for (const part of replacement.split(";")) {
+    const m = part.trim().match(/^['‘"“](.+?)['’"”]\s*→\s*['‘"“](.+?)['’"”]\s*(?:\(→\s*([^)]+)\))?$/);
+    if (!m) return [];
+    out.push({ from: m[1], to: m[2], target: m[3]?.trim() ?? null });
+  }
+  return out;
 }
 
 /** The five things the Content part page says about one page, and where
@@ -2179,6 +2713,16 @@ function ContentTabs({ facts, part, bounds, fixes, page }: {
           </button>
         ))}
       </div>
+      {/* Item 269 (row 8): in page mode the screenshot and regions run long
+          above the cards; the way to them is beside the tabs, with their
+          count. Outside the tablist, which holds only tabs. */}
+      {page && fixes.length > 0 && (
+        <SecondaryButton className="ctab-jump"
+                         onClick={() => document.getElementById("part-fixes")
+                           ?.scrollIntoView({ block: "center" })}>
+          Fixes ({fixes.length})
+        </SecondaryButton>
+      )}
       <div role="tabpanel" id={`ctab-panel-${active}`}
            aria-labelledby={`ctab-${active}`} className="ctab-panel">
         {active === "page" && <ThisPageTab facts={facts} part={part}
@@ -2263,6 +2807,11 @@ function ThisPageTab({ facts, part, bounds, fixes, page }: {
         {t.boilerplate ? <>{" · "}<span className="tp-b">plus {t.boilerplate} words of site
           furniture</span></> : null}
         {" · "}<b>{t.unique_pct}%</b> of its own words are on no other page
+        {/* Item 269 (row 8): the thin regions counted on the summary, so the
+            line says what the list below will show. */}
+        {list.some((b) => b.thin)
+          ? <>{" · "}{list.filter((b) => b.thin).length} thin region
+              {list.filter((b) => b.thin).length === 1 ? "" : "s"}</> : null}
       </p>
       <div className="tp-bar" aria-hidden="true">
         {(["unique", "shared", "boilerplate"] as const).map((k) =>
@@ -2270,6 +2819,12 @@ function ThisPageTab({ facts, part, bounds, fixes, page }: {
                        style={{ width: `${(t[k] / all) * 100}%` }} /> : null)}
       </div>
       {shot ? (
+        // Item 269 (row 8): the screenshot in a 900 px box that scrolls, so
+        // the regions and the cards are not a page's height below the
+        // summary. Focusable, because a region that scrolls must be
+        // reachable without a mouse.
+        <div className="tp-overlay-cap" tabIndex={0} role="region"
+             aria-label="the page's screenshot with its text regions; scrolls">
         <div className="overlay tp-overlay">
           <ShotBoxes src={shot} docW={cb.doc!.w} selected={sel == null ? null : sel + 1}
                      onSelect={pick}
@@ -2278,6 +2833,7 @@ function ThisPageTab({ facts, part, bounds, fixes, page }: {
                      boxes={placed.map(({ b, n }) => ({
                        n, rect: b.rect, tone: TP_TONE[cls(b)],
                        label: `region ${n}, ${cls(b)}, ${b.words} words` }))} />
+        </div>
         </div>
       ) : (
         <p className="muted tp-noshot">The rendered pass took no screenshot of this page,
@@ -2474,15 +3030,22 @@ function ContentNow({ facts, part, fixes, page }: {
         </span>
       </p>
       <p className="content-badges">
-        {CONTENT_BADGES.map(([check, label, good]) => (
-          <span key={check}
-                className={`str-badge ${raised.has(check) ? "sb-fail" : "sb-pass"}`}
-                title={raised.has(check)
-                         ? `${check} is open on this page`
-                         : `${check} did not fire on this page`}>
-            {label}: {raised.has(check) ? "no" : good}
-          </span>
-        ))}
+        {CONTENT_BADGES.map(([check, label, good]) => {
+          // Item 269: a check that does not read this kind of page is not a
+          // pass on it - "Author: named" on a home page no author check reads.
+          const unread = (facts.content_not_run ?? []).includes(check) && !raised.has(check);
+          return (
+            <span key={check}
+                  className={`str-badge ${unread ? "str-held" : raised.has(check) ? "sb-fail" : "sb-pass"}`}
+                  title={unread
+                           ? `${check} does not read ${facts.page_type ? `a ${facts.page_type} page` : "a page with no type on the site record"}`
+                           : raised.has(check)
+                           ? `${check} is open on this page`
+                           : `${check} did not fire on this page`}>
+              {label}: {unread ? MEASURE_WORD["not-measured"] : raised.has(check) ? "no" : good}
+            </span>
+          );
+        })}
       </p>
       {/* What a reader and a model both meet first. Quoted rather than
           summarised: the checks above are about whether the answer is
@@ -2503,7 +3066,12 @@ function ContentNow({ facts, part, fixes, page }: {
  *  rows after a run that did happen is a different sentence and gets one.
  */
 function ContentMap({ part }: { part: Category }) {
-  const rows = part.brief_map ?? [];
+  // Item 269 (row 12): the missing nodes first - the map's work - and every
+  // row reachable, as Fixes opens its groups. "38 more not shown" hid most
+  // of them behind nothing.
+  const rows = [...(part.brief_map ?? [])].sort((a, b) =>
+    Number((b.status || "").toLowerCase() === "missing") - Number((a.status || "").toLowerCase() === "missing"));
+  const [all, setAll] = useState(false);
   const clusters = part.brief_clusters ?? [];
   return (
     <section className="content-map">
@@ -2522,7 +3090,7 @@ function ContentMap({ part }: { part: Category }) {
               <tr><th>Service</th><th>Node</th><th>State</th><th>Pages</th><th>Type</th></tr>
             </thead>
             <tbody>
-              {(part.brief_map ?? []).slice(0, MAP_SHOWN).map((row, i) => (
+              {(all ? rows : rows.slice(0, MAP_SHOWN)).map((row, i) => (
                 <tr key={i}>
                   <td>{row.service || "\u2014"}</td>
                   <td>{row.node || "\u2014"}</td>
@@ -2539,7 +3107,9 @@ function ContentMap({ part }: { part: Category }) {
         </div>
       )}
       {rows.length > MAP_SHOWN && (
-        <p className="muted">{rows.length - MAP_SHOWN} more not shown.</p>
+        <SecondaryButton className="fix-more" onClick={() => setAll(!all)}>
+          {all ? "show fewer" : `show all ${rows.length}`}
+        </SecondaryButton>
       )}
       {clusters.length > 0 && (<>
         <h4>Overlapping pages <span className="muted">· {clusters.length}</span></h4>
@@ -2574,8 +3144,16 @@ function ContentMap({ part }: { part: Category }) {
 function ContentFixBody({ fix }: { fix: Fix; facts: Facts | null }) {
   return (
     <div className="fix-content">
-      {fix.current && <p className="fix-now"><s>{fix.current}</s></p>}
+      {/* Item 269 (row 10): the finding's sentence is struck only where a
+          replacement stands under it; otherwise it is the reason, and a free
+          card carries the automatic checks' own advice beneath it. */}
+      {fix.current && (fix.replacement
+        ? <p className="fix-now"><s>{fix.current}</s></p>
+        : <p className="fix-why">{fix.current}</p>)}
       {fix.replacement && <p className="fix-rep">{fix.replacement}</p>}
+      {!fix.replacement && fix.recommendation && (
+        <p className="fix-rep"><span className="fix-lbl">Do this: </span>{fix.recommendation}</p>
+      )}
       {/* A replacement that could not be written because the client has
           to supply a fact is not a failure of the brief: `content-first`
           is what the prompt returns instead of inventing the fact. */}
@@ -2621,6 +3199,7 @@ function A11yNow({ part, page }: {
   facts: Facts; part: Category; bounds: Bounds; fixes: Fix[]; page: string;
 }) {
   const [sel, setSel] = useState<number | null>(barrierFromHash());
+  const [step, setStep] = useState<number | null>(null);
   const barriers = part.barriers;
   const pick = (n: number | null) => { setSel(n); setBarrierInHash(n); };
   return (
@@ -2638,7 +3217,8 @@ function A11yNow({ part, page }: {
           </p>
         )
       ) : (
-        <FixOrderWaterfall order={part.fix_order} />
+        <FixOrderWaterfall order={part.fix_order} selected={step}
+                           onStep={(s, i) => { setStep(i); openFixGroup(s.check); }} />
       )}
       <p className="muted now-note">
         {page
@@ -2656,19 +3236,38 @@ function A11yNow({ part, page }: {
  *  is no before/after here - an accessible name is content the page does not
  *  have, so there is nothing to strike through. */
 function A11yFixBody({ fix }: { fix: Fix; facts: Facts | null }) {
+  // Item 279 (row 5): each card was one sentence ("4 link(s) on /about/ have
+  // no accessible name") while the row carried the elements and the
+  // module's advice. Both are drawn now.
+  const targets = fix.targets ?? [];
   return (
     <>
       <p className="fix-why">{fix.current || fix.note}</p>
-      {fix.replacement && (
+      {targets.length > 0 && (
+        <div className="fix-where">
+          <span className="fix-lbl">Where: </span>
+          {targets.slice(0, A11Y_TARGETS_SHOWN).map((t, i) => (
+            <Fragment key={t}>{i > 0 && " · "}<code>{t}</code></Fragment>
+          ))}
+          {targets.length > A11Y_TARGETS_SHOWN
+            && <span className="muted"> and {targets.length - A11Y_TARGETS_SHOWN} more</span>}
+        </div>
+      )}
+      {fix.replacement ? (
         <div className="img-panel">
-          <h5 className="muted">Do this</h5>
+          <p className="fix-lbl muted">Do this</p>
           <pre className="img-markup out-new" tabIndex={0}>{fix.replacement}</pre>
         </div>
+      ) : fix.recommendation && (
+        <p className="fix-new"><span className="fix-lbl">Do this: </span>{fix.recommendation}</p>
       )}
       {fix.where && <p className="muted fix-meta">Where: {fix.where}</p>}
     </>
   );
 }
+
+/** How many of a card's elements are named before "and N more". */
+const A11Y_TARGETS_SHOWN = 5;
 
 /** Block 2, Security & transport's renderer: what every response actually
  *  carried (brief v16h). Site scope only - a header is a property of a
@@ -2683,9 +3282,8 @@ function SecurityNow({ facts, part, page, narrow, onNarrow }: {
       {/* The 143 addendum's order: the verdict, then the layers, then the
           headers. A compromised site makes every hygiene row irrelevant, so
           the one line that says whether it is comes first. */}
-      <SecurityVerdict part={part} />
       <SecurityLayers part={part} narrow={narrow ?? null} onNarrow={onNarrow} />
-      <h4>What the site has now</h4>
+      <h3>What the site has now</h3>
       {page ? (
         <p className="muted hg-none">
           Response headers are a property of the whole site&rsquo;s
@@ -2701,7 +3299,7 @@ function SecurityNow({ facts, part, page, narrow, onNarrow }: {
           whichever page is chosen, so hiding it behind the filter would
           withhold the floor from a reader who had narrowed for an unrelated
           reason. */}
-      <TransportFacts facts={facts} />
+      <TransportFacts transport={part.transport ?? facts?.site?.transport ?? null} />
       <p className="muted now-note">
         Read from the response every fetched page returned. A row marked
         &ldquo;the grid&rsquo;s reading&rdquo; is decided here more loosely than
@@ -2731,7 +3329,7 @@ function SecurityVerdict({ part }: { part: Category }) {
         + "Nothing below says the site is secure.");
   return (
     <div className={`secv secv-${kind}`} role="note">
-      <b>{head}</b>
+      <h3>{head}</h3>
       <span className="muted">{basis}</span>
     </div>
   );
@@ -2768,7 +3366,16 @@ function SecurityLayers({ part, narrow, onNarrow }: {
       const s = entry.status.toLowerCase();
       state = s.startsWith("not") ? "held" : s.startsWith("partial") ? "partial"
         : found ? "warn" : "ok";
-      note = entry.missing ?? entry.summary ?? (found ? `${found} finding${found === 1 ? "" : "s"} open` : "assessed");
+      // Item 276 (row 9, round-1 #4 and #8): the found count first, as the
+      // partial branch says it; a ledger gap naming the probing switch in
+      // the engine's held words (it read as if the switch were on), and any
+      // other gap of an unassessed domain as what it needs.
+      const why = entry.missing && /active[_ ]probing/i.test(entry.missing) && held.length
+        ? (unmeasured.get(held[0]) ?? "").replace(/^held: /, "")
+        : entry.missing && s.startsWith("not") && !/^needs\b/i.test(entry.missing)
+          ? `needs ${entry.missing}` : entry.missing;
+      note = [found ? `${found} finding${found === 1 ? "" : "s"} open` : null,
+              why ?? entry.summary ?? (found ? null : "assessed")].filter(Boolean).join(" · ");
     } else if (held.length === d.checks.length) {
       state = "held";
       note = (unmeasured.get(held[0]) ?? "held").replace(/^held: /, "");
@@ -2796,7 +3403,7 @@ function SecurityLayers({ part, narrow, onNarrow }: {
   });
   return (
     <section className="seclayers" aria-label="The layers, and how far the checks saw into each">
-      <h4>The layers, and how far the {part.brief_security ? "analysis" : "automatic checks"} saw into each</h4>
+      <h3>The layers, and how far the {part.brief_security ? "analysis" : "automatic checks"} saw into each</h3>
       <div className="seclayers-rail">
         {SEC_LAYERS.map(([key, label]) => (
           <div key={key} className="seclayer">
@@ -2810,6 +3417,7 @@ function SecurityLayers({ part, narrow, onNarrow }: {
                 <button type="button" key={c.letter} className={`seccard seccard-${c.state}`}
                         data-domain={c.letter} data-state={c.state}
                         aria-pressed={narrow === c.letter}
+                        aria-label={`narrow fixes to ${c.letter} ${c.name}: ${c.word}, ${c.note}`}
                         disabled={!onNarrow}
                         onClick={() => onNarrow?.(narrow === c.letter ? null : c.letter)}>
                   <span className="seccard-head">
@@ -2823,6 +3431,7 @@ function SecurityLayers({ part, narrow, onNarrow }: {
           </div>
         ))}
       </div>
+      {onNarrow && <p className="muted seclayers-caption">Press a layer to narrow the fixes below.</p>}
     </section>
   );
 }
@@ -2837,8 +3446,17 @@ function SecurityLayers({ part, narrow, onNarrow }: {
  *  ceiling one handshake reached, and the limitation belongs beside it in
  *  text.
  */
-function TransportFacts({ facts }: { facts: Facts }) {
-  const t = facts?.site?.transport;
+/** The certificate's expiry as a date. The probe stores OpenSSL's text form
+ *  ("Dec 14 13:05:09 2026 GMT"), and cutting it at ten characters drew
+ *  "Dec 14 13:" once site scope showed it (item 276, row 9). An ISO string
+ *  passes through as its date. */
+export function certDay(raw: string): string {
+  const d = new Date(raw.replace(/ GMT$/, " UTC"));
+  return Number.isNaN(d.getTime()) ? raw : day(d.toISOString());
+}
+
+function TransportFacts({ transport }: { transport: Facts["site"]["transport"] | null }) {
+  const t = transport;
   if (!t) return null;
   const rows: [string, string][] = [
     ["TLS", t.tls_version
@@ -2850,7 +3468,7 @@ function TransportFacts({ facts }: { facts: Facts }) {
            + "machine, so the floor is not settled"}`
       : MEASURE_WORD["not-measured"]],
     ["Certificate", t.cert_not_after
-      ? `valid to ${String(t.cert_not_after).slice(0, 10)}` : "not recorded"],
+      ? `valid to ${certDay(String(t.cert_not_after))}` : "not recorded"],
     ["HTTP → HTTPS", t.http_redirects_to_https ? "redirects" : "does not redirect"],
   ];
   return (
@@ -2943,7 +3561,7 @@ function SecurityFixBody({ fix }: { fix: Fix; facts: Facts | null }) {
       {r?.impact && <p className="fix-meta"><b>Impact:</b> {r.impact}</p>}
       {fix.replacement && (
         <div className="img-panel">
-          <h5 className="muted">Add this</h5>
+          <p className="fix-lbl muted">Add this</p>
           <pre className="img-markup out-new" tabIndex={0}>{fix.replacement}</pre>
         </div>
       )}
@@ -2953,7 +3571,7 @@ function SecurityFixBody({ fix }: { fix: Fix; facts: Facts | null }) {
           nobody can verify or undo should not be deployed. */}
       {(r?.config ?? []).map((c, i) => (
         <div key={i} className="img-panel sec-layer-cfg">
-          <h5 className="muted">{c.layer ?? "config"}{c.stack ? ` · ${c.stack}` : ""}</h5>
+          <p className="fix-lbl muted">{c.layer ?? "config"}{c.stack ? ` · ${c.stack}` : ""}</p>
           <pre className="img-markup out-new" tabIndex={0}>{c.block}</pre>
         </div>
       ))}
@@ -3000,7 +3618,8 @@ function TitleDescSiteNow({ part, pages, pops = null, onPage }:
   if (!part.title_lengths) return null;
   return (
     <Card className="now-card">
-      <h4>Every page&rsquo;s length</h4>
+      {/* Item 273 (row 13): a block under the part's h2 is an h3. */}
+      <h3>Every page&rsquo;s length</h3>
       {/* `total` is the record count (PartPage's `pages`), so the foot can say
           how many of the record this audit's crawl drew (item 146z) - and it
           now names that denominator, because the part header above states a
@@ -3014,11 +3633,12 @@ function TitleDescSiteNow({ part, pages, pops = null, onPage }:
 
 export const PART_RENDERERS: Record<string, Renderer> = {
   "title-desc": { now: TitleDescNow, body: TitleDescFixBody, copyLabel: "copy replacement",
-                  siteNow: TitleDescSiteNow },
-  headings: { now: HeadingsNow, body: HeadingsFixBody, copyLabel: "copy outline",
+                  copyWhen: (fix) => !isKeep(fix), siteNow: TitleDescSiteNow },
+  headings: { now: HeadingsNow, body: HeadingsFixBody, copyLabel: "copy outline", copyText: outlineCopy,
               siteNow: HeadingsSiteNow,
               na: ["h3-sub-service", "h3-geo-map"] },
   images: { now: ImagesNow, body: ImagesFixBody, copyLabel: "copy markup",
+            copyWhen: (fix) => attrsIn(fix.replacement).length > 0,
             // One card per replacement, not per check: a brief answers six
             // checks on one image with one piece of markup, and repeating
             // it six times would read as six changes (brief v15 step AR).
@@ -3032,7 +3652,14 @@ export const PART_RENDERERS: Record<string, Renderer> = {
   // Brief v17 step AW. What is copied is the anchor: a suggestion's
   // sentence is read, and the words that go in the markup are the one
   // thing an operator retypes.
-  links: { now: LinksNow, body: LinksFixBody, copyLabel: "copy anchor" },
+  // Item 271 (row 8): "copy anchor" copies an anchor - the first
+  // suggestion's, or an anchor card's new anchors - not the prose; and a
+  // removal or a hand-off has none to copy.
+  links: { now: LinksNow, siteNow: LinksSiteNow, body: LinksFixBody, copyLabel: "copy anchor",
+           copyWhen: (fix) => !["remove", "handoff"].includes(fix.kind ?? ""),
+           copyText: (rep, fix) => fix.suggestions?.length ? fix.suggestions[0].anchor
+             : fix.kind === "anchor" && anchorSwaps(rep).length
+               ? anchorSwaps(rep).map((s) => s.to).join("\n") : rep },
   // Brief v16e. Two blocks in one position, chosen by scope: the fix order
   // for the site, the page's own barriers when one page is in hand. They
   // answer different questions - "what first" and "where on this page" -
@@ -3040,7 +3667,9 @@ export const PART_RENDERERS: Record<string, Renderer> = {
   // Item 226: the waterfall is the part's site picture. A11yNow drew it with
   // no page in hand, but with no `siteNow` the site branch never called it -
   // the same repair International and Mobile had (see `IntlSiteNow`).
-  a11y: { now: A11yNow, siteNow: A11ySiteNow, body: A11yFixBody, copyLabel: "copy selector" },
+  a11y: { now: A11yNow, siteNow: A11ySiteNow, body: A11yFixBody, copyLabel: "copy selector",
+          copyFrom: (fix) => fix.replacement ? null
+            : (fix.targets ?? []).find((t) => !t.startsWith("http") && !t.startsWith("/")) ?? null },
   // Brief v16h. One block, two states, and the column count is the number
   // of template groups that disagree - so a site serving the same headers
   // everywhere draws one column rather than a table of differences.
@@ -3080,15 +3709,22 @@ export const PART_RENDERERS: Record<string, Renderer> = {
   // Item 145 BH: reachability per agent, then the checks, then the brief's
   // fixes, and the register at the foot of the site picture.
   "ai-surface": { now: AiSurfacePageNow, siteNow: AiSurfaceSiteNow, body: AiSurfaceFixBody,
-                  copyLabel: "copy change" },
+                  siteFoot: ({ part }) => <AiRegister brief={part.brief_ai_surface ?? null} />,
+                  copyLabel: "copy change", copyText: aiSurfaceCopy },
   crawl: { noPageBlock: true, now: NoPageNow, siteNow: CrawlSiteNow, body: SiteBriefFixBody,
            copyLabel: "copy change" },
   indexability: { now: IndexabilityPageNow, siteNow: IndexabilitySiteNow,
-                  body: SiteBriefFixBody, copyLabel: "copy change" },
+                  // Item 277 (row 6): the same test as URLs - no copy over a
+                  // hold or over a change to what the page already has.
+                  body: SiteBriefFixBody, copyLabel: "copy change", copyWhen: isChange },
   urls: { noPageBlock: true, now: NoPageNow, siteNow: UrlsSiteNow, body: SiteBriefFixBody,
-          copyLabel: "copy change" },
-  speed: { noPageBlock: true, now: NoPageNow, siteNow: SpeedSiteNow, body: SiteBriefFixBody,
-           copyLabel: "copy change" },
+          copyLabel: "copy change", copyWhen: isChange },
+  // Item 265: Speed's trace is per page, so page mode draws that page's own
+  // gauges, sub-parts, filmstrip and waterfall (or says it was not traced),
+  // and the checks table at page scope. `noPageBlock` suits Mobile and
+  // International, whose pictures describe the site; it never suited Speed.
+  speed: { now: SpeedPageNow, siteNow: SpeedSiteNow, body: SiteBriefFixBody,
+           copyLabel: "copy change", pageChecks: true },
   // Crawl & sitemaps and Indexability & canonicals are deliberately NOT here:
   // they are across-the-site parts whose "now" carries controls — the depth
   // histogram narrows the finding list, a canonical chain's check narrows the
@@ -3104,6 +3740,65 @@ export const PART_RENDERERS: Record<string, Renderer> = {
  *  slot is required by the renderer type and `noPageBlock` keeps it undrawn. */
 function NoPageNow() { return <></>; }
 
+/** Links' site picture (item 271, row 6): the analysis's hub map - one row
+ *  per hub with its spokes, how many link up, how many it links down to and
+ *  its body inlinks - then how body inlinks and click depth fall across the
+ *  live pages. The prompt says "the UI draws it"; nothing did. */
+function LinksSiteNow({ part }: { part: Category; page: string; pages: number | null }) {
+  const hubs = part.brief_hubs ?? [];
+  const site = part.links_site ?? null;
+  if (!hubs.length && !site) return null;
+  return (
+    <Card className="now-card">
+      <h4>Hubs</h4>
+      {hubs.length ? (
+        <div className="table-scroll">
+          <table className="findings">
+            <thead><tr><th>Hub</th><th className="num">Spokes</th>
+              <th className="num">Spokes linking up</th><th className="num">Hub linking down</th>
+              <th className="num">Body inlinks</th></tr></thead>
+            <tbody>
+              {hubs.map((h, i) => (
+                <tr key={h.hub ?? i}>
+                  <td><code className="links-hub">{h.hub}</code></td>
+                  <td className="num" title={(h.spokes ?? []).join("\n")}>{(h.spokes ?? []).length}</td>
+                  <td className="num">{h.spokes_linking_up ?? "—"}</td>
+                  <td className="num">{h.hub_linking_down ?? "—"}</td>
+                  <td className="num">{h.inlinks_body ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="muted">No analysis has mapped this site's hubs yet; the Links analysis draws them.</p>
+      )}
+      {site && (
+        <>
+          <h4>Body inlinks per page</h4>
+          <p className="muted links-dist">
+            Over {site.counted} live pages, the start page aside; fewer than {site.minimum} is
+            under-linked:{" "}
+            {site.inlinks.map((b) => `${b.band}: ${b.pages}`).join(" · ")}
+          </p>
+          {(site.capped ?? 0) > 0 && (
+            <p className="muted links-dist">
+              Body links are counted from the first {site.cap} links stored per page, menus
+              included; {site.capped} page{site.capped === 1 ? "" : "s"} reached that, so
+              the pages they link to may be counted lower than they are.
+            </p>
+          )}
+          <h4>Click depth</h4>
+          <p className="muted links-dist">
+            Over {site.pages} live pages:{" "}
+            {site.depth.map((d) => `${d.depth}: ${d.pages}`).join(" · ")}
+          </p>
+        </>
+      )}
+    </Card>
+  );
+}
+
 /** Crawl & sitemaps' site picture (brief v25 step BP): the v18 counts, venn
  *  and UA matrix, then the depth histogram as the narrowing control. */
 function AiSurfaceSiteNow({ part }: { part: Category; page: string; pages: number | null }) {
@@ -3114,7 +3809,6 @@ function AiSurfaceSiteNow({ part }: { part: Category; page: string; pages: numbe
     <>
       <AiReachability now={part.ai_now} brief={part.brief_ai_surface ?? null} />
       <AiLlmsFile brief={part.brief_ai_surface ?? null} />
-      <AiRegister brief={part.brief_ai_surface ?? null} />
     </>
   );
 }
@@ -3211,6 +3905,14 @@ function UrlsSiteNow({ part, narrow, onNarrow }: {
 /** Speed's site picture: the vitals strip's templates narrow the fixes, and
  *  the pictures follow the template in hand. Images is the one other part it
  *  links to. */
+/** Speed in page mode (item 265): the page's own trace. */
+function SpeedPageNow({ part, page }: { part: Category; page: string }) {
+  return (
+    <SpeedNowBlock part={part} page={page}
+                   onPart={(key) => goto(withPart(window.location.hash || "", key), { keepScope: false })} />
+  );
+}
+
 function SpeedSiteNow({ part, pops, narrow, onNarrow }: {
   part: Category; page: string; pages: number | null; pops?: Populations | null;
   narrow?: Narrow; onNarrow?: (kind: NarrowKind, value: string | null) => void;
@@ -3277,9 +3979,15 @@ function VerdictTally({ verdicts }: { verdicts: string[] }) {
  *  two different things they are (brief 160 step 6): `na` is settled and a
  *  zero under it is honest; `not_assessed` is not, and says so.
  */
-function IntlNow({ part }: { facts: Facts; part: Category; bounds: Bounds;
-                             fixes: Fix[]; page: string }) {
+function IntlNow({ part, siteId, onChanged }: { facts: Facts; part: Category; bounds: Bounds;
+                             fixes: Fix[]; page: string;
+                             siteId?: string; onChanged?: () => void }) {
   const gate = part.gate ?? null;
+  // The door the gate's reason names (after item 274): stating a target
+  // locale is the first of the two things that would change its answer.
+  const target = siteId
+    ? <TargetLocales siteId={siteId} stated={part.target_locales ?? null} onSaved={onChanged} />
+    : null;
   if (gate) {
     const settled = gate.state === "na";
     return (
@@ -3292,7 +4000,28 @@ function IntlNow({ part }: { facts: Facts; part: Category; bounds: Bounds;
               + "not dispatched. This is not a finding that the site is "
               + "single-locale."}
         </p>
-        <pre className="intl-gate-reason" tabIndex={0}>{gate.reason}</pre>
+        {/* Item 274 (row 12): the evidence as Observed, in the layout the
+            clusters below use, and the brief's prose rendered rather than
+            dumped as source - backticks and all - in a <pre>. */}
+        {gate.evidence ? (
+          <div className="intl-locales">
+            <p><span className="fix-lbl">Pages inspected</span> {gate.evidence.pages_inspected}</p>
+            <p><span className="fix-lbl">Observed lang</span>{" "}
+              {gate.evidence.lang_values.join(" · ") || "none"}
+              {gate.evidence.lang_undeclared
+                ? ` (${gate.evidence.lang_undeclared} page${gate.evidence.lang_undeclared === 1 ? "" : "s"} declare none)`
+                : ""}</p>
+            <p><span className="fix-lbl">Locale folders</span>{" "}
+              {gate.evidence.locale_folders.map((f) => `/${f}/`).join(" · ") || "none"}</p>
+            <p><span className="fix-lbl">Alternates</span>{" "}
+              on {gate.evidence.alternates_on} of {gate.evidence.pages_inspected} pages</p>
+          </div>
+        ) : null}
+        <details className="intl-gate-reason">
+          <summary>the reason as the gate wrote it</summary>
+          <Markdown source={gate.reason} />
+        </details>
+        {target}
       </Card>
     );
   }
@@ -3301,7 +4030,9 @@ function IntlNow({ part }: { facts: Facts; part: Category; bounds: Bounds;
     cluster_id?: string; members?: string[]; locales?: string[];
     method?: string; closed?: boolean; x_default?: boolean;
     members_fetched?: number; verdict?: string }[];
-  if (!loc && !clusters.length) return <></>;
+  if (!loc && !clusters.length) {
+    return target ? <Card className="now-card intl-now"><h4>Target locales</h4>{target}</Card> : <></>;
+  }
   return (
     <Card className="now-card intl-now">
       <h4>Locales and clusters</h4>
@@ -3347,6 +4078,7 @@ function IntlNow({ part }: { facts: Facts; part: Category; bounds: Bounds;
           </div>
         </>
       )}
+      {target}
     </Card>
   );
 }
@@ -3368,16 +4100,37 @@ function MobileNow({ part }: { facts: Facts; part: Category; bounds: Bounds;
     template?: string; pages?: number; viewport_raw?: string;
     viewport_rendered?: string; injected?: boolean; overflow_px?: number;
     tap_targets_small?: number; full_height_units?: string[];
-    verdict?: string }[];
+    verdict?: string; verdict_model?: string | null; verdict_by?: string;
+    verdict_faults?: string[]; verdict_holds?: string[] }[];
   if (!templates.length) return <></>;
+  // Same verbatim tag, nothing injected, nothing rewritten on render.
+  const sameViewport = templates.length > 1 && templates.every((t) =>
+    t.viewport_raw === templates[0].viewport_raw && !t.injected
+    && (!t.viewport_rendered || t.viewport_rendered === t.viewport_raw));
   return (
     <Card className="now-card mobile-now">
       <h4>Templates at 412 px</h4>
+      {/* Item 274 (row 5): the rows are the analysis's, read from an older
+          crawl than the automatic checks above them; said, so a count from
+          18 Sept does not read as the site on the 29th. */}
+      {part.brief_run?.at && (
+        <p className="muted now-measured">
+          From the analysis of {dayOf(part.brief_run.at)}
+          {part.brief_run.crawl_at ? `, which read the crawl of ${dayOf(part.brief_run.crawl_at)}` : ""}.
+        </p>
+      )}
       <VerdictTally verdicts={templates.map((t) => t.verdict ?? "")} />
+      {/* Item 274 (row 14): one viewport on every template is said once above
+          the table, not repeated twelve times in a column. */}
+      {sameViewport && (
+        <p className="muted">
+          Viewport on every template: <code className="mobile-vp">{templates[0].viewport_raw || "none"}</code>
+        </p>
+      )}
       <div className="table-scroll">
         <table className="findings mobile-templates">
           <thead><tr><th>Template</th><th className="num">Pages</th>
-            <th>Viewport (verbatim)</th><th className="num">Overflow</th>
+            {!sameViewport && <th>Viewport (verbatim)</th>}<th className="num">Overflow</th>
             <th className="num">Small taps</th><th>Full-height</th>
             <th>Verdict</th></tr></thead>
           <tbody>
@@ -3385,16 +4138,33 @@ function MobileNow({ part }: { facts: Facts; part: Category; bounds: Bounds;
               <tr key={t.template ?? i}>
                 <td>{t.template}</td>
                 <td className="num">{t.pages ?? ""}</td>
+                {!sameViewport && (
                 <td><code className="mobile-vp">{t.viewport_raw || "none"}</code>
                   {t.injected && <span className="tone tone-sev-high"> injected</span>}
                   {t.viewport_rendered && t.viewport_raw
                    && t.viewport_rendered !== t.viewport_raw
                    && <span className="muted"> → {t.viewport_rendered}</span>}</td>
-                <td className="num">{t.overflow_px ? `${t.overflow_px} px` : "0"}</td>
+                )}
+                <td className="num">{`${t.overflow_px ?? 0} px`}</td>
                 <td className="num">{t.tap_targets_small ?? 0}</td>
-                <td>{(t.full_height_units ?? []).join(" · ") || "none"}</td>
-                <td><span className={`tone tone-${VERDICT_TONE[(t.verdict || "").toLowerCase()] ?? "state-candidate"}`}>
-                  {t.verdict}</span></td>
+                {/* Item 274 (row 11): null is "not stated" (the reader kept no
+                    unit), an empty list is none. */}
+                <td>{t.full_height_units == null ? "not stated"
+                     : t.full_height_units.join(" · ") || "none"}</td>
+                <td><span className={`tone tone-${VERDICT_TONE[(t.verdict || "").toLowerCase()] ?? "state-candidate"}`}
+                          title={t.verdict_faults?.length
+                            ? `open on its pages: ${t.verdict_faults.join(", ")}`
+                            : t.verdict_holds?.length
+                              ? `held: ${t.verdict_holds.join(", ")}` : undefined}>
+                  {t.verdict}</span>
+                  {/* Item 274 (row 4): the verdict is the automatic checks'
+                      reading of the template's pages; the analysis's own
+                      word stays beside it where it differs. */}
+                  {t.verdict_by === "analysis"
+                    ? <span className="muted"> · analysis</span>
+                    : t.verdict_model && t.verdict_model.toLowerCase() !== (t.verdict ?? "")
+                      && <span className="muted"> · analysis said {t.verdict_model.toLowerCase()}</span>}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -3407,11 +4177,12 @@ function MobileNow({ part }: { facts: Facts; part: Category; bounds: Bounds;
 /** The two blocks in the `siteNow` slot's signature. Both read only `part`,
  *  so the same component serves the page-in-hand `now` and the whole-site
  *  `siteNow`; these adapt the props rather than duplicating the markup. */
-function IntlSiteNow({ part }: { part: Category; page: string; pages: number | null;
+function IntlSiteNow({ part, siteId, onChanged }: { part: Category; page: string; pages: number | null;
                                  pops?: Populations | null;
-                                 onPage?: (url: string) => void }) {
+                                 onPage?: (url: string) => void;
+                                 siteId?: string; onChanged?: () => void }) {
   return <IntlNow part={part} facts={{} as Facts} bounds={{} as Bounds}
-                  fixes={[]} page="" />;
+                  fixes={[]} page="" siteId={siteId} onChanged={onChanged} />;
 }
 
 function A11ySiteNow({ part }: { part: Category; page: string; pages: number | null;
@@ -3441,14 +4212,21 @@ const eligRank = (verdict: string) =>
 function SchemaSiteNow({ part, onPage }: { part: Category; page: string; pages: number | null;
                                            pops?: Populations | null;
                                            onPage?: (url: string) => void }) {
-  const groups = new Map<string, { rich: string; verdict: string; reason: string;
-                                   pages: string[] }>();
+  // Item 270 (row 9): grouped by (rich result, verdict), the count in the
+  // line and each page's own reason under the disclosure. Keyed on the
+  // reason too, the model's wording split one verdict into a line per page:
+  // 24 lines over 45 pages, and the three totals nowhere.
+  const groups = new Map<string, { rich: string; verdict: string;
+                                   pages: string[]; reasons: Map<string, string> }>();
   for (const e of part.brief_eligibility ?? []) {
     const rich = e.rich_result || "none";
-    const reason = e.reason ?? "";
-    const key = [rich, e.verdict.toLowerCase(), reason].join("\u0000");
-    const g = groups.get(key) ?? { rich, verdict: e.verdict, reason, pages: [] };
-    if (e.page && !g.pages.includes(e.page)) g.pages.push(e.page);
+    const key = [rich, e.verdict.toLowerCase()].join("\u0000");
+    const g = groups.get(key) ?? { rich, verdict: e.verdict, pages: [] as string[],
+                                  reasons: new Map<string, string>() };
+    if (e.page && !g.pages.includes(e.page)) {
+      g.pages.push(e.page);
+      if (e.reason) g.reasons.set(e.page, e.reason);
+    }
     groups.set(key, g);
   }
   const rows = [...groups.values()].sort((a, b) =>
@@ -3467,17 +4245,18 @@ function SchemaSiteNow({ part, onPage }: { part: Category; page: string; pages: 
       {rows.length > 0 && (
         <ul className="sd-eligibility">
           {rows.map((g) => (
-            <li key={`${g.rich}-${g.verdict}-${g.reason}`}>
+            <li key={`${g.rich}-${g.verdict}`}>
               <code>{g.rich}</code>: <b>{g.verdict}</b>
-              {g.reason ? ` — ${g.reason}` : ""}
+              {" · "}{g.pages.length === 1 ? "1 page" : `${g.pages.length} pages`}
               <details className="sd-elig-pages">
-                <summary>{g.pages.length === 1 ? "1 page" : `${g.pages.length} pages`}</summary>
+                <summary>which, and why</summary>
                 <ul>
                   {g.pages.map((p) => (
                     <li key={p}>
                       <button type="button" className="btn-link" onClick={() => onPage?.(p)}>
                         {pathOf(p)}
                       </button>
+                      {g.reasons.get(p) ? <span className="muted"> — {g.reasons.get(p)}</span> : null}
                     </li>
                   ))}
                 </ul>
@@ -3492,63 +4271,146 @@ function SchemaSiteNow({ part, onPage }: { part: Category; page: string; pages: 
 
 /** The fix card body for the two site-wide brief-v20 parts. The change is
  *  what a reader pastes, so it is in a block to copy, with where it goes. */
+/** Whether a card's replacement is a change to paste (item 266, row 6): a
+ *  `rename`, `policy` or `markup`, or with no kind, anything that is not a
+ *  "keep ..." or a "class: convention ..." note. Those say what not to do,
+ *  and a copy button over them copied a sentence to paste into nothing. */
+/** Title and description's own "no change" (screen audits round 3,
+ *  title-desc AC-02): the bare word "keep", the brief's "leave it", whose copy
+ *  button pasted "keep" into a meta description. Not `isChange`, whose "keep
+ *  ..." rule would also take a title that begins "Keep your ...". */
+export const isKeep = (fix: { replacement?: string | null }) =>
+  /^keep[.!]?$/i.test((fix.replacement ?? "").trim());
+
+export function isChange(fix: { kind?: string | null; replacement?: string | null;
+                                current?: string | null }): boolean {
+  // Item 277 (row 6): a hold written where the change goes ("held: needs
+  // ..."), or a change to what the page already has (a canonical to itself),
+  // is nothing to paste.
+  const rep = (fix.replacement ?? "").trim();
+  // And "no markup change here - resolve via ..." says there is none.
+  if (/^(held|no (\w+ )?change)\b/i.test(rep)) return false;
+  const norm = (s: string) => s.trim().toLowerCase().replace(/\/+$/, "");
+  if (rep && fix.current && norm(rep) === norm(fix.current)) return false;
+  if (fix.kind) return ["rename", "policy", "markup"].includes(fix.kind);
+  return !/^\s*(keep\b|class:\s*convention)/i.test(fix.replacement ?? "");
+}
+
 function SiteBriefFixBody({ fix }: { fix: Fix; facts: Facts | null }) {
   return (
     <>
       <p className="fix-why">{fix.current || fix.note}</p>
+      {/* Item 277 (row 5): a merged card the analysis wrote no change for
+          carries the automatic checks' advice as its change. */}
+      {!fix.replacement && fix.recommendation && (
+        <p className="fix-new"><span className="fix-lbl">Do this: </span>{fix.recommendation}</p>
+      )}
+      {fix.checkId === "http-status-error" && (fix.targets?.length ?? 0) > 0 && (
+        // Item 275 (row 10): where the link to it is, to update.
+        <p className="muted fix-meta">
+          Linked from {fix.targets!.map((t) => pathOf(t)).join(", ")}
+        </p>
+      )}
+      {/* Item 275 (row 10): a finding about several URLs names them - "8
+          sitemap URLs not reached" said eight and showed none. Behind a
+          disclosure, with the total where the check kept fewer than it found. */}
+      {fix.urls && fix.urls.length > 1 && (
+        <details className="fix-urls">
+          <summary>
+            {fix.urls.length} URL{fix.urls.length === 1 ? "" : "s"}
+            {fix.affectedTotal != null && fix.affectedTotal > fix.urls.length
+              ? ` of ${fix.affectedTotal} found` : ""}
+          </summary>
+          <ul>
+            {fix.urls.map((u) => <li key={u}><code>{pathOf(u)}</code></li>)}
+          </ul>
+        </details>
+      )}
       {fix.replacement && (
         <div className="img-panel">
-          <h5 className="muted">Change</h5>
-          <pre className="img-markup out-new" tabIndex={0}>{fix.replacement}</pre>
+          <p className="fix-lbl muted">Change</p>
+          {isChange(fix)
+            ? <pre className="img-markup out-new" tabIndex={0}>{fix.replacement}</pre>
+            : <p className="fix-rep">{fix.replacement}</p>}
         </div>
       )}
       {fix.where && <p className="muted fix-meta">Where: {fix.where}</p>}
+      {/* Item 274 (row 8): the elements the row names, where it names them. */}
+      {!fix.where && (fix.targets ?? []).length > 0 && (
+        <div className="fix-meta">
+          <span className="fix-lbl">Where</span>
+          <ul className="muted">
+            {(fix.targets ?? []).slice(0, TARGETS_SHOWN).map((t) => <li key={t}><code>{t}</code></li>)}
+          </ul>
+        </div>
+      )}
     </>
   );
 }
 
+/** How many elements a card's finding names, from its own sentence ("3
+ *  interactive element(s) under 24 x 24 CSS px"), or its listed targets
+ *  (item 274, row 9). */
+export function elementCount(f: { current?: string | null; targets?: string[] }): number {
+  const m = /(\d+)\s+(?:interactive\s+)?element/.exec(f.current ?? "");
+  return m ? Number(m[1]) : (f.targets ?? []).length;
+}
+
+/** How many of a card's named elements it lists (item 274, row 8). */
+const TARGETS_SHOWN = 10;
+
 /** How many cards of one check stand before `show all` (whole-site view). */
 export const CARDS_PER_CHECK = 3;
 
-/** Item 237: the operator's three answers to an analysis finding no sweep
- *  can raise. A second paid run of the same model is not confirmation, so
- *  the product asks once, here, rather than charging for a re-run. */
-function ConfirmControls({ fix, siteId, onStateChanged }: {
-  fix: Fix; siteId: string; onStateChanged?: () => void;
+
+function NowMeasured({ part, sweep, facts }: {
+  part: Category; sweep: SweepRun | null; facts: Facts | null;
 }) {
-  const [busy, setBusy] = useState<string | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const set = async (state: string) => {
-    setBusy(state); setErr(null);
-    try {
-      for (const fp of fix.fingerprints ?? []) {
-        await api.post(`/api/sites/${siteId}/states/${fp}`, { state });
-      }
-      onStateChanged?.();
-    } catch (e) {
-      setErr(`could not set it: ${(e as Error).message}`);
-    } finally {
-      setBusy(null);
-    }
-  };
-  const held = (state: string) => (busy && busy !== state ? "another answer is being saved" : null);
+  const at = facts?.captured_at ?? sweep?.at;
+  if (!at) return null;
+  const range = !facts ? part.measured_range : null;
+  const mixed = range && dayOf(range.from) !== dayOf(range.to);
   return (
-    <div className="fix-confirm">
-      <SecondaryButton className="fix-confirm-open" busy={busy === "open"} why={held("open")}
-                       onClick={() => set("open")}>Confirm</SecondaryButton>
-      <SecondaryButton className="fix-confirm-accept" busy={busy === "accepted-risk"}
-                       why={held("accepted-risk")}
-                       onClick={() => set("accepted-risk")}>Accept</SecondaryButton>
-      <SecondaryButton className="fix-confirm-withdraw" busy={busy === "withdrawn"}
-                       why={held("withdrawn")}
-                       onClick={() => set("withdrawn")}>Withdraw</SecondaryButton>
-      <span className="muted" role="status">{err ?? ""}</span>
-    </div>
+    <p className="muted now-measured" data-measured={at}>
+      {mixed ? `What is drawn below was measured ${dayOf(range.from)} to ${dayOf(range.to)}`
+             : `What is drawn below was measured ${dayOf(at)}`}
+      {!facts && sweep?.tier ? ` · ${sweep.tier}` : ""}
+    </p>
+  );
+}
+
+/** Item 251: the date and run of the measurement a card draws, in the
+ *  provenance line's form ("measured 29 Sept · T2"). A card with a row in
+ *  the record says its own; one without (a hold, a note) says the part's -
+ *  the analysis that wrote it, or the automatic checks that read the part. */
+function FixMeasured({ fix, sweep, briefAt }: {
+  fix: Fix; sweep?: SweepRun | null; briefAt?: string | null;
+}) {
+  const ofBrief = fix.sources.includes("brief");
+  const measured = fix.measuredAt ?? (!ofBrief || fix.sources.includes("sweep") ? sweep?.at : null) ?? null;
+  const tier = fix.measuredAt ? fix.measuredTier : measured ? sweep?.tier : null;
+  const analysed = fix.analysedAt ?? (ofBrief ? briefAt : null) ?? null;
+  if (!measured && !analysed) return null;
+  return (
+    <span className="muted fix-measured" data-measured={measured ?? analysed ?? ""}>
+      {measured ? `· measured ${dayOf(measured)}${tier ? ` · ${tier}` : ""}` : ""}
+      {analysed ? `${measured ? " " : ""}· analysed ${dayOf(analysed)}` : ""}
+    </span>
   );
 }
 
 function FixCard({ fix, facts, render, onCopy, copied, n, fixHeld = false,
-                   awaiting = false, siteId, onStateChanged }: {
+                   awaiting = false, siteId, onStateChanged, earlierBrief = false,
+                   sweep = null, briefAt = null, done = null }: {
+  /** The card's own "fixed?" control, where the part offers one (item 279,
+   *  row 6). */
+  done?: ReactNode;
+  /** The part's reference readings, for a card with no row of its own
+   *  (item 251). */
+  sweep?: SweepRun | null; briefAt?: string | null;
+  /** The part's analysis was written under a brief that has since changed
+   *  (item 249). */
+  earlierBrief?: boolean;
   fix: Fix; facts: Facts | null; render: Renderer;
   /** Item 213: the hold is on the FIX, not the check - the check ran and
    *  fired on this page, and what waits on an input is the change. "Old
@@ -3589,9 +4451,12 @@ function FixCard({ fix, facts, render, onCopy, copied, n, fixHeld = false,
       <div className="fix-head" id={n ? `fix-${n}` : undefined}
            data-fix-n={n ?? undefined} data-fix-check={fix.checkId}>
         {n ? <i className={`sg-bd sg-bd-${fix.needs ? "held" : fix.severity}`}>{n}</i> : null}
-        <Pill tone={fix.needs ? "sev-info" : (`sev-${fix.severity}` as Tone)}>
-          {fix.needs ? (fixHeld ? "fix held" : "Not assessable") : fix.severity}
-        </Pill>
+        {/* Item 269: a verdict carries no severity - it is not a fault. */}
+        {!closedByAnalysis(fix) && (
+          <Pill tone={fix.needs ? "sev-info" : (`sev-${fix.severity}` as Tone)}>
+            {fix.needs ? (fixHeld ? "fix held" : "Not assessable") : fix.severity}
+          </Pill>
+        )}
         {/* Item 211: the check's plain name, always. "<name> — not checked"
             put a fourth word for one state on the page ("not measured",
             "Not assessable", "held" were the other three), and on Content
@@ -3609,18 +4474,35 @@ function FixCard({ fix, facts, render, onCopy, copied, n, fixHeld = false,
               : fix.kind}
           </Pill>
         )}
-        <span className="muted fix-src">· {sourceWords(fix.sources, readingsDisagree(fix.current, fix.replacement))}</span>
+        <span className="muted fix-src">· {fix.override && fix.sources.includes("sweep")
+          ? "automatic checks flagged, analysis overrides"
+          : fix.corroboratedBy?.length
+          ? `analysis · the automatic checks raised the same target: ${fix.corroboratedBy.join(", ")}`
+          : sourceWords(fix.sources, readingsDisagree(fix.current, fix.replacement))}</span>
+        <FixMeasured fix={fix} sweep={sweep} briefAt={briefAt} />
+        {/* Item 249: on each card the analysis wrote, not only on the
+            provenance line above them. */}
+        {earlierBrief && fix.sources.includes("brief") && (
+          <span className="muted fix-earlier-brief">· analysed under an earlier brief</span>
+        )}
         {/* Brief v20 (147 E4, 148 G5). Nothing renders where the brief stated
             none: a row the sweep measured carries no confidence, and drawing
             "low" there would grade the engine's own measurement as a guess. */}
         <ConfidenceChip value={fix.confidence} />
-        {fix.candidate && (
-          <Pill tone="state-candidate">{awaiting ? "analysis, not yet confirmed" : "candidate"}</Pill>
+        {/* Item 269: a verdict waits for nobody - it is not a candidate fault. */}
+        {fix.candidate && !closedByAnalysis(fix) && (
+          <Pill tone="state-candidate">{candidateWord(awaiting)}</Pill>
         )}
         {/* Item 239 step 4: the automatic checks cleared this on every page
             the analysis named, after the analysis read it. */}
         {fix.supersededOn && (
           <span className="muted fix-superseded">· superseded on {stamp(fix.supersededOn)}</span>
+        )}
+        {/* Item 249: a model row on a check the automatic checks can raise,
+            which they have not raised on this page since. It is not retired
+            for the operator; it says so, and Withdraw is offered below. */}
+        {fix.unseenSince && !fix.sources.includes("sweep") && (
+          <span className="fix-unseen">· not seen by the automatic checks since {day(fix.unseenSince)}</span>
         )}
         {/* Only where there is a page. A site-scoped finding legitimately
             names none, and `pathOf("")` returns "" - so this rendered an
@@ -3639,35 +4521,86 @@ function FixCard({ fix, facts, render, onCopy, copied, n, fixHeld = false,
             template <code>{fix.template}</code>
             {fix.page ? <> · traced on <code>{pathOf(fix.page)}</code></> : null}
           </span>
+        ) : fix.kind === "policy" ? (
+          // Item 277 (row 10): a policy is the site's, not its filing page's.
+          <span className="muted fix-page">site-wide</span>
         ) : fix.page ? (
-          <span className="muted fix-page"><code>{pathOf(fix.page)}</code></span>
+          // Item 275 (row 9): the page is a way into the page, as everywhere
+          // else a page is named - its dossier, with every part's reading.
+          <span className="muted fix-page">
+            {siteId && /^https?:\/\//.test(fix.page)
+              ? <a href={`#/sites/${siteId}/dossier/${encodeURIComponent(fix.page)}`}>
+                  <code>{pathOf(fix.page)}</code></a>
+              : <code>{pathOf(fix.page)}</code>}
+          </span>
         ) : null}
-        {fix.replacement && (
+        {/* Item 273 (row 7): the card's own row on the Record, every state,
+            filtered to this check and page. Beside the page, not inside it:
+            the page's span says the page and nothing else. */}
+        {siteId && fix.page && !fix.template && fix.kind !== "policy" && (
+          <span className="muted fix-record-at">
+            <a className="fix-record"
+               href={`#/sites/${siteId}?tab=all&state=all&find=${
+                 encodeURIComponent(`${fix.check} ${pathOf(fix.page)}`)}`}>
+              on the Record</a>
+          </span>
+        )}
+        {((fix.replacement && (render.copyWhen?.(fix) ?? true)) || render.copyFrom?.(fix))
+         && !fix.override && (
           <SecondaryButton className="fix-copy"
-                  onClick={() => onCopy(fix.key, fix.replacement as string)}>
+                  // Item 271 (row 8): every card's button read "copy anchor";
+                  // each now names the page it is for.
+                  aria-label={copied === fix.key ? undefined
+                    : `${render.copyLabel ?? "copy replacement"} for ${fix.page ? pathOf(fix.page) : fix.check}`}
+                  onClick={() => onCopy(fix.key, !fix.replacement ? render.copyFrom?.(fix) ?? ""
+                    : render.copyText ? render.copyText(fix.replacement, fix) : fix.replacement)}>
             {copied === fix.key ? "copied" : (render.copyLabel ?? "copy replacement")}
           </SecondaryButton>
         )}
       </div>
-      {awaiting && siteId && (
-        <ConfirmControls fix={fix} siteId={siteId} onStateChanged={onStateChanged} />
-      )}
       {fix.needs ? (
         <p className="fix-why">
           {/* Item 211: label and value apart in the TEXT, not only in the
               styling - the accessible name read "Why heldAUTHORS". And the
               table's sentence shape: "needs <input>". */}
           <span className="fix-lbl">Why held: </span>
-          {fix.needs ? `needs ${fix.needs}` : "the brief gave no reason"}
+          {fix.needs ? heldSays(fix.needs) : "the brief gave no reason"}
+          {/* Item 267 (row 14): every held card says the next step, with the
+              form where the reason names a record field. */}
           {link ? <> — <a href={link.href} onClick={goHandler(link.href)}>{link.label}</a>,
-                     then re-run the analysis</> : "."}
+                     then re-run the analysis</> : "; then re-run the analysis."}
         </p>
+      ) : fix.override ? (
+        // Item 269: the analysis's verdict, as one sentence. Not the part's
+        // body, which draws the row's text as a change to make and, on
+        // Content, a footer telling the writer to put it first.
+        <>
+          {fix.sources.includes("sweep") && fix.current && <p className="fix-why">{fix.current}</p>}
+          <p className="fix-why fix-override">
+            <span className="fix-lbl">Analysis closes this: </span>
+            {fix.replacement || (!fix.sources.includes("sweep") && fix.current)
+              || fix.note || "the analysis found no fault here"}
+          </p>
+        </>
       ) : <render.body fix={fix} facts={facts} />}
+      {/* Item 270 (row 10): the answers after what they answer - under Now
+          and Replace with, not above them. */}
+      {awaiting && siteId && !closedByAnalysis(fix) && (
+        <ConfirmControls fingerprints={fix.fingerprints ?? []} siteId={siteId} explain={false}
+                         subject={`${plainName(fix.checkId)}, ${pathOf(fix.page)}`}
+                         onStateChanged={onStateChanged} />
+      )}
+      {!awaiting && siteId && fix.unseenSince && !fix.sources.includes("sweep") && (
+        <ConfirmControls fingerprints={fix.fingerprints ?? []} siteId={siteId} explain={false}
+                         subject={`${plainName(fix.checkId)}, ${pathOf(fix.page)}`}
+                         onStateChanged={onStateChanged} withdrawOnly />
+      )}
       {/* Brief v20 (147 E3, 148 G4): inside the row and under the evidence,
           so a reader who has just read the evidence learns in the same breath
           that the verdict is a row up. Above the body it would read as a
           reason not to bother reading on. */}
       <SuppressedStrip checks={fix.suppressed} />
+      {done}
     </Card>
   );
 }
@@ -3675,18 +4608,19 @@ function FixCard({ fix, facts, render, onCopy, copied, n, fixHeld = false,
 /** Block 3 — one card per failing (check, page) on the current scope. On
  *  the whole site the cards group under their check, three deep, so a
  *  check on forty pages does not bury the check on two. */
-/** The first path segment most of a group's pages share, where enough of
- *  them share one to call it a template (brief v14 step AP). One change
- *  there is the whole fix for that many of them, and the group says so
- *  once rather than repeating it per page. */
+/** The template most of a group's pages share, where they share one
+ *  (brief v14 step AP). One change there is the whole fix for that many of
+ *  them, and the group says so once rather than repeating it per page.
+ *
+ *  Item 268 (row 6): by `templatesOf`'s rule - the one the skip table and
+ *  the cause table use - not a looser one of its own. Two pages under one
+ *  first segment were a "template" here and ten were needed there, so the
+ *  skip table said "no shared template" above a group line naming one. */
 export function templateOf(pages: string[]): { prefix: string; n: number } | null {
-  const seg = (u: string) => { const p = pathOf(u).split("/").filter(Boolean)[0];
-                               return p ? `/${p}/` : "/"; };
-  const by = new Map<string, number>();
-  for (const u of pages) by.set(seg(u), (by.get(seg(u)) ?? 0) + 1);
-  const best = [...by.entries()].filter(([prefix, n]) => prefix !== "/" && n >= 2)
-                                .sort((a, b) => b[1] - a[1])[0];
-  return best ? { prefix: best[0], n: best[1] } : null;
+  const best = templatesOf(pages.map((u) => ({ fingerprint: u, urls: [u], state: "open",
+                                               names_a_page: true })))
+    .find((t) => t.prefix !== "");
+  return best ? { prefix: best.prefix, n: best.pages } : null;
 }
 
 /** A held reason that waits on the owner's say-so for an active probe, rather
@@ -3716,8 +4650,11 @@ export function partMeasure(part: Category, unmeasured: Map<string, string>) {
   });
 }
 
-function Fixes({ fixes, facts, render, page, part, cost, onGlow, siteId, onStateChanged }: {
+function Fixes({ fixes, facts, render, page, part, cost, onGlow, siteId, onStateChanged,
+                 sweep = null }: {
   siteId?: string; onStateChanged?: () => void;
+  /** The part's reference sweep, for the cards' dates (item 251). */
+  sweep?: SweepRun | null;
   fixes: Fix[]; facts: Facts | null; render: Renderer; page: string; part: Category;
   cost: string;
   /** Which node the picture should light up, as the reader scrolls (brief
@@ -3727,6 +4664,17 @@ function Fixes({ fixes, facts, render, page, part, cost, onGlow, siteId, onState
   const [copied, setCopied] = useState<string | null>(null);
   const wrap = useRef<HTMLElement>(null);
   const graph = part.graph ?? null;
+  // Item 279 (row 6): Accessibility's cards can be marked fixed and re-checked
+  // where they stand, through the one fix loop the Record uses - the same
+  // route, the same page cap, the same four verdicts. A verified fix leaves
+  // the open count, so the strip and the waterfall read it on the reload.
+  const loop = useFixLoop(siteId ?? "", null, onStateChanged);
+  const markable = (f: Fix): Markable | null => f.sweepFp ? {
+    fingerprint: f.sweepFp, state: f.candidate ? "candidate" : "open", summary: f.current,
+    source: "deterministic", names_a_page: Boolean(f.namesAPage), attempted_at: f.attemptedAt,
+  } : null;
+  useSeed(loop.seed, fixes.map(markable).filter((m): m is Markable => m !== null),
+          fixes.map((f) => f.sweepFp).join(","));
   /** A card's number in the picture. Joined on the check id, which is the
    *  one field both sides carry: the engine numbered its findings from the
    *  same rows this list is built from, so the join is between two views of
@@ -3793,6 +4741,18 @@ function Fixes({ fixes, facts, render, page, part, cost, onGlow, siteId, onState
     };
   }, [graph, onGlow, fixes, page]);
   const [openAll, setOpenAll] = useState<ReadonlySet<string>>(new Set());
+  // Item 279 (row 3): a control elsewhere on the part (the waterfall's bars)
+  // asks for a check's group: every card shown, then the first in view.
+  useEffect(() => {
+    const open = (e: Event) => {
+      const check = (e as CustomEvent<string>).detail;
+      setOpenAll((prev) => new Set(prev).add(check));
+      requestAnimationFrame(() => document.querySelector(`[data-fix-check="${check}"]`)
+        ?.scrollIntoView({ block: "center" }));
+    };
+    window.addEventListener(FIX_OPEN, open);
+    return () => window.removeEventListener(FIX_OPEN, open);
+  }, []);
   const copy = async (key: string, text: string) => {
     try { await navigator.clipboard.writeText(text); setCopied(key); }
     catch { setCopied(null); }
@@ -3814,9 +4774,13 @@ function Fixes({ fixes, facts, render, page, part, cost, onGlow, siteId, onState
   for (const f of fixes) {
     if (f.needs && !f.coverageNote) heldBy.set(f.checkId, [...(heldBy.get(f.checkId) ?? []), f]);
   }
+  // Item 272: every hold, not only one repeated with one reason. A held card
+  // was drawn among the faults, counted in its group's "N pages" and sliced
+  // behind "show all", so Images' accounting line said "held" of fewer cards
+  // than it drew. A hold on a fix whose check FIRED on that page stays a card
+  // (item 213): there the finding is real and only the change waits.
   const repeated = [...heldBy.entries()]
-    .filter(([checkId, fs]) => fs.length >= 2 && new Set(fs.map((f) => f.needs)).size === 1
-                               && !fs.some((f) => firing.has(`${checkId}|${pathOf(f.page)}`)))
+    .filter(([checkId, fs]) => !fs.some((f) => firing.has(`${checkId}|${pathOf(f.page)}`)))
     .map(([checkId]) => checkId);
   const naChecks = new Set([...(render.na ?? []), ...repeated,
     ...(part.key === "security"
@@ -3837,8 +4801,11 @@ function Fixes({ fixes, facts, render, page, part, cost, onGlow, siteId, onState
   // they are not counted twice - here or in the clean line.
   const closed = new Set(fixes.flatMap((f) => (f.alsoResolves ?? []).map(
     (c) => `${c.split("/").pop()}|${f.image ?? ""}|${f.page}`)));
+  // Item 270: overtaken rows leave the cards for one folded line per check.
+  const passed = new Map<string, Fix[]>();
+  for (const f of fixes.filter(overtaken)) passed.set(f.check, [...(passed.get(f.check) ?? []), f]);
   const shownFixes = fixes.filter(
-    (f) => !na.includes(f) && !f.coverageNote
+    (f) => !na.includes(f) && !f.coverageNote && !overtaken(f)
            && !(render.collapse
                 && closed.has(`${f.checkId}|${f.image ?? ""}|${f.page}`)));
   // A held-only check is never clean, and it is `fixesOf` that keeps it
@@ -3862,9 +4829,18 @@ function Fixes({ fixes, facts, render, page, part, cost, onGlow, siteId, onState
   const unmeasured = new Map(
     Object.entries(part.not_assessed ?? {})
       .map(([full, reason]) => [full.split("/").pop() ?? full, reason] as const));
+  // Item 270 (row 6): a check a card says it also resolves is not a pass
+  // on this page - the table's `resolvedBy` reading (item 220), which this
+  // line did not apply: `schema-orphan-instance` read "passes on this page"
+  // beside the card resolving it. A hold on `all` or `*` reaches the page
+  // through `SITE_WIDE_PAGES` (item 269, row 3) and is a card here too.
   const clean = (part.brief_checks ?? [])
     .map((c) => c.split("/").pop() as string)
-    .filter((c) => !fixes.some((f) => f.checkId === c));
+    .filter((c) => !fixes.some((f) => f.checkId === c
+      || (f.alsoResolves ?? []).some((r) => (r.split("/").pop() ?? r) === c)))
+    // Screen audits round 3 (Speed AC-01): a check filed for the site as a
+    // whole names no page, so it can never have a card here and is no pass.
+    .filter((c) => !(page && (part.site_level_checks ?? []).includes(c)));
   const dropped = part.brief_dropped ?? 0;
   // Item 180 (05-4): on a page with no JSON-LD, a check that validates the
   // markup cannot have a finding - it has nothing to read - so it is neither
@@ -3872,7 +4848,15 @@ function Fixes({ fixes, facts, render, page, part, cost, onGlow, siteId, onState
   const noMarkup = part.key === "schema" && Boolean(page)
     && (facts?.schema_inventory ?? []).length === 0;
   const cannot = noMarkup ? clean.filter((c) => c !== "schema-missing-for-type") : [];
-  const cleanMeasured = clean.filter((c) => !unmeasured.has(c) && !cannot.includes(c));
+  // Item 269: on Content, the checks that do not read a page of this type are
+  // not passes on it either; the line below says which and why.
+  const notRead = part.key === "content" && page
+    ? clean.filter((c) => (facts?.content_not_run ?? []).includes(c)) : [];
+  const cleanMeasured = clean.filter((c) => !unmeasured.has(c) && !cannot.includes(c)
+                                            && !notRead.includes(c));
+  const fullOf = (c: string) => (part.brief_checks ?? []).find((f) => f.split("/").pop() === c) ?? c;
+  const cleanModel = cleanMeasured.filter((c) => costOf(part, fullOf(c)) === "model");
+  const cleanFree = cleanMeasured.filter((c) => !cleanModel.includes(c));
   /** Which of the two sections a card belongs to (brief v17 step AV3).
    *
    *  A replacement that closes checks from both groups is analysis - the
@@ -3885,8 +4869,13 @@ function Fixes({ fixes, facts, render, page, part, cost, onGlow, siteId, onState
     [f.check, ...(f.alsoResolves ?? [])].some((c) => costOf(part, c) === "model")
       ? "model" : "free";
   return (
-    <section className="part-fixes" ref={wrap}>
-      <h4>Fixes</h4>
+    <section className="part-fixes" id="part-fixes" ref={wrap}>
+      <h3>Fixes</h3>
+      {/* Item 266 (row 5): what the three answers do, once above the cards
+          that offer them, not under each one. */}
+      {shownFixes.some((f) => f.candidate && !f.needs && f.toConfirm) && (
+        <p className="muted fix-meta">{CONFIRM_SAYS}</p>
+      )}
       {/* Item 180 (05-3, 06-3): not "Nothing to fix" on a scope nothing
           measured. One of the three registered states, with its reason. */}
       {!shownFixes.length && !na.length && (
@@ -3896,48 +4885,149 @@ function Fixes({ fixes, facts, render, page, part, cost, onGlow, siteId, onState
           the check table above with the state `not measured`, and a reader who
           counts the cards is owed the difference (audit F3). */}
       {notes.length > 0 && (
-        <p className="muted part-fix-notes">
-          {coverageNotes(notes.length)} not counted here —{" "}
-          {notes.map((f) => f.checkId).join(" · ")}: this audit did not collect
-          what {notes.length === 1 ? "it needs" : "they need"}, so there is
-          nothing to fix.
-        </p>
+        <div className="muted part-fix-notes">
+          {/* Item 279: each note in its own words. "This audit did not
+              collect what it needs" was said of `axe-sampled`, which is the
+              rendered pass's sample - collected, and saying so. */}
+          <p>{coverageNotes(notes.length)} not counted here: a statement of
+             what the audit read, not something to fix.</p>
+          <ul className="part-fix-notes-list">
+            {notes.map((f) => (
+              <li key={f.key}><code>{f.checkId}</code> {f.current}</li>
+            ))}
+          </ul>
+        </div>
       )}
-      {SECTIONS.map(([section, title]) => {
+      {[...passed.entries()].map(([check, fs]) => {
+        const latest = fs.map((f) => f.supersededOn as string).sort().slice(-1)[0];
+        return (
+          <details key={check} className="muted part-fix-overtaken">
+            <summary>
+              {fs.length} analysis row{fs.length === 1 ? "" : "s"} on <code>{check}</code>{" "}
+              overtaken by the audit of {day(latest)}: the automatic checks have
+              since read {fs.length === 1 ? "its page" : "their pages"} and did not raise it.
+            </summary>
+            <p className="part-fix-overtaken-pages">
+              {fs.map((f) => pathOf(f.page)).join(" · ")}
+            </p>
+          </details>
+        );
+      })}
+      {sectionsByWorst(shownFixes, sectionOf).map(([section, title], _i, order) => {
         const mine = shownFixes.filter((f) => sectionOf(f) === section);
         const held = na.filter((f) => sectionOf(f) === section);
         if (!mine.length && !held.length) return null;
+        // Whether the checks table states this hold on the check's own row.
+        const onTable = (f: Fix) => !page
+          && !shownFixes.some((x) => x.checkId === f.checkId && !x.needs && !x.coverageNote)
+          && !sweepOutranks(part, f.check, f.checkId, sweep?.at, unmeasured);
+        // Item 266 (row 3): moved ahead of its usual place, it says why.
+        const led = section === order[0][0] && section !== SECTIONS[0][0];
         const groups = new Map<string, Fix[]>();
         for (const f of mine) groups.set(f.checkId, [...(groups.get(f.checkId) ?? []), f]);
+        // Item 279 (row 4): Accessibility's groups in the waterfall's order,
+        // the step that removes the most instances first, so a bar pressed
+        // lands on a group that stands where the bar does. A check with no
+        // step keeps its place after them.
+        const steps = part.key === "a11y" ? part.fix_order?.steps ?? [] : [];
+        const stepOf = (checkId: string) => steps.find((s) => s.check === checkId) ?? null;
+        // Item 276 (row 8): the analysis's own rollout order. Sorted by
+        // severity, the order the operator paid for read 2, 11, 12, 4, 1, 6
+        // ... down the page. The cards it placed come first, in its order; a
+        // card it gave no place (twenty22's `dnssec`, an automatic Info row)
+        // follows them in severity order rather than voiding the order for
+        // the twelve it did place.
+        const placed = mine.filter((f) => !f.needs && !f.coverageNote && !closedByAnalysis(f));
+        const byRollout = placed.some((f) => typeof f.rollout?.order === "number");
+        const firstOrder = (cards: Fix[]) =>
+          Math.min(...cards.map((f) => f.rollout?.order ?? Number.MAX_SAFE_INTEGER));
+        const ordered = steps.length
+          ? [...groups.entries()].sort(([a], [b]) => {
+              const ia = steps.findIndex((s) => s.check === a);
+              const ib = steps.findIndex((s) => s.check === b);
+              return (ia < 0 ? steps.length : ia) - (ib < 0 ? steps.length : ib);
+            })
+          : byRollout
+            ? [...groups.entries()]
+                .map(([k, cards]) => [k, [...cards].sort((x, y) =>
+                  (x.rollout?.order ?? 0) - (y.rollout?.order ?? 0))] as [string, Fix[]])
+                .sort(([, a], [, b]) => firstOrder(a) - firstOrder(b))
+            : [...groups.entries()];
         return (
           <Fragment key={section}>
-            <h5 className={`fixes-head fixes-head-${section}`}>
+            <h4 className={`fixes-head fixes-head-${section}`}>
               {/* Item 208: checks with a finding, as the table heading says it,
                   and the cards said as cards rather than under the same word. */}
               {title}{" "}
               <span className="muted">
-                · {new Set(mine.filter((f) => !f.needs && !f.coverageNote).map((f) => f.checkId)).size}
-                {" · "}{mine.length + held.length} card{mine.length + held.length === 1 ? "" : "s"}
+                {/* Item 270 (row 7): cards only. A count of checks here
+                    could not be the table's: a card is placed by `sectionOf`
+                    and one replacement folds several checks into a card under
+                    another check's id (`schema-redundant-block` on twenty22),
+                    so it read 10 under the table's 11 even by the table's
+                    cost rule. The table counts checks; this counts cards. */}
+                · {mine.length + held.length} card{mine.length + held.length === 1 ? "" : "s"}
+                {led && " · holds the most severe fix"}
               </span>
               {folded(cost, section) && (
                 <span className="muted fixes-folded">
                   {" · "}hidden by <code>free only</code>
                 </span>
               )}
-            </h5>
-            {!folded(cost, section) && [...groups.entries()].map(([checkId, cards]) => {
+            </h4>
+            {!folded(cost, section) && ordered.map(([checkId, unsorted]) => {
+              // Item 274 (row 9): on Mobile, the page with the most elements
+              // first within a check - the one a fix moves most.
+              // Item 273 (row 5): on Title & description, the furthest past
+              // the cut first.
+              const ranked = part.key === "mobile"
+                ? [...unsorted].sort((a, b) => elementCount(b) - elementCount(a))
+                : part.key === "title-desc" && unsorted.some((f) => f.overPx != null)
+                ? [...unsorted].sort((a, b) => (b.overPx ?? -1) - (a.overPx ?? -1)) : unsorted;
+              // Item 270 (row 17): where the group line names a template, the
+              // cards shown first are its members. "template /seo/*: 28 of 43"
+              // stood over /about/, /privacy-policy/ and /seo-category/seo-local/.
+              const sample = !page && ranked.length > CARDS_PER_CHECK
+                && !stepOf(checkId) && !ranked.every((f) => f.needs)
+                ? templateOf(ranked.map((f) => f.page)) : null;
+              const cards = sample
+                ? [...ranked.filter((f) => pathOf(f.page).startsWith(sample.prefix)),
+                   ...ranked.filter((f) => !pathOf(f.page).startsWith(sample.prefix))]
+                : ranked;
               const all = page || cards.length <= CARDS_PER_CHECK || openAll.has(checkId);
               const shown = all ? cards : cards.slice(0, CARDS_PER_CHECK);
               return (
                 <Fragment key={checkId}>
                   {!page && cards.length > 1 && (() => {
-                    const tpl = templateOf(cards.map((f) => f.page));
+                    // Item 279 (row 4): on Accessibility, the step's own kind and
+                    // share - what the waterfall says of it - in place of a path
+                    // prefix, which named a "template" for site chrome.
+                    const step = stepOf(checkId);
+                    // Item 268 (row 6): a group of holds has nothing to fix, so
+                    // a template on it read as "fix this template" over none.
+                    const tpl = step || cards.every((f) => f.needs) ? null
+                      : templateOf(cards.map((f) => f.page));
                     return (
                       <p className="muted fix-group">
-                        <code>{cards[0].check}</code> · {cards.length} page
-                        {cards.length === 1 ? "" : "s"}
+                        <code>{cards[0].check}</code> · {groupCount(checkId, cards)}
+                        {step && <> · <span className="fix-template">
+                          {kindShort(step.kind)} · on {step.pages} of {step.assessed} page
+                          {step.assessed === 1 ? "" : "s"} this check assessed</span></>}
                         {tpl && <> · <span className="fix-template">
                           template <code>{tpl.prefix}*</code> — {tpl.n} of {cards.length}</span></>}
+                        {part.key === "mobile" && checkId === "tap-target" && (() => {
+                          // Item 274 (row 9): the shape across the site, said once
+                          // above the cards: one control on every template is one fix.
+                          const templates = (part.brief_templates ?? []) as { tap_targets_small?: number }[];
+                          const withSmall = templates.filter((t) => (t.tap_targets_small ?? 0) > 0).length;
+                          const traced = part.traced_pages ?? null;
+                          const pages = new Set(cards.map((f) => pathOf(f.page))).size;
+                          return traced ? <> · <span className="fix-template">
+                            small targets on {pages} of {traced} traced page{traced === 1 ? "" : "s"}
+                            {templates.length ? `, ${withSmall} of ${templates.length} templates` : ""}
+                            {templates.length && withSmall / templates.length >= 0.75
+                              ? ": likely one shared control" : ""}</span></> : null;
+                        })()}
                       </p>
                     );
                   })()}
@@ -3945,8 +5035,12 @@ function Fixes({ fixes, facts, render, page, part, cost, onGlow, siteId, onState
                     <FixCard key={f.key} fix={f} facts={facts} render={render}
                              onCopy={copy} copied={copied} n={numberOf(f)}
                              fixHeld={Boolean(f.needs) && firing.has(`${f.checkId}|${pathOf(f.page)}`)}
-                             awaiting={f.candidate && !f.needs && costOf(part, f.check) === "model"}
-                             siteId={siteId} onStateChanged={onStateChanged} />
+                             awaiting={f.candidate && !f.needs && Boolean(f.toConfirm)}
+                             earlierBrief={!!part.brief_run?.brief_changed}
+                             sweep={sweep} briefAt={part.brief_run?.at ?? null}
+                             siteId={siteId} onStateChanged={onStateChanged}
+                             done={part.key === "a11y" && siteId && markable(f)
+                               ? <CardDone m={markable(f) as Markable} loop={loop} /> : null} />
                   ))}
                   {!all && (
                     <p className="fix-more">
@@ -3960,36 +5054,84 @@ function Fixes({ fixes, facts, render, page, part, cost, onGlow, siteId, onState
               );
             })}
 
-            {!folded(cost, section)
-              && [...new Map(held.map((f) => [f.needs ?? "",
-                                              held.filter((x) => x.needs === f.needs)]))
-                   .entries()]
-                   // Security splits what it could not assess in two (brief v20
-                   // step BD): what waits on the owner's authorisation for an
-                   // active probe, and what waits on an input no crawl can
-                   // supply. Two different conversations with the client, so
-                   // authorisation first, each under its own heading.
-                   .sort(([a], [b]) => Number(!AUTH.test(a)) - Number(!AUTH.test(b)))
-                   .map(([needs, group], i, all) => (
-              <Fragment key={needs}>
-              {part.key === "security" && (i === 0 || AUTH.test(all[i - 1][0]) !== AUTH.test(needs)) && (
-                <p className="fix-na-head">
-                  {AUTH.test(needs) ? "Pending authorisation" : "Missing input"}
-                </p>
-              )}
-              <p className="muted fix-na">
-                {[...new Set(group.map((f) => f.checkId))].join(" · ")} not assessable
-                {(() => {
-                  const n = new Set(group.map((f) => pathOf(f.page)).filter(Boolean)).size;
-                  return n > 1 ? ` on ${n} pages` : "";
-                })()} — needs {needs}
-                {heldLink(needs)
-                  ? <> — <a href="#/admin?tab=sites" onClick={goHandler("#/admin?tab=sites")}>
-                      set it on Admin › Sites</a></>
-                  : "."}
-              </p>
-              </Fragment>
-            ))}
+            {!folded(cost, section) && (() => {
+              // Item 276 (row 4): on the whole part the checks table says each
+              // of these "not assessable · needs ..." on its own row, so the
+              // reason was on screen twice. Those are named on one line, each
+              // a way to its row. A hold the table does not state keeps its
+              // reason on a line of its own: a check that also fired (its row
+              // reads open), or one the newer automatic reading outranks (its
+              // row reads clean).
+              const stated = page ? [] : [...new Set(held.filter((f) => onTable(f))
+                                                       .map((f) => f.checkId))];
+              const needsOf = (id: string) => held.find((f) => f.checkId === id)?.needs ?? "";
+              const rest = [...new Map(held.filter((f) => !onTable(f)).map((f) => [f.needs ?? "",
+                              held.filter((x) => !onTable(x) && x.needs === f.needs)])).entries()];
+              // Security splits what it could not assess in two (brief v20
+              // step BD): what waits on the owner's authorisation for an
+              // active probe, and what waits on an input no crawl can supply.
+              // Two different conversations with the client, so authorisation
+              // first, each under one heading - the table-stated ids and the
+              // reasons together under it.
+              const security = part.key === "security";
+              type Line = { auth: boolean; key: string; ids?: string[];
+                            needs?: string; group?: Fix[] };
+              const lines: Line[] = [
+                ...(security
+                  ? [{ auth: true, key: "ref-auth", ids: stated.filter((id) => AUTH.test(needsOf(id))) },
+                     { auth: false, key: "ref-input", ids: stated.filter((id) => !AUTH.test(needsOf(id))) }]
+                  : [{ auth: false, key: "ref", ids: stated }]).filter((l) => l.ids.length > 0),
+                ...rest.map(([needs, group]) => ({ auth: security && AUTH.test(needs), key: needs,
+                                                   needs, group })),
+              ].sort((a, b) => Number(!a.auth) - Number(!b.auth));
+              return lines.map((l, i) => (
+                <Fragment key={l.key}>
+                  {security && (i === 0 || lines[i - 1].auth !== l.auth) && (
+                    <p className="fix-na-head">{l.auth ? "Pending authorisation" : "Missing input"}</p>
+                  )}
+                  {l.ids ? (
+                    <p className="muted fix-na fix-na-ref">
+                      {l.ids.map((id, k) => {
+                        const mine = held.filter((f) => f.checkId === id);
+                        const n = new Set(mine.map((f) => pathOf(f.page)).filter(Boolean)).size;
+                        return (
+                          <Fragment key={id}>
+                            {k > 0 && " · "}
+                            <button type="button" className="btn-link"
+                                    onClick={() => document.getElementById(checkRowId(mine[0].check))
+                                      ?.scrollIntoView({ block: "center" })}>
+                              {id}
+                            </button>
+                            {n > 1 ? ` on ${n} pages` : ""}
+                          </Fragment>
+                        );
+                      })}{" "}
+                      not assessable — the reason is on {l.ids.length === 1 ? "its row" : "their rows"} in
+                      the checks table
+                    </p>
+                  ) : (
+                    <p className="muted fix-na">
+                      {[...new Set((l.group ?? []).map((f) => f.checkId))].join(" · ")} not assessable
+                      {(() => {
+                        // Item 266 (row 10): the pages, named - the first three
+                        // and how many more - so the line says where.
+                        const paths = [...new Set((l.group ?? []).map((f) => pathOf(f.page))
+                                                 .filter((p) => p && !SITE_WIDE_PAGES.has(p)))];
+                        // Narrowed to one page, the page is the scope: not said again.
+                        if (!paths.length || page) return "";
+                        const shown = paths.slice(0, 3).join(", ");
+                        return ` on ${paths.length === 1 ? shown : `${paths.length} pages (${shown}`
+                          + (paths.length > 3 ? ` and ${paths.length - 3} more)` : ")")}`;
+                      })()} — {heldSays(l.needs ?? "")}
+                      {heldLink(l.needs ?? "")
+                        ? <> — <a href="#/admin?tab=sites" onClick={goHandler("#/admin?tab=sites")}>
+                            set it on Admin › Sites</a></>
+                        : "."}
+                    </p>
+                  )}
+                </Fragment>
+              ));
+            })()}
           </Fragment>
         );
       })}
@@ -4006,10 +5148,25 @@ function Fixes({ fixes, facts, render, page, part, cost, onGlow, siteId, onState
       )}
       {/* On the whole site the checks table carries this line; here it
           is the one-page answer to "what was measured and passed". */}
-      {page && cleanMeasured.length > 0 && (
+      {/* Items 274, 276: an analysis check with no row on this page is not
+          a pass on it - the briefs omit passes - so it is said apart. */}
+      {page && cleanFree.length > 0 && (
         <p className="cause-clean-line">
-          {cleanMeasured.length} check{cleanMeasured.length === 1 ? "" : "s"}{" "}
-          pass on this page: {cleanMeasured.join(" · ")}
+          {cleanFree.length} check{cleanFree.length === 1 ? "" : "s"}{" "}
+          pass on this page: {cleanFree.join(" · ")}
+        </p>
+      )}
+      {page && cleanModel.length > 0 && (
+        <p className="cause-unreturned-line muted">
+          {cleanModel.length} check{cleanModel.length === 1 ? "" : "s"} the analysis
+          returned no row for on this page, which is not a pass: {cleanModel.join(" · ")}
+        </p>
+      )}
+      {notRead.length > 0 && (
+        <p className="muted cause-cannot-line" data-measure="not-measured">
+          {notRead.length} check{notRead.length === 1 ? "" : "s"} {MEASURE_WORD["not-measured"]} on
+          this page: {notRead.join(" · ")} {notRead.length === 1 ? "does" : "do"} not read{" "}
+          {facts?.page_type ? `a ${facts.page_type} page` : "a page the site record gives no type"}
         </p>
       )}
       {page && cannot.length > 0 && (
@@ -4035,11 +5192,23 @@ function Fixes({ fixes, facts, render, page, part, cost, onGlow, siteId, onState
       {dropped > 0 && (
         <details className="muted rep-dropped">
           <summary>{dropped} row{dropped === 1 ? "" : "s"} dropped</summary>
+          {/* Item 277 (row 14): grouped by reason, each reason said once with
+              the checks it dropped, rather than the same sentence eleven times. */}
           <ul className="rep-dropped-rows">
-            {(part.brief_dropped_rows ?? []).map((d, i) => (
-              <li key={i}>
-                <code>{d.check || "no check named"}</code>
-                {d.page ? <> · <code>{pathOf(d.page)}</code></> : null} · {d.reason}
+            {droppedByReason(part.brief_dropped_rows ?? []).map((g) => (
+              <li key={g.key}>
+                {g.rows.length} row{g.rows.length === 1 ? "" : "s"}: {g.reason}
+                {" "}({g.checks.map(([c, n]) => (n > 1 ? `${c} ×${n}` : c)).join(", ")})
+                {g.rows.some((d) => d.page) && (
+                  <details className="rep-dropped-pages">
+                    <summary>which pages</summary>
+                    {g.rows.map((d, i) => (
+                      <div key={i}><code>{d.check || "no check named"}</code>
+                        {d.page ? <> · <code>{pathOf(d.page)}</code></> : null}
+                        {g.rows.length > 1 && d.reason ? <> · {d.reason}</> : null}</div>
+                    ))}
+                  </details>
+                )}
               </li>
             ))}
           </ul>
@@ -4052,10 +5221,54 @@ function Fixes({ fixes, facts, render, page, part, cost, onGlow, siteId, onState
   );
 }
 
+/** Dropped rows by reason (item 277, row 14). Two reasons that differ only
+ *  in a count or a path ("on 4 pages", "on /about/") are one reason; the
+ *  first row's wording names the group. */
+export function droppedByReason(rows: { check: string; page: string | null; reason: string }[]) {
+  const groups = new Map<string, { key: string; reason: string; rows: typeof rows;
+                                   checks: [string, number][] }>();
+  for (const d of rows) {
+    const key = (d.reason || "").replace(/\/\S*/g, "/").replace(/\d+/g, "#").trim().toLowerCase();
+    const g = groups.get(key) ?? { key, reason: d.reason || "no reason given", rows: [], checks: [] };
+    g.rows.push(d);
+    const c = d.check || "no check named";
+    const at = g.checks.find(([name]) => name === c);
+    if (at) at[1] += 1; else g.checks.push([c, 1]);
+    groups.set(key, g);
+  }
+  // The group's wording states a figure only where every row agrees on it,
+  // and a range where they differ (screen audits round 3, title-desc AC-01:
+  // "replacement 578 px" was said of ten rows measuring 431 to 578 px).
+  for (const g of groups.values()) {
+    const parts = g.reason.split(/(\d+)/);
+    const each = g.rows.map((d) => (d.reason || "").split(/(\d+)/))
+      .filter((s) => s.length === parts.length);
+    g.reason = parts.map((piece, i) => {
+      if (i % 2 === 0) return piece;
+      const ns = each.map((s) => Number(s[i]));
+      const lo = Math.min(...ns), hi = Math.max(...ns);
+      return lo === hi ? piece : `${lo}–${hi}`;
+    }).join("");
+  }
+  return [...groups.values()].sort((a, b) => b.rows.length - a.rows.length);
+}
+
 /** Block 2 on the whole site — every check the part's briefs may emit,
  *  what each source counted, and where it stands. */
-function ChecksTable({ part, fixes, cost, pops, siteScope = false }: {
+function ChecksTable({ part, fixes, cost, pops, siteScope = false, sweepAt = null,
+                       whole = false, onePage = false }: {
   part: Category; fixes: Fix[]; cost: string;
+  /** Page mode: a clean line is about this page, not every page the audit
+   *  read, and a check filed for the site as a whole is neither (screen
+   *  audits round 3, Speed AC-01). */
+  onePage?: boolean;
+  /** The whole part, neither one page nor a narrow: only then can the
+   *  analysis's accounting be held to the run's kept-row count. */
+  whole?: boolean;
+  /** When the automatic checks last read this part (item 251): a row's state
+   *  is the newer measurement's, so an analysis that held a free check before
+   *  that reading does not outrank it. */
+  sweepAt?: string | null;
   /** The populations a count may be counted over (item 155). */
   pops: Populations | null;
   /** The part's renderer is site-scoped (security, content), so every count
@@ -4077,19 +5290,41 @@ function ChecksTable({ part, fixes, cost, pops, siteScope = false }: {
   const tableChecks = [...(part.brief_checks ?? [])];
   for (const filed of part.filed_checks ?? []) {
     const id = filed.split("/").pop() as string;
-    if (!tableChecks.some((c) => (c.split("/").pop() as string) === id)) tableChecks.push(filed);
+    // Item 277 (row 16): with its dimension, as the brief's rows carry it -
+    // `canonical-missing` stood bare among `TEC/...` rows.
+    const dim = filed.includes("/") ? null
+      : part.findings.find((f) => f.check_id === id)?.dimension ?? null;
+    if (!tableChecks.some((c) => (c.split("/").pop() as string) === id)) {
+      tableChecks.push(dim ? `${dim}/${filed}` : filed);
+    }
   }
+  // Item 279 (row 7): Accessibility's registered checks too, so the nine
+  // that ran and filed nothing are said clean rather than left unsaid.
+  // `axe-render-failed` says the rendered pass failed, which is no reading
+  // of a page, so it is not listed as clean.
+  if (part.key === "a11y") {
+    for (const id of part.registered_checks ?? []) {
+      if (id === "axe-render-failed") continue;
+      if (!tableChecks.some((c) => (c.split("/").pop() as string) === id)) tableChecks.push(id);
+    }
+  }
+  const tracedChecks = new Set((part.trace_derived ?? []).map((c) => c.split("/").pop() ?? c));
   const rows = tableChecks.map((full) => {
     const checkId = full.split("/").pop() as string;
-    const mine = fixes.filter((f) => f.checkId === checkId);
+    // Item 270: an overtaken analysis row is the automatic checks' to answer,
+    // and they cleared it; the row reads their state.
+    const mine = fixes.filter((f) => f.checkId === checkId && !overtaken(f));
     // Items 206 and 208: one classification, read by every count column. A
     // held row (`needs`) and a coverage note say something about the check
     // and nothing about the site, so they are in State and in no count: the
     // table read "ANALYSIS 2 · 2 of 45 pages crawled · not assessable" on
     // Schema, and a held Speed row put a 0 in PAGES where the rule is a dash.
-    const counted = mine.filter((f) => !f.needs && !f.coverageNote);
+    // Item 269: a verdict is not a finding. An analysis row that closes its
+    // check counts nowhere; on a page the automatic checks also raised, the
+    // card counts as theirs and not as the analysis's.
+    const counted = mine.filter((f) => !f.needs && !f.coverageNote && !closedByAnalysis(f));
     const sweep = counted.filter((f) => f.sources.includes("sweep")).length;
-    const brief = counted.filter((f) => f.sources.includes("brief")).length;
+    const brief = counted.filter((f) => f.sources.includes("brief") && !f.override).length;
     const heldN = mine.filter((f) => f.needs).length;
     // Item 220 (AC-07): a card that says it also resolves this check. On
     // twenty22 `schema-catalog-mismatch` read "clean on every page" while the
@@ -4110,9 +5345,47 @@ function ChecksTable({ part, fixes, cost, pops, siteScope = false }: {
     // `img-logo` - the logo on 31 pages - read "1 of 45" while a check that
     // files one finding per page read 31. `prevalence` counts a page once, so
     // findings that overlap do not add up past the pages they share.
-    const pages = prevalence(counted.flatMap((f) => (f.urls?.length ? f.urls : [f.page])),
-                             pops, siteScope);
-    const images = new Set(counted.map((f) => f.image).filter(Boolean)).size;
+    const named = counted.flatMap((f) => (f.urls?.length ? f.urls : [f.page]));
+    // Item 279: an axe rule is read on the pages the rendered pass visited,
+    // not on the crawl. `axe-color-contrast` on all 5 rendered pages read
+    // "5 of 45 pages crawled" - an 11% problem - beside a waterfall whose
+    // axis said every rendered page had it.
+    // Item 274: and a trace-derived check on the pages the browser traced -
+    // Mobile's six read "of 45 pages crawled" for a reading taken on 12.
+    const rendered = part.fix_order?.rendered ?? 0;
+    const tracedN = part.traced_pages ?? 0;
+    const own = part.samples?.[checkId];
+    const sample = siteScope ? null
+      : own?.n ? { n: own.n, basis: own.basis }
+      : checkId.startsWith("axe-") && rendered > 0 ? { n: rendered, basis: "rendered" }
+      : tracedChecks.has(checkId) && tracedN > 0 ? { n: tracedN, basis: "traced" }
+      : null;
+    const counted0 = sample
+      ? { count: { value: Math.min(new Set(named.filter(Boolean).map(pathKey)).size, sample.n),
+                   population: "crawl" as const, basis: sample.basis, of: sample.n },
+          unfetched: 0 }
+      : prevalence(named, pops, siteScope);
+    // Item 276 (row 6): an emitter that capped its URL list (`sri-missing`
+    // keeps 20 of 45) stores what it found; PAGES reads that, not the cap.
+    // Never past the population it is a share of. On a site-scoped part too:
+    // Security is one, and `sri-missing` is the row that read 20 there.
+    // And only where every page the row names is in the crawl (screen audits
+    // round 3, Crawl AC-01): `unreachable` read "8 of 45 pages crawled" for
+    // eight pages never reached, and `http-status-error` "1 of 45" for none.
+    const found = Math.max(0, ...counted.map((f) => f.affectedTotal ?? 0));
+    const allInCrawl = counted0.count.value > 0 && counted0.unfetched === 0
+      && !(counted0.errored ?? 0);
+    const pages = allInCrawl && found > counted0.count.value
+      ? { ...counted0, count: { ...counted0.count,
+                                value: counted0.count.of != null ? Math.min(found, counted0.count.of)
+                                                                 : found } }
+      : counted0;
+    // Item 272: every image a card names, not its first. A sweep row names
+    // all the images it found on its page (`images`) and one `image` at
+    // most, so `img-no-srcset` - 7 images on / and 5 on /about/ - read 2. A
+    // page-total check (`img-weight-budget`) names none and draws a dash.
+    const images = new Set(counted.flatMap(
+      (f) => f.images?.length ? f.images : f.image ? [f.image] : [])).size;
     // Blocks, counted once for a block the site repeats (brief v16 step
     // AT). The row already carries every page it covers, so counting the
     // rows would count an Organization node twelve times for one edit.
@@ -4132,17 +5405,47 @@ function ChecksTable({ part, fixes, cost, pops, siteScope = false }: {
     // the confirmed state - on `schema-sameas-missing`, a model-only row.
     // Item 237: a candidate on a check no sweep can raise waits for the
     // operator, not for a second audit - "candidate" says the latter.
+    // Item 251: ranked by the measurement's date. On Crawl a 23 Sept analysis
+    // held three free checks ("not assessable · needs ...") over the 29 Sept
+    // sweep that had measured each and raised nothing. The automatic checks
+    // read the check after the analysis wrote its hold, so their reading is
+    // the row's state; the hold stays visible as a card under Fixes.
+    const sweepOutranksHold = heldN > 0 && sweepOutranks(part, full, checkId, sweepAt, unmeasured);
     const state = counted.length
       ? (counted.every((f) => f.candidate)
-          ? (costOf(part, full) === "model" ? "not yet confirmed" : "candidate") : "open")
+          ? candidateWord(counted.every((f) => f.toConfirm))
+          : counted.some((f) => f.regressed) ? entry("state-regressed").word : "open")
       : resolvedBy.length ? `resolved by the ${resolvedBy[0].check} fix`
       : !mine.length ? "clean"
       : allNotes ? MEASURE_WORD["not-measured"]
-      : heldN ? `not assessable · needs ${mine.find((f) => f.needs)?.needs}`
+      : mine.some(closedByAnalysis) && mine.every((f) => closedByAnalysis(f) || f.coverageNote)
+        ? "analysis closes this"
+      : sweepOutranksHold ? "clean"
+      : heldN ? `not assessable · ${heldSays(mine.find((f) => f.needs)?.needs ?? "")}`
       : "open";
+    // Item 275: a hold the newer automatic reading outranks is that reading's
+    // pass - the check joins the clean line beside the others the sweep
+    // measured, and the hold stays a card under Fixes with its date.
+    const outranked = sweepOutranksHold && !counted.length && !resolvedBy.length;
+    // Item 267: a row about the site as one subject has no page count.
+    // Item 277 (row 10): a check whose every card is a policy is about the
+    // site too - PAGES is a dash, not the one page the model named.
+    const mineCards = fixes.filter((f) => f.checkId === checkId);
+    const siteRow = part.samples?.[checkId]?.basis === "site"
+      || (mineCards.length > 0 && mineCards.every((f) => f.kind === "policy"));
+    // Row 4: a raised row naming no page draws a dash, not the 0 that reads
+    // as clean beside it.
+    const noPage = !named.some(Boolean);
     return { full, checkId, sweep, brief, pages, images, blocks, severity, state,
-             allNotes, n: mine.length + resolvedBy.length, counted: counted.length };
+             allNotes, n: mine.length + resolvedBy.length, counted: counted.length, outranked,
+             siteRow, noPage,
+             // Items 277 (row 13), 273 (row 13): a row whose only rows are
+             // holds has no severity of its own - the model's hold carries
+             // "info", which is not the check's.
+             held: state.startsWith("not assessable") };
   });
+  // Item 279 (row 8): whether the table carries an Analysis column at all.
+  const analysisCol = part.catalogued !== false || rows.some((r) => r.brief > 0);
   const raised = rows.filter((r) => r.n > 0);
   // The column only where a row is about an image (brief v15 step AR):
   // an empty column on every other part is furniture.
@@ -4159,7 +5462,7 @@ function ChecksTable({ part, fixes, cost, pops, siteScope = false }: {
       {SECTIONS.map(([section, title]) => {
         const mine = rows.filter((r) => costOf(part, r.full) === section);
         if (!mine.length) return null;
-        const open = mine.filter((r) => r.n > 0);
+        const open = mine.filter((r) => r.n > 0 && !r.outranked);
         // Item 157: clean means measured and found nothing. A row this run
         // could not measure is neither clean nor open, and it gets the line
         // below instead of being counted as a pass.
@@ -4170,29 +5473,60 @@ function ChecksTable({ part, fixes, cost, pops, siteScope = false }: {
         // of 45 and the line claimed 45.
         const traced = new Set((part.trace_derived ?? [])
                                  .map((c) => c.split("/").pop() ?? c));
-        const spotlessAll = mine.filter((r) => r.n === 0
+        const spotlessAll = mine.filter((r) => (r.n === 0 || r.outranked)
                                                && !unmeasured.has(r.checkId));
-        const spotless = spotlessAll.filter((r) => !traced.has(r.checkId));
-        const spotlessTraced = spotlessAll.filter((r) => traced.has(r.checkId));
+        // Item 267: a check read on its own sample says so on its own line.
+        const ownSample = (r: { checkId: string }) => part.samples?.[r.checkId]?.n ?? null;
+        // Item 272 (row 4): two checks the line could not certify. An
+        // analysis check whose rows were all dropped returned rows, so "no
+        // row" was false of it; and `img-lcp-lazy` with no largest paint
+        // measured was judged on document order, not on the paint it names.
+        const droppedIds = new Set((part.brief_dropped_rows ?? [])
+          .map((d) => d.check.split("/").pop() ?? d.check));
+        const byOrder = (r: { checkId: string }) => part.key === "images"
+          && part.images?.lcp_found === false && r.checkId === "img-lcp-lazy";
+        const spotlessDropped = section === "model"
+          ? spotlessAll.filter((r) => droppedIds.has(r.checkId)) : [];
+        const spotlessByOrder = spotlessAll.filter(byOrder);
+        const partly = (r: { checkId: string }) => Boolean(part.partly_measured?.[r.checkId]);
+        const siteLevel = (r: { checkId: string }) => onePage
+          && (part.site_level_checks ?? []).includes(r.checkId);
+        const spotlessSiteLevel = spotlessAll.filter(siteLevel);
+        const spotlessPartly = section === "model" ? [] : spotlessAll.filter((r) => partly(r) && !siteLevel(r));
+        const spotless = spotlessAll.filter((r) => !traced.has(r.checkId) && !ownSample(r)
+          && !byOrder(r) && !spotlessDropped.includes(r) && !partly(r) && !siteLevel(r));
+        const spotlessSampled = spotlessAll.filter((r) => !traced.has(r.checkId) && ownSample(r)
+          && !siteLevel(r));
+        const spotlessTraced = spotlessAll.filter((r) => traced.has(r.checkId) && !siteLevel(r));
         const unread = mine.filter((r) => r.n === 0
                                           && unmeasured.has(r.checkId));
         const away = folded(cost, section);
         return (
           <Fragment key={section}>
-            <h4 className={`checks-head checks-head-${section}`}>
+            <h3 className={`checks-head checks-head-${section}`}>
               {/* Item 208: the checks with at least one finding - the same
                   number the Fixes heading carries under the same word. This
                   counted every check listed, clean ones too, and Fixes
                   counted cards: "Free checks · 10" here and "· 22" there. */}
-              {title} <span className="muted">· {open.filter((r) => r.counted > 0).length}</span>
+              {title} <span className="muted">· {open.filter((r) => r.counted > 0).length}
+                {/* Item 275 (row 15): where the section holds checks, the
+                    heading says so - "Analysis · 0" over two held rows read
+                    as nothing there. */}
+                {(() => {
+                  const heldN = mine.filter((r) => r.counted === 0 && /not assessable/.test(r.state)).length;
+                  return heldN ? ` open · ${heldN} held` : "";
+                })()}</span>
               {away && (
                 <span className="muted checks-folded">
                   {" · "}hidden by <code>free only</code>
                 </span>
               )}
+            </h3>
+              {/* Items 267 (row 16) and 268 (row 8): the provenance under the
+                  heading, not in it - the heading reads "Analysis · 5". */}
               {section === "model" && part.brief_run && (
-                <span className="muted checks-prov">
-                  {" · "}analysis {part.brief_run.tool}
+                <p className="muted checks-prov">
+                  analysis {part.brief_run.tool}
                   {/* The time alone read as "today" for an analysis written
                       against an audit two days old. Where audits have run
                       since, the date comes with it and the count says how
@@ -4201,7 +5535,7 @@ function ChecksTable({ part, fixes, cost, pops, siteScope = false }: {
                   {part.brief_run.at
                     ? ` · ${(part.brief_run.audits_since ?? 0) > 0
                         ? stamp(part.brief_run.at)
-                        : part.brief_run.at.slice(11, 16)}`
+                        : clock(part.brief_run.at)}`
                     : ""}
                   {(part.brief_run.audits_since ?? 0) > 0
                     ? ` · ${part.brief_run.audits_since} `
@@ -4215,22 +5549,39 @@ function ChecksTable({ part, fixes, cost, pops, siteScope = false }: {
                   {part.brief_run.model ? ` · ${part.brief_run.model}` : ""}
                   {part.brief_run.cost != null
                     ? ` · USD ${part.brief_run.cost.toFixed(2)}` : ""}
-                </span>
+                  {/* Item 249: the rows below were read again under the rules
+                      as they now stand, and - where the brief itself has
+                      changed - written under an earlier one. */}
+                  {part.brief_run.reread
+                    ? ` · re-read under current rules${part.brief_run.reread_at
+                        ? " " + stamp(part.brief_run.reread_at) : ""}`
+                    : ""}
+                  {part.brief_run.brief_changed && (
+                    <span className="prov-earlier-brief">
+                      {" · "}analysed under an earlier brief · re-run to apply
+                    </span>
+                  )}
+                </p>
               )}
-            </h4>
             {!away && open.length > 0 && (
               <table className="findings checks-table">
                 <thead>
                   <tr><th>Severity</th><th>Check</th><th className="num">Automatic</th>
-                      <th className="num">Analysis</th><th className="num">Pages</th>
+                      {/* Item 279 (row 8): no Analysis column on a part no
+                          analysis writes to and no row came from - a column of
+                          dashes for a source that does not exist. */}
+                      {analysisCol && <th className="num">Analysis</th>}
+                      <th className="num">Pages</th>
                       {anyImages && <th className="num">Images</th>}
                       {anyBlocks && <th className="num">Blocks</th>}
                       <th>State</th></tr>
                 </thead>
                 <tbody>
                   {open.map((r) => (
-                    <tr key={r.full}>
-                      <td><Pill tone={`sev-${r.severity}` as Tone}>{r.severity}</Pill></td>
+                    <tr key={r.full} id={checkRowId(r.full)}>
+                      <td>{r.held
+                        ? <span className="muted">—</span>
+                        : <Pill tone={`sev-${r.severity}` as Tone}>{r.severity}</Pill>}</td>
                       <td><code>{r.full}</code></td>
                       {/* Rows raised, not pages: a findings count over the
                           record, so it renders plain and carries its
@@ -4238,12 +5589,14 @@ function ChecksTable({ part, fixes, cost, pops, siteScope = false }: {
                       <td className="num">{r.sweep
                         ? <Counted pops={pops} count={makeCount(r.sweep, "record")} />
                         : "\u2014"}</td>
-                      <td className="num">{r.brief
+                      {analysisCol && <td className="num">{r.brief
                         ? <Counted pops={pops} count={makeCount(r.brief, "record")} />
-                        : "\u2014"}</td>
+                        : "\u2014"}</td>}
                       <td className="num check-prev">
                         {r.allNotes || !r.counted
                           ? "—"
+                          : r.siteRow ? <span className="muted">site</span>
+                          : r.noPage ? <span title="the finding names no page">—</span>
                           : <Prevalence prev={r.pages} pops={pops} />}
                       </td>
                       {anyImages && <td className="num">{r.images
@@ -4266,11 +5619,72 @@ function ChecksTable({ part, fixes, cost, pops, siteScope = false }: {
                 THIS RUN FETCHED. Over the record it asserted a pass for pages
                 nobody looked at, which is the same bad inference the
                 prevalence column was making from the other direction. */}
-            {!away && spotless.length > 0 && (
+            {/* Items 274, 276 and 265: an analysis check with no row is not
+                a pass. The briefs report faults and omit passes, so "clean"
+                certified what the model never said - Security's csp-policy,
+                which rides on the csp-weak card, and platform-limits, which
+                returned nothing. Said as what it is. */}
+            {!away && section === "model" && spotless.length > 0 && (
+              <p className="cause-unreturned-line muted">
+                {spotless.length} check{spotless.length === 1 ? "" : "s"} the analysis
+                returned no row for
+                {part.brief_run?.crawl_at ? ` on the crawl of ${stamp(part.brief_run.crawl_at)}` : ""}.
+                It reports faults, not passes, so this is not a
+                clean result: {spotless.map((r) => r.checkId).join(" · ")}
+              </p>
+            )}
+            {!away && spotlessDropped.length > 0 && (
+              <p className="cause-unreturned-line muted">
+                {spotlessDropped.length} check{spotlessDropped.length === 1 ? "" : "s"} the
+                analysis returned rows for, every one dropped by the reader, so neither
+                clean nor open: {spotlessDropped.map((r) => r.checkId).join(" · ")}. The
+                dropped rows below say why.
+              </p>
+            )}
+            {/* Screen audits round 3 (Security AC-01): a check the sweep
+                tests only in part is clean on that part, said with what it
+                left untested, and never on the "clean on every reading" line. */}
+            {!away && spotlessSiteLevel.length > 0 && (
+              <p className="cause-dark-line">
+                {spotlessSiteLevel.length} check{spotlessSiteLevel.length === 1 ? " is" : "s are"} filed
+                for the site as a whole, not per page, so this page is neither clean nor
+                open on {spotlessSiteLevel.length === 1 ? "it" : "them"}:{" "}
+                {spotlessSiteLevel.map((r) => r.checkId).join(" · ")}
+              </p>
+            )}
+            {!away && spotlessPartly.length > 0 && (
+              <p className="cause-clean-line">
+                {spotlessPartly.length} check{spotlessPartly.length === 1 ? "" : "s"} clean
+                only as far as the automatic checks test them:{" "}
+                {spotlessPartly.map((r) => `${r.checkId} (${part.partly_measured?.[r.checkId]})`)
+                  .join(" · ")}
+              </p>
+            )}
+            {!away && spotlessByOrder.length > 0 && (
+              <p className="cause-clean-line">
+                {spotlessByOrder.map((r) => r.checkId).join(" · ")} clean on document
+                order: no largest paint was measured, so the first image in each page's
+                main region was read in its place.
+              </p>
+            )}
+            {/* Item 271 (row 4): a check the brief owes a row for on every page
+                an automatic check raised, returned for none of them, is a gap
+                in the analysis, said with the pages that are owed one. */}
+            {!away && section === "model" && spotless.map((r) => {
+              const owed = owedPages(r.checkId, fixes);
+              return owed && (
+                <p className="cause-dark-line" key={`owed-${r.checkId}`}>
+                  {r.checkId} not returned by the analysis, though{" "}
+                  {owed.triggers.join(" or ")} is open on {owed.pages} page
+                  {owed.pages === 1 ? "" : "s"}: the brief writes one for each
+                </p>
+              );
+            })}
+            {!away && section !== "model" && spotless.length > 0 && (
               <p className="cause-clean-line">
                 {spotless.length} check{spotless.length === 1 ? "" : "s"} clean on
-                every{" "}
-                {siteScope
+                {onePage ? " this page" : " every "}
+                {onePage ? "" : siteScope
                   ? "reading across the site"
                   : pops?.crawl.size != null
                     ? <>page this audit fetched{" "}
@@ -4281,6 +5695,19 @@ function ChecksTable({ part, fixes, cost, pops, siteScope = false }: {
                 : {spotless.map((r) => r.checkId).join(" \u00b7 ")}
               </p>
             )}
+            {!away && section !== "model" && [...new Set(spotlessSampled.map(
+              (r) => part.samples?.[r.checkId]?.basis ?? ""))].map((basis) => {
+              const these = spotlessSampled.filter((r) => part.samples?.[r.checkId]?.basis === basis);
+              const n = part.samples?.[these[0].checkId]?.n;
+              return (
+                <p className="cause-clean-line" key={`sampled-${basis}`}>
+                  {these.length} check{these.length === 1 ? "" : "s"} clean on every{" "}
+                  {basis === "probed" ? "URL the crawler access test probed" : "page the rendered pass read"}{" "}
+                  <span className="muted clean-pop">({n} {basis})</span>
+                  : {these.map((r) => r.checkId).join(" \u00b7 ")}
+                </p>
+              );
+            })}
             {/* The trace-derived clean checks, on their own denominator. The
                 population is still the crawl -- these are crawled pages -- so
                 only the word and the number change, which is exactly what the
@@ -4288,20 +5715,30 @@ function ChecksTable({ part, fixes, cost, pops, siteScope = false }: {
             {!away && spotlessTraced.length > 0 && (
               <p className="cause-clean-line">
                 {spotlessTraced.length} check{spotlessTraced.length === 1 ? "" : "s"}{" "}
-                clean on every page this audit traced{" "}
+                {onePage ? "clean on this page's trace" : <>clean on every page this audit traced{" "}
                 <span className="muted clean-pop">
                   ({part.traced_pages ?? "?"} traced
                   {pops?.crawl.size != null ? ` of ${pops.crawl.size} ${pops.crawl.basis}` : ""})
-                </span>
+                </span></>}
                 : {spotlessTraced.map((r) => r.checkId).join(" \u00b7 ")}
               </p>
             )}
             {!away && byReason(unread.map((r) => r.checkId), unmeasured)
-              .map(([reason, ids]) => (
+              .map(([reason, ids]) => part.gate?.state === "na" ? (
+                // Item 274 (row 13): a gated part's checks cannot have findings
+                // here; said as that, once, with the ids behind a disclosure
+                // rather than a bare list of eleven.
+                <details className="cause-dark-line" key={reason}>
+                  <summary>
+                    {ids.length} check{ids.length === 1 ? "" : "s"} {MEASURE_WORD.cannot} on
+                    this site — {reason}
+                  </summary>
+                  {ids.join(" · ")}
+                </details>
+              ) : (
                 <p className="cause-dark-line" key={reason}>
-                  {ids.length} check{ids.length === 1 ? "" : "s"}{" "}
-          {part.gate?.state === "na" ? "not applicable" : "not assessed"}{" "}
-                  — {reason}: {ids.join(" · ")}
+                  {ids.length} check{ids.length === 1 ? "" : "s"} not assessed — {reason}:{" "}
+                  {ids.join(" · ")}
                 </p>
               ))}
           </Fragment>
@@ -4312,15 +5749,60 @@ function ChecksTable({ part, fixes, cost, pops, siteScope = false }: {
           model's summary, which was printed here at data weight and
           contradicted the table above it on ten parts of eighteen. */}
       {part.brief_run && (() => {
-        const brief = fixes.filter((f) => f.sources.includes("brief"));
-        const merged = brief.filter((f) => f.sources.includes("sweep") && !f.needs).length;
-        const own = brief.filter((f) => !f.sources.includes("sweep") && !f.needs).length;
-        const held = brief.filter((f) => f.needs).length;
-        const dropped = part.brief_dropped ?? 0;
+        // Item 275 (row 5): this analysis's own cards. A card another
+        // analysis wrote (Links' `depth-deep` on Crawl, 17 on twenty22) is
+        // said apart, not counted into what this run returned.
+        const tool = part.brief_run?.tool;
+        const mine = (f: Fix) => !tool || !(f.briefs ?? []).length || (f.briefs ?? []).includes(tool);
+        const brief = fixes.filter((f) => f.sources.includes("brief") && mine(f));
+        const others = fixes.filter((f) => f.sources.includes("brief") && !mine(f));
+        const otherNames = [...new Set(others.flatMap((f) => f.briefs ?? []))];
+        // Item 276 (row 3): the rows first, summing to what the run returned,
+        // and the holds after them as what they are. A hold is the ledger's
+        // `not_assessable` entry, not a row, so "12 held" made the line sum to
+        // 25 beside a provenance line reading 13 returned. A verdict closing
+        // an automatic finding (item 269) is a kept row counted nowhere, so it
+        // is its own term here (answer 20261004-0010-270-pass-override-drop-
+        // superseded), and a kept row no card draws is said, so the terms
+        // still sum on the whole part.
+        const rows = brief.filter((f) => !f.needs);
+        const verdicts = rows.filter((f) => f.override).length;
+        const merged = rows.filter((f) => !f.override && f.sources.includes("sweep")).length;
+        const own = rows.filter((f) => !f.override && !f.sources.includes("sweep")).length;
+        const heldChecks = new Set(brief.filter((f) => f.needs).map((f) => f.checkId));
+        // Item 274 (row 10): counted as the checks table counts them. A check
+        // the analysis held where the automatic checks raised it is an open
+        // row in the table, not a held one: Mobile read "3 checks could not be
+        // assessed" over a table with two held rows (`tap-target` was the
+        // third). Said apart, so the two lines agree.
+        const raisedIds = new Set(fixes.filter((f) => !f.needs && f.sources.includes("sweep"))
+                                       .map((f) => f.checkId));
+        const heldOnRaised = [...heldChecks].filter((c) => raisedIds.has(c)).length;
+        const held = heldChecks.size - heldOnRaised;
+        // Item 275 (row 5): a check the model returned as NOT_ASSESSABLE is
+        // dropped as a row and drawn as a hold; it is counted once, as the
+        // hold it is.
+        const alsoHeld = (part.brief_dropped_rows ?? []).filter(
+          (d) => heldChecks.has(d.check.split("/").pop() ?? d.check)).length;
+        const dropped = Math.max(0, (part.brief_dropped ?? 0) - alsoHeld);
+        const kept = whole ? part.brief_run?.rows ?? null : null;
+        const undrawn = kept != null ? Math.max(0, kept - rows.length) : 0;
         return (
           <p className="muted brief-accounting">
-            What the analysis returned, as it stands on this page: {merged} merged onto
-            automatic cards · {own} on their own · {held} held · {dropped} dropped
+            What the analysis returned, as it stands on this page:{" "}
+            {kept != null && <>{kept} kept: </>}{merged} merged onto
+            automatic cards · {own} on their own
+            {verdicts > 0 && <> · {verdicts} verdict{verdicts === 1 ? "" : "s"} closing an
+              automatic finding</>}
+            {undrawn > 0 && <> · {undrawn} kept but on no card here</>}
+            {" · "}{dropped} dropped
+            {held > 0 && <>; {held} check{held === 1 ? "" : "s"} could not be assessed</>}
+            {heldOnRaised > 0 && <>; {heldOnRaised} more held where the automatic checks
+              raised {heldOnRaised === 1 ? "it" : "them"}</>}
+            {others.length > 0 && (
+              <>. Also on this page: {others.length} card{others.length === 1 ? "" : "s"} from the{" "}
+                {otherNames.join(" and ")} analys{otherNames.length === 1 ? "is" : "es"}, counted there</>
+            )}
           </p>
         );
       })()}
@@ -4340,13 +5822,19 @@ function ChecksTable({ part, fixes, cost, pops, siteScope = false }: {
 }
 
 /** Registry ids every three-block part page draws (item 166). */
-const PART_LEGEND = ["action-free", "action-paid", "sev-critical", "sev-high", "sev-medium",
-                     "sev-low", "sev-info", "state-candidate", "not-assessed",
-                     "population-crawl", "n-of-m"];
+const PART_LEGEND = ["action-free", "action-paid", "population-crawl", "n-of-m"];
+/** Ids a part draws only where its rows carry them (items 268 row 8, 270
+ *  row 16): each severity, the candidate state and "not measured". The
+ *  legend defines the ones on screen, not the whole vocabulary. */
+const PART_LEGEND_IF_DRAWN = ["sev-critical", "sev-high", "sev-medium", "sev-low", "sev-info",
+                              "state-candidate", "not-assessed"];
 /** Parts whose pictures draw the measurement bands, measured on twenty22 by
- *  the 166 sweep: the snippet ruler, Speed's gauges and strip, the headers
- *  grid, and the accessibility fix order. */
-const BAND_PARTS = new Set(["title-desc", "speed", "security", "a11y"]);
+ *  the 166 sweep: the snippet ruler and Speed's gauges and strip. Not
+ *  Security (item 276, row 9): its grid draws SET / ABSENT / DOES NOT APPLY,
+ *  never "within range" or "past the limit". Not Accessibility (item 279,
+ *  row 9): its fix-order bars are three kinds of work, not three bands, and
+ *  its legend says those (`PART_LEGEND_EXTRA`). */
+const BAND_PARTS = new Set(["title-desc", "speed"]);
 const BAND_LEGEND = ["band-ok", "band-warn", "band-bad", "band-mute", "band-info"];
 /** Words one part's own pictures draw, which the shared lists cannot carry
  *  because no other part draws them (item 166, adoption). Speed labels every
@@ -4356,7 +5844,10 @@ const BAND_LEGEND = ["band-ok", "band-warn", "band-bad", "band-mute", "band-info
  */
 const PART_LEGEND_EXTRA: Record<string, string[]> = {
   speed: ["basis-lab", "basis-field"],
-  "title-desc": ["viewport-mobile", "viewport-desktop"],
+  // Item 273 (row 10): the strip's four counts, in its own words.
+  "title-desc": ["viewport-mobile", "viewport-desktop",
+                 "length-over", "length-fit", "length-short", "length-missing"],
+  a11y: ["fix-kind-chrome", "fix-kind-template", "fix-kind-page"],
 };
 
 export function PartPage({ part, page, facts, states, sweep, lanes, pages, bounds,
@@ -4406,6 +5897,9 @@ export function PartPage({ part, page, facts, states, sweep, lanes, pages, bound
   // here. `glow` is the scroll-link's shared half: the fixes block sets it
   // and the "now" block reads it, and no other part sets it at all.
   const [glow, setGlow] = useState<string | null>(null);
+  // Item 255: the re-check's time is this site's stored re-checks', not a
+  // constant.
+  const pace = usePace(siteId);
   // The layer card a reader pressed (item 143 step BD), cleared when the part
   // changes so a narrow never follows the reader to a part with no such card.
   const [narrow, setNarrow] = useState<string | null>(null);
@@ -4454,18 +5948,38 @@ export function PartPage({ part, page, facts, states, sweep, lanes, pages, bound
     ? <PickedImage dot={picked} onClear={() => setPicked(null)} onPage={onPage} /> : null;
   const mine: Analysis | undefined = [...(lanes?.ready ?? []), ...(lanes?.available ?? [])]
     .find((a) => a.part === part.key);
-  const estCost = mine?.est_cost_default ?? mine?.est_cost ?? null;
+  // Items 276 (row 11), 268 (row 10), 270 (row 17), 275 (row 15): the last
+  // recorded cost of this analysis on this site is the estimate's floor. A
+  // median over every site quoted USD 0.21 for a re-run whose last run here
+  // cost 0.38.
+  const median = mine?.est_cost_default ?? mine?.est_cost ?? null;
+  const lastCost = (part.brief_runs ?? []).find((r) => r.tool === mine?.tool)?.cost
+    ?? (part.brief_run && part.brief_run.tool === mine?.tool ? part.brief_run.cost : null) ?? null;
+  const floored = lastCost != null && (median == null || lastCost > median);
+  const estCost = floored ? lastCost : median;
   // The scan matrix's own figure, so this button and the launcher never
   // quote different times for the same crawl.
-  const estSeconds = pages ? (page ? 1 : pages) * SECS_PER_PAGE.quick : null;
+  const estSeconds = pages ? estimate(pace, "recheck", "quick", page ? 1 : pages) : null;
   return (
     <div className="part-page">
       {/* One disclosure for the shared layout, before its first chip (item
           166): the actions' cost, the checks table's severity and states,
           the counts' population, and the measurement bands where this part's
           pictures draw them. */}
-      <Legend ids={[...PART_LEGEND, ...(BAND_PARTS.has(part.key) ? BAND_LEGEND : []),
-                    ...(PART_LEGEND_EXTRA[part.key] ?? [])]} />
+      {/* Item 250: where a row waits for the operator, the legend defines
+          that state and its three answers. */}
+      {/* Item 276 (row 9, round-1 #14): Security's verdict stands above the
+          legend and the actions. A compromised site makes everything below
+          it beside the point. */}
+      {part.key === "security" && <SecurityVerdict part={part} />}
+      <Legend ids={[...PART_LEGEND,
+                    ...(PART_LEGEND_EXTRA[part.key] ?? []),
+                    ...(states.some((s) => s.to_confirm && belongsTo(part)(s.check_id))
+                        ? TO_CONFIRM_LEGEND : [])]}
+              // Item 273 (row 10): the bands too, defined where a band is
+              // drawn - "for information" stood in Title & description's
+              // legend with no band of that tone on the part.
+              ifDrawn={[...PART_LEGEND_IF_DRAWN, ...(BAND_PARTS.has(part.key) ? BAND_LEGEND : [])]} />
       {part.key === "speed" && onSpeedBrief ? (
         // A SLOT ONLY SPEED FILLS: its actions are a free re-check and the
         // brief at two depths, where every other part has one brief.
@@ -4474,7 +5988,18 @@ export function PartPage({ part, page, facts, states, sweep, lanes, pages, bound
                       note={briefNote} onRecheck={onRecheck} onBrief={onSpeedBrief} />
       ) : (
         <Actions part={part} page={page} sweep={sweep} brief={part.brief_run ?? null}
+                 cardDates={pageFixes.map((f) => f.measuredAt).filter((d): d is string => Boolean(d))}
                  pages={pages} estSeconds={estSeconds} estCost={estCost}
+                 tool={mine?.tool ?? null}
+                 estRuns={floored ? null : mine?.est_samples ?? null}
+                 lastCost={floored ? lastCost : null}
+                 rereads={part.brief_run ? {
+                   rows: part.brief_run.rows,
+                   raised: pageFixes.filter((f) => f.sources.includes("brief")
+                                                   && f.sources.includes("sweep")).length,
+                 } : null}
+                 others={[...new Set([...(lanes?.ready ?? []), ...(lanes?.available ?? [])]
+                   .filter((a) => a.part === part.key && a.tool !== mine?.tool).map((a) => a.tool))]}
                  onRecheck={onRecheck} onRerun={onRerun} busy={busy} briefNote={briefNote}
                  recheckConfirm={recheckConfirm} />
       )}
@@ -4485,7 +6010,9 @@ export function PartPage({ part, page, facts, states, sweep, lanes, pages, bound
           hand. */}
       {part.key === "content" && (
         <p className="part-acts part-generate">
-          <WriteBrief runId={runId} page={page} />
+          <WriteBrief runId={runId} page={page}
+                      price={[...(lanes?.ready ?? []), ...(lanes?.available ?? [])]
+                        .find((a) => a.tool === "content-brief")?.est_cost ?? null} />
         </p>
       )}
       {error && <ErrorNote error={error} />}
@@ -4502,6 +6029,11 @@ export function PartPage({ part, page, facts, states, sweep, lanes, pages, bound
           the site-scope branch and draws only there, but this card must draw
           at page scope too, and above `now`. Folding it into `siteNow` would
           drop the scatter and the wall from the page view. Leave it here. */}
+      {/* Item 251: the Now blocks say when what they draw was measured. One
+          line above them, on every part: the page's own reading in page
+          mode, the part's reference crawl on the whole site, and the range
+          where the part's items were measured on different days. */}
+      <NowMeasured part={part} sweep={sweep} facts={page ? facts : null} />
       {part.key === "images" && (
         <Card className="now-card ib-blocks">
           {chip}
@@ -4514,8 +6046,16 @@ export function PartPage({ part, page, facts, states, sweep, lanes, pages, bound
         ? null
         : page
         ? (facts
-            ? <render.now facts={facts} part={part} bounds={bounds} fixes={allFixes}
-                          page={page} glow={glow} onFix={onFix} onPage={onPage} />
+            ? <>
+                <render.now facts={facts} part={part} bounds={bounds} fixes={allFixes}
+                            page={page} glow={glow} onFix={onFix} onPage={onPage} />
+                {render.pageChecks && (
+                  <ChecksTable part={part} fixes={pageFixes} cost={cost} pops={narrowedPops}
+                         onePage={Boolean(page)}
+                         whole={!page && !scoped}
+                               siteScope={false} sweepAt={sweep?.at ?? null} />
+                )}
+              </>
             : <p className="muted">The crawl recorded nothing about this page, so there is
                 nothing to read back. Re-check the part to fetch it.</p>)
         : render.siteScope
@@ -4528,7 +6068,9 @@ export function PartPage({ part, page, facts, states, sweep, lanes, pages, bound
                   no "not measured" line and no Free/Analysis split - and no
                   row on which `csp-weak`'s gap could even be seen. */}
               <ChecksTable part={part} fixes={pageFixes} cost={cost} pops={narrowedPops}
-                           siteScope />
+                         onePage={Boolean(page)}
+                         whole={!page && !scoped}
+                           siteScope sweepAt={sweep?.at ?? null} />
             </>
         : <>
             {/* The part's site-wide picture, then the free-checks table, then
@@ -4541,6 +6083,7 @@ export function PartPage({ part, page, facts, states, sweep, lanes, pages, bound
                 branch above - they never reach here. */}
             {render.siteNow && <render.siteNow part={part} page="" pages={pages}
                                               pops={pops} onPage={onPage}
+                                              siteId={siteId} onChanged={onStateChanged}
                                               narrow={siteNarrow} onNarrow={setNarrowInHash} />}
             {scoped && (
               <p className="muted narrow-line" role="status">
@@ -4550,7 +6093,9 @@ export function PartPage({ part, page, facts, states, sweep, lanes, pages, bound
               </p>
             )}
             <ChecksTable part={part} fixes={pageFixes} cost={cost} pops={narrowedPops}
-                         siteScope={Boolean(render.siteScope)} />
+                         onePage={Boolean(page)}
+                         whole={!page && !scoped}
+                         siteScope={Boolean(render.siteScope)} sweepAt={sweep?.at ?? null} />
           </>}
       {/* The brief's own fixes, once each, above the per-row cards (brief v20,
           items 147 E2 and 148 G3). DATA-GATED rather than part-gated: only a
@@ -4576,7 +6121,8 @@ export function PartPage({ part, page, facts, states, sweep, lanes, pages, bound
       )}
       <Fixes fixes={fixes} facts={facts} render={render} page={page} part={part}
              cost={cost} onGlow={part.graph ? setGlow : undefined}
-             siteId={siteId} onStateChanged={onStateChanged} />
+             siteId={siteId} onStateChanged={onStateChanged} sweep={sweep} />
+      {!page && render.siteFoot && <render.siteFoot part={part} />}
     </div>
   );
 }

@@ -84,7 +84,8 @@ def test_a_to_confirm_replacement_moves_its_row_to_not_assessable():
 
 
 def test_an_alignment_row_needs_the_gbp_category_and_a_location_page_its_entity():
-    title = "Birch Group - Events Company - Richmond Victoria"   # 48 chars, `-`
+    # 42 chars, `-`, and 396 px - inside the 410 px mobile cut (item 273).
+    title = "Birch - Events Company - Richmond Victoria"
     rows = [_row("ONP/title-entity-alignment", "/", "Travel and Events Company - Birch Group", page_type="other"),
             _row("ONP/title-entity-alignment", "/richmond", title, page_type="location")]
     # No category on the record: every alignment row is not assessable,
@@ -117,8 +118,11 @@ def test_a_replacement_outside_the_bounds_is_dropped_with_the_measurement():
                   _row("ONP/title-length", "/", "keep"),
                   _row("ONP/meta-desc-missing", "/about", DESC_OK)], rules)
     reasons = [d["reason"] for d in got.dropped]
+    # Item 273: the ceiling is the description's pixel cut, said in pixels.
+    from clauditseo.textmetrics import measure
+    from clauditseo.modules.onp import DESC_FONT, DESC_PX
     assert reasons == [f"replacement outside bounds ({len(DESC_SHORT)} < 120)",
-                       f"replacement outside bounds ({len(DESC_LONG)} > 160)",
+                       f"replacement {measure(DESC_LONG, DESC_FONT)['px']} px, cut at {DESC_PX} px on desktop",
                        "replacement outside bounds (19 < 30)"], reasons
     assert [d["row"]["page"] for d in got.dropped] == [BASE + "/team", BASE + "/", BASE + "/about"]
     assert [r.page for r in got.rows] == [BASE + "/", BASE + "/about"]     # `keep` is exempt
@@ -132,7 +136,28 @@ def test_under_neighbourhood_the_ceiling_is_soft_on_location_and_service_pages()
     got = _parse([_row("ONP/title-entity-alignment", "/richmond", long_title, page_type="service"),
                   _row("ONP/title-entity-alignment", "/about", long_title, page_type="other")], rules)
     assert [r.page for r in got.rows] == [BASE + "/richmond"]
-    assert got.dropped[0]["reason"] == f"replacement outside bounds ({len(long_title)} > 60)"
+    # Item 273: off the soft pages the ceiling is the mobile cut, in pixels.
+    from clauditseo.textmetrics import measure
+    from clauditseo.modules.onp import TITLE_FONT, TITLE_PX_MOBILE
+    assert got.dropped[0]["reason"] == (
+        f"replacement {measure(long_title, TITLE_FONT)['px']} px, cut at {TITLE_PX_MOBILE} px on mobile")
+
+
+def test_a_title_inside_sixty_characters_and_past_the_cut_is_dropped():
+    """Item 273: the brief's titles were held to 60 characters while the
+    check fires at the mobile pixel cut, so a wide 60-character title was
+    offered as the fix for the fault it would itself raise."""
+    from clauditseo.textmetrics import measure
+    from clauditseo.modules.onp import TITLE_FONT, TITLE_PX_MOBILE
+    wide = "WWWW WWWW WWWW WWWW WWWW WWWW WWWW WWWW WWWW WWWW WWWW WW"
+    assert len(wide) <= 60 and measure(wide, TITLE_FONT)["px"] > TITLE_PX_MOBILE
+    narrow = "Birch Group - Events Company in Richmond"
+    assert measure(narrow, TITLE_FONT)["px"] <= TITLE_PX_MOBILE
+    rules = contract_rules(Site(domain="birch.fixture", gbp_primary_category="Events Company"))
+    got = _parse([_row("ONP/title-entity-alignment", "/", wide, page_type="other"),
+                  _row("ONP/title-entity-alignment", "/about", narrow, page_type="other")], rules)
+    assert [r.page for r in got.rows] == [BASE + "/about"]
+    assert got.dropped[0]["reason"].endswith(f"cut at {TITLE_PX_MOBILE} px on mobile"), got.dropped
 
 
 def test_under_triple_a_title_with_a_pipe_is_dropped():
