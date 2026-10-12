@@ -257,7 +257,37 @@ export type SkipRow = {
    *  reader can see in the same cell. Found by the guard, which reads the
    *  rendered row rather than the grouping. */
   rooted: boolean;
+  /** In the residual bucket, the first segment most of its pages share,
+   *  where two or more do (screen audits round 3, Headings US-01): under the
+   *  ten pages a template needs, so not called one, but said - twenty22's
+   *  seven H1 -> H3 pages read "no shared template" with five of them under
+   *  `/seo-category/` and the cell's examples alphabetical. */
+  shares?: { prefix: string; pages: number } | null;
 };
+
+/** The residual bucket's largest shared first segment, where two or more of
+ *  its pages share one and it is not the top level. */
+function sharedSegment(urls: string[]): { prefix: string; pages: number } | null {
+  const by = new Map<string, Set<string>>();
+  for (const u of urls) {
+    const p = templatePathOf(u);
+    if (p.split("/").filter(Boolean).length < 2) continue;
+    const seg = templatePrefixOf(p);
+    by.set(seg, (by.get(seg) ?? new Set()).add(p));
+  }
+  const top = [...by.entries()].sort((a, b) => b[1].size - a[1].size || a[0].localeCompare(b[0]))[0];
+  return top && top[1].size >= 2 ? { prefix: top[0], pages: top[1].size } : null;
+}
+
+/** Up to three paths, the shared segment's first so the cluster is visible
+ *  in the cell, then the rest; each list alphabetical. */
+function examplesOf(urls: string[]): string[] {
+  const paths = [...new Set(urls.map(templatePathOf))].sort();
+  const share = sharedSegment(urls);
+  const inShare = share ? paths.filter((p) => templatePrefixOf(p) === share.prefix
+                                              && p.split("/").filter(Boolean).length >= 2) : [];
+  return [...inShare, ...paths.filter((p) => !inShare.includes(p))].slice(0, 3);
+}
 
 /** Which skip sits on which template, from the shapes the server read and
  *  the template rule the causes table above already uses.
@@ -310,9 +340,8 @@ export function skipRows(shapes: HeadingShapes): SkipRow[] {
                   // a query - are one path, and the running product printed
                   // "/apply, /apply, /broker-cheat-sheet" on Acme before
                   // this line said so.
-                  examples: prefix === ""
-                    ? [...new Set(inside.map(templatePathOf))].sort().slice(0, 3)
-                    : [] });
+                  examples: prefix === "" ? examplesOf(inside) : [],
+                  shares: prefix === "" ? sharedSegment(inside) : null });
     }
   }
   return rows.sort((a, b) => b.pages - a.pages
@@ -440,6 +469,10 @@ export function SkipsByTemplate({ shapes }: { shapes: HeadingShapes | null | und
               <td><code className={`ho-shape ho-shape-${r.tone}`}>{r.label}</code></td>
               <td className="ho-tpl">
                 <code>{templateWord(r)}</code>
+                {r.shares && (
+                  <span className="muted"> · {r.shares.pages} of {r.pages} share{" "}
+                    <code>{r.shares.prefix}*</code></span>
+                )}
                 {r.examples.length > 0 && (
                   <span className="muted"> · {r.examples.join(", ")}</span>
                 )}

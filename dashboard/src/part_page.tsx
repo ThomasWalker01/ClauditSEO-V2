@@ -933,6 +933,7 @@ const norm = outlineKey;
  *  each, with the model's tokens and stubs left out. */
 export const outlineCopy = (replacement: string | null) =>
   parseOutline(replacement).map((l) => `H${l.level} ${l.text}`).join("\n");
+const outlineLines = (replacement: string | null) => parseOutline(replacement).length;
 
 /** Write a brief for the page in hand (brief v17 step AX).
  *
@@ -2416,10 +2417,23 @@ function SchemaFixBody({ fix, facts }: { fix: Fix; facts: Facts | null }) {
               : fix.current || "(no block on this page)"}
           </pre>
         </div>
-        <div className="img-panel">
-          <p className="fix-lbl muted">Replace with</p>
-          <pre className="img-markup out-new" tabIndex={0}>{laidOut(fix.replacement ?? "")}</pre>
-        </div>
+        {fix.replacement?.trim() ? (
+          <div className="img-panel">
+            <p className="fix-lbl muted">Replace with</p>
+            <pre className="img-markup out-new" tabIndex={0}>{laidOut(fix.replacement)}</pre>
+          </div>
+        ) : (
+          // Screen audits round 3 (Structured data US-01): a card with no
+          // markup to paste drew an empty "Replace with" - on twenty22's
+          // duplicate Organization, both cards - and the automatic checks'
+          // advice, the change itself, was never shown.
+          <div className="img-panel">
+            <p className="fix-lbl muted">Do this</p>
+            <p className="fix-why schema-advice">
+              {fix.recommendation || "No markup to paste: the change is to the page's blocks, as Now shows."}
+            </p>
+          </div>
+        )}
       </div>
       {/* Item 270 (row 17): "Where: markup" on a card that is the markup
           says nothing the two panels above it do not. */}
@@ -3748,9 +3762,21 @@ function LinksSiteNow({ part }: { part: Category; page: string; pages: number | 
   const hubs = part.brief_hubs ?? [];
   const site = part.links_site ?? null;
   if (!hubs.length && !site) return null;
+  // Screen audits round 3 (Links AC-02): the hub map is the analysis's, and
+  // it sat undated under "What is drawn below was measured 3 Oct" - a model
+  // reading of the 18 Sept crawl presented as that day's measurement. Its
+  // own line says whose it is and which crawl it read.
+  const by = [...(part.brief_runs ?? [])].sort((a, b) => b.at.localeCompare(a.at))[0];
   return (
     <Card className="now-card">
       <h4>Hubs</h4>
+      {hubs.length > 0 && by && (
+        <p className="muted links-hubs-source">
+          From the analysis of {dayOf(by.at)}
+          {by.crawl_at ? `, reading the crawl of ${dayOf(by.crawl_at)}` : ""}: not
+          the automatic checks, and not re-measured since.
+        </p>
+      )}
       {hubs.length ? (
         <div className="table-scroll">
           <table className="findings">
@@ -4401,10 +4427,14 @@ function FixMeasured({ fix, sweep, briefAt }: {
 
 function FixCard({ fix, facts, render, onCopy, copied, n, fixHeld = false,
                    awaiting = false, siteId, onStateChanged, earlierBrief = false,
-                   sweep = null, briefAt = null, done = null }: {
+                   sweep = null, briefAt = null, done = null, rivals = [] }: {
   /** The card's own "fixed?" control, where the part offers one (item 279,
    *  row 6). */
   done?: ReactNode;
+  /** Other cards on this page proposing a different whole outline (screen
+   *  audits round 3, Headings AC-04): each is a full replacement, so pasting
+   *  two is pasting the duplicates one of them removes. */
+  rivals?: { check: string; lines: number }[];
   /** The part's reference readings, for a card with no row of its own
    *  (item 251). */
   sweep?: SweepRun | null; briefAt?: string | null;
@@ -4583,6 +4613,17 @@ function FixCard({ fix, facts, render, onCopy, copied, n, fixHeld = false,
           </p>
         </>
       ) : <render.body fix={fix} facts={facts} />}
+      {rivals.length > 0 && !fix.needs && !fix.override && (
+        <p className="muted fix-rivals" role="note">
+          {/* Screen audits round 3, Headings AC-04: /web-design1/ carried a
+              28-line outline on two cards and a 24-line one on a third. */}
+          This page has {rivals.length === 1 ? "another card" : `${rivals.length} other cards`} with
+          a different corrected outline ({rivals.map((r) =>
+            `${plainName(r.check)}, ${r.lines} line${r.lines === 1 ? "" : "s"}`).join("; ")}
+          , against {outlineLines(fix.replacement)} here). Each is a whole outline and they are
+          not merged: paste one, and carry the other cards' changes into it.
+        </p>
+      )}
       {/* Item 270 (row 10): the answers after what they answer - under Now
           and Replace with, not above them. */}
       {awaiting && siteId && !closedByAnalysis(fix) && (
@@ -4799,8 +4840,33 @@ function Fixes({ fixes, facts, render, page, part, cost, onGlow, siteId, onState
   // row that says it also resolves five others is one change, and the
   // card names all six. The checks it closes are dropped from the list so
   // they are not counted twice - here or in the clean line.
-  const closed = new Set(fixes.flatMap((f) => (f.alsoResolves ?? []).map(
-    (c) => `${c.split("/").pop()}|${f.image ?? ""}|${f.page}`)));
+  // Except a removal (screen audits round 3, Structured data US-01): the
+  // analysis's sameAs card said it also resolved twenty22's duplicate
+  // Organization block, and its change added `subjectOf` - so the one
+  // certain free fault on the home page had no card that removes it. A
+  // second block is closed only by a change that removes one, so its card
+  // stays unless the closer says so.
+  const removes = (f: Fix) => /\b(remove|delete|drop|merge)\b/i.test(f.replacement ?? "");
+  const closed = new Set(fixes.flatMap((f) => (f.alsoResolves ?? [])
+    .filter((c) => !REMOVAL_CHECKS.has(c.split("/").pop() ?? c) || removes(f))
+    .map((c) => `${c.split("/").pop()}|${f.image ?? ""}|${f.page}`)));
+  // Screen audits round 3 (Headings AC-04): the cards on one page whose
+  // corrected outlines differ, each named on the others.
+  const rivalsOf = (f: Fix) => {
+    if (part.key !== "headings" || !f.replacement || f.needs) return [];
+    const mine = outlineCopy(f.replacement);
+    if (!mine) return [];
+    const seen = new Set<string>([mine]);
+    return shownFixes
+      .filter((o) => o !== f && o.page === f.page && o.replacement && !o.needs && !o.override)
+      .filter((o) => {
+        const theirs = outlineCopy(o.replacement);
+        if (!theirs || seen.has(theirs)) return false;
+        seen.add(theirs);
+        return true;
+      })
+      .map((o) => ({ check: o.checkId, lines: outlineLines(o.replacement) }));
+  };
   // Item 270: overtaken rows leave the cards for one folded line per check.
   const passed = new Map<string, Fix[]>();
   for (const f of fixes.filter(overtaken)) passed.set(f.check, [...(passed.get(f.check) ?? []), f]);
@@ -5034,6 +5100,7 @@ function Fixes({ fixes, facts, render, page, part, cost, onGlow, siteId, onState
                   {shown.map((f) => (
                     <FixCard key={f.key} fix={f} facts={facts} render={render}
                              onCopy={copy} copied={copied} n={numberOf(f)}
+                             rivals={rivalsOf(f)}
                              fixHeld={Boolean(f.needs) && firing.has(`${f.checkId}|${pathOf(f.page)}`)}
                              awaiting={f.candidate && !f.needs && Boolean(f.toConfirm)}
                              earlierBrief={!!part.brief_run?.brief_changed}
@@ -5514,7 +5581,9 @@ function ChecksTable({ part, fixes, cost, pops, siteScope = false, sweepAt = nul
                     as nothing there. */}
                 {(() => {
                   const heldN = mine.filter((r) => r.counted === 0 && /not assessable/.test(r.state)).length;
-                  return heldN ? ` open · ${heldN} held` : "";
+                  // "in this table": the part's own count is every held check;
+                  // a held check the automatic checks raised is listed open.
+                  return heldN ? ` open · ${heldN} held in this table` : "";
                 })()}</span>
               {away && (
                 <span className="muted checks-folded">
@@ -5835,6 +5904,10 @@ const PART_LEGEND_IF_DRAWN = ["sev-critical", "sev-high", "sev-medium", "sev-low
  *  row 9): its fix-order bars are three kinds of work, not three bands, and
  *  its legend says those (`PART_LEGEND_EXTRA`). */
 const BAND_PARTS = new Set(["title-desc", "speed"]);
+/** The checks whose fix is taking a block out (screen audits round 3,
+ *  Structured data US-01): another card closes one only if its change
+ *  removes or merges a block. */
+const REMOVAL_CHECKS = new Set(["schema-redundant-block", "schema-duplicate-id"]);
 const BAND_LEGEND = ["band-ok", "band-warn", "band-bad", "band-mute", "band-info"];
 /** Words one part's own pictures draw, which the shared lists cannot carry
  *  because no other part draws them (item 166, adoption). Speed labels every

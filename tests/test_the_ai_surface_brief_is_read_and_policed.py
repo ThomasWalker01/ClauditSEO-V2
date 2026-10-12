@@ -489,3 +489,40 @@ def test_a_site_row_the_sweep_raised_on_no_page_is_said_raised():
                      "sweep_unassessed": {}},
                     rows=[_row("AIS/llms-txt-missing", "https://site.test/")])
     assert "the automatic checks measured it and raised it for the site" in p.dropped[0]["reason"]
+
+
+def test_a_drop_names_the_audit_it_read_and_the_missing_file():
+    # Screen audits round 3, AI surface IP-02: `llms-txt-stale` read "clean",
+    # "not assessable: no /llms.txt" and "measured it and did not raise it" on
+    # one screen, and the drop was the 18 Sept audit's while the free line
+    # beside it was the current reading's. The drop now says both.
+    p = _parse_with({"sweep_raised": {"llms-txt-missing": set()}, "sweep_measured": {"AIS"},
+                     "sweep_unassessed": {}, "sweep_at": "2026-09-18"},
+                    rows=[_row("AIS/llms-txt-stale", "https://site.test/"),
+                          _row("AIS/entity-unresolvable", "https://site.test/")])
+    stale, entity = (d["reason"] for d in p.dropped)
+    assert ("did not raise it on the audit of 2026-09-18 this analysis read, "
+            "as the site publishes no llms.txt for it to judge, so") in stale
+    assert "publishes no llms.txt" not in entity
+    assert "on the audit of 2026-09-18 this analysis read" in entity
+
+
+def test_a_pointer_at_the_rows_own_passage_is_the_passage():
+    # Screen audits round 3, AI surface US-01: twenty22's three paid
+    # answer-liftable rows wrote "see passage - placed as stated" where the
+    # change goes, and the pointer rule held all three as needing "the row it
+    # refers to". The row it refers to is itself: its `passage` is the change.
+    text = "Gate Six designs and hosts websites from Bendigo, Victoria."
+    p = _parse_with({}, rows=[_row("AIS/answer-liftable", "https://site.test/",
+                                   passage=text,
+                                   replacement="see passage - placed as stated")])
+    assert [r.check for r in p.rows] == ["AIS/answer-liftable"]
+    assert p.rows[0].replacement == text
+    assert not p.not_assessable
+
+
+def test_a_pointer_at_another_row_says_which():
+    p = _parse_with({}, rows=[_row("AIS/answer-liftable", "https://site.test/",
+                                   replacement="see the /about/ row")])
+    assert not p.rows
+    assert p.not_assessable[0]["needs"] == 'the row it refers to ("the /about/ row")'

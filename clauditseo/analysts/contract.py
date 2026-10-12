@@ -317,6 +317,10 @@ class Rules:
     #: not measured by the automatic checks, so the analysis's row for it is
     #: not one the sweep owns. None where the caller gave no run.
     sweep_unassessed: dict[str, str] | None = None
+    #: When that sweep ran (YYYY-MM-DD), so a drop that says what it measured
+    #: names which audit: the part page's free line is the current reading's,
+    #: and the two disagreed undated (screen audits round 3, AI surface IP-02).
+    sweep_at: str | None = None
     #: Item 275 (row 3): the paths the run's sitemaps list. A row about a URL
     #: the site publishes but the crawl did not fetch names a page outside
     #: the page set by construction. None where no evidence was given.
@@ -344,7 +348,30 @@ def _headings_guard(row: "Row", rules: "Rules") -> tuple[str, str] | None:
     `h1-triple-restated` reads a page's triple, so a page typed `blog` or
     `other` has none to restate and the row is a hold, not a `high`.
     `h1-title-verbatim` says the H1 repeats the title; where the two differ
-    the row refutes itself."""
+    the row refutes itself.
+
+    And `h1-triple-restated` against a blank in the site record (screen
+    audits round 3, Headings AC-01, AC-02): the row's own words say which
+    entity the TRIPLES input gave as n/a. With neither entity, or no triple at
+    all, there is nothing to restate - twenty22's `/` came back PASS-OVERRIDE
+    and drew as a verdict closing a finding nobody raised, and `/website-seo/`
+    led the part as its one `high`. Where the H1 names the primary entity and
+    only the location is n/a, the row is a blank in the record, and Confirm
+    under it filed that blank as the site's fault. Both are holds naming the
+    field."""
+    if row.check == "ONP/h1-triple-restated":
+        said = " ".join(filter(None, [row.evidence, row.note])).lower()
+        location_na = bool(re.search(r"location[ _]entity[^.;|]{0,40}n/a", said)
+                           or ("location entity absent" in said and "n/a" in said))
+        primary_na = bool(re.search(r"primary[ _]entity (also )?n/a", said))
+        if "no page triple" in said or (primary_na and location_na):
+            return ("hold", "the site record gives this page no triple - no primary or "
+                            "location entity - so there is nothing for the H1 to restate "
+                            "until the GBP primary category and the page's location are set")
+        if location_na and "names primary entity" in said \
+                and not re.search(r"not clearly|generic", said):
+            return ("hold", "the page's location entity, which the site record's "
+                            "location pages leave empty: the H1 names the primary entity")
     facts = (rules.page_facts or {}).get(_path(row.page))
     if facts is None:
         return None
@@ -675,11 +702,21 @@ def enforce(parsed: "Parsed", rules: Rules) -> "Parsed":
         if rep.upper().startswith(TO_CONFIRM):
             not_assessable(row, _needs_of(rep))
             continue
+        # Screen audits round 3 (AI surface US-01): "see passage - placed as
+        # stated" points at the row's OWN `passage` field, which the prompt
+        # taught. Held as a pointer, twenty22's three paid answer-liftable
+        # passages were stored and never drawn; the passage is the change.
+        own = str(row.extra.get("passage") or "").strip()
+        if own and re.match(r"\s*see\s+(the\s+)?passage\b", rep, re.I):
+            row.replacement = rep = own
         if _POINTER.match(rep):
             # Item 209: "see /<slug>/ article-like template row" is not a
             # change, it is a pointer at another row - on Speed, at one the
             # contract had dropped - and it was offered with `copy change`.
-            not_assessable(row, "the row it refers to")
+            # Named, quoted: "needs the row it refers to" named no row.
+            pointed = re.sub(r"^\s*see\s+", "", rep, flags=re.I).strip()
+            pointed = pointed if len(pointed) <= 60 else pointed[:59].rstrip() + "…"
+            not_assessable(row, f"the row it refers to (\"{pointed}\")")
             continue
         target = _rename_target_is_live(row, rep, rules)
         if target:
@@ -1126,7 +1163,8 @@ def parse(report: str, checks: list[str], page_set: list[str],
                 check, raw, llms_txt_build=str((inputs or {}).get("LLMS_TXT_BUILD") or "")
                 .strip().lower() == "true",
                 unassessed=rules.sweep_unassessed if rules else None,
-                raised=rules.sweep_raised if rules else None)
+                raised=rules.sweep_raised if rules else None,
+                sweep_at=rules.sweep_at if rules else None)
             if policed is None and reason == _ais_block.HOLD:
                 parsed.not_assessable.append({
                     "check": check, "page": raw.get("page"),

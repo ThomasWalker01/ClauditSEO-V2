@@ -562,6 +562,11 @@ def test_skips_group_by_shape_and_template(browser, served):
     # top-level pages with `/news/1` printed beside the claim.
     assert shaped[3][1].startswith("no shared template"), shaped[3][1]
     assert "/news/1, /news/2, /news/3" in shaped[3][1], shaped[3][1]
+    # But it says the segment they share (screen audits round 3, Headings
+    # US-01: five of seven under /seo-category/ read "no shared template"
+    # with the paths alphabetical). The top-level row shares none.
+    assert "4 of 4 share /news/*" in shaped[3][1], shaped[3][1]
+    assert " share " not in shaped[2][1], shaped[2][1]
     # Rows of one page collapse rather than becoming a list of pages.
     ones = [r for r in rows if "other page" in r[0]]
     assert ones and ones[0][0].startswith("2 other pages, one each"), ones

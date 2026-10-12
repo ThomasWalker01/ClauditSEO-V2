@@ -469,9 +469,21 @@ export function ClientLanes({ siteId, page, current, categories, headline, lanes
   if (outstanding > 0) {
     // One action: the figure is already the record link, and a second target
     // onto the same place is the `target-size` collision noted above.
-    const open = page ? outstanding : (current?.open ?? outstanding);
-    const back = !page && current && current.regressed > 0
-      ? ` and ${current.regressed} regressed` : "";
+    // Screen audits round 3 (landing IP-02, AC-04): the split is the parts',
+    // the population the figure counts. It read `standing_by_state`'s rows -
+    // "591 open and 13 regressed" under 496, which counts one per card and
+    // leaves out rows a newer reading overtook - and in page mode it printed
+    // all 43 as open under "Regressed on this page 11".
+    const open = outstanding - regressed;
+    const back = regressed > 0 ? ` and ${regressed} regressed` : "";
+    // The record's door lists rows, not cards, so where the two differ the
+    // sentence says by how much and why, rather than leaving the reader to
+    // find 604 behind a door marked 496 (AC-03).
+    const rows = !page && current ? current.open + current.regressed : outstanding;
+    const rowsNote = rows !== outstanding
+      ? ` The record lists ${rows} rows: a page an automatic check and an analysis `
+        + "both hold is one card here, and rows a newer reading overtook are not counted."
+      : "";
     // "Outstanding in the record", not "Outstanding" (audit F5): this is
     // `standing_by_state` over every audit, and it sat bare beside a primary
     // action counting this run's findings. On Birch the two read 167 and 164,
@@ -481,7 +493,7 @@ export function ClientLanes({ siteId, page, current, categories, headline, lanes
                    detail: `${open} open${back}${page ? "" : " across every audit"}, `
                            + `across ${withOpen} part${withOpen === 1 ? "" : "s"}`
                            + `${page ? " on this page" : ""}. The worst are ranked first, `
-                           + "so the first you open is the one that matters.",
+                           + "so the first you open is the one that matters." + rowsNote,
                    // One action, and it is the record link below (item 196).
                    // This lane used to sell triage - "Triage ranks them so the
                    // first you open is the one that matters" - which was a

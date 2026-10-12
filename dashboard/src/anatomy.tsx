@@ -2642,7 +2642,7 @@ export function ReplacementTable({ states, belongs, findings, dropped = 0, notAs
     <p className="muted rep-dropped">
       {dropped > 0 ? `${dropped} row${dropped === 1 ? "" : "s"} dropped` : ""}
       {dropped > 0 && notAssessable > 0 ? " · " : ""}
-      {notAssessable > 0 ? `${notAssessable} not assessable` : ""}
+      {notAssessable > 0 ? `${notAssessable} check${notAssessable === 1 ? "" : "s"} held` : ""}
       {" — see report"}
     </p>
   );
@@ -4855,7 +4855,13 @@ export function AnatomyView({ siteId, a, states, selected, onSelect, rerunAsk = 
                                           || current.check_prefixes?.length) ? belongsTo(current) : null}
                                 findings={current.findings}
                                 dropped={current.brief_dropped ?? 0}
-                                notAssessable={current.brief_not_assessable ?? 0} />
+                                // Screen audits round 3 (Structured data IP-01):
+                                // in checks, from the page-filtered holds, as the
+                                // part's count and provenance say them. The
+                                // record-wide sum read "7" in page mode beside
+                                // three hold lines.
+                                notAssessable={new Set((current.brief_held ?? [])
+                                  .map((h) => h.check.split("/").pop())).size} />
               {/* Briefs for this part, under the causes they would explain
                   (brief v2 step E). */}
               <h4 className="cause-briefs">

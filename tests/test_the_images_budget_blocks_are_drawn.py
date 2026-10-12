@@ -423,7 +423,10 @@ def test_the_scatter_draws_one_dot_per_measured_image(browser, served):
         pg.close()
     assert got["dots"] == len(DRAWABLE) + len(SHOP_IMAGES)
     # Every dot is a control, which is what a click handler owes.
-    assert set(got["roles"]) == {"button"} and set(got["tabs"]) == {"0"}
+    # And one tab stop for the chart (screen audits round 3, Images UX-01:
+    # 108 dots, 108 tab stops before the checks table); the rest are -1.
+    assert set(got["roles"]) == {"button"}
+    assert got["tabs"].count("0") == 1 and set(got["tabs"]) <= {"0", "-1"}
     assert all(n and "kilobytes" in n for n in got["names"])
     # The four tones, and the mute dot drawn smaller than the rest.
     tones = dict(zip([d.split("/")[-1] for d in DRAWABLE], got["states"]))
@@ -578,6 +581,33 @@ def test_a_dot_selects_its_image_and_the_blocks_below_follow(browser, served):
         pg.wait_for_function("() => !document.querySelector('.ib-picked-chip')", timeout=15_000)
         cleared = pg.evaluate(_PICK_JS)
         assert cleared["pressed"] == 0 and not cleared["picked"], cleared
+    finally:
+        pg.close()
+
+
+@_mark
+def test_the_arrow_keys_walk_the_dots_from_one_tab_stop(browser, served):
+    """Screen audits round 3, Images UX-01: the chart is one tab stop and the
+    arrow keys move between its dots, left to right, the tab stop following
+    the focus; Tab then leaves the chart rather than visiting every dot."""
+    base, sites = served
+    pg = browser.new_page(viewport={"width": 1568, "height": 1080})
+    try:
+        _open(pg, base, sites["full"])
+        first = pg.locator('.ib-scatter .ib-dot[tabindex="0"]')
+        assert first.count() == 1
+        first.focus()
+        start = pg.evaluate("() => document.activeElement.getAttribute('aria-label')")
+        pg.keyboard.press("ArrowRight")
+        moved = pg.evaluate("""() => ({
+          label: document.activeElement.getAttribute('aria-label'),
+          isDot: document.activeElement.classList.contains('ib-dot'),
+          stops: document.querySelectorAll('.ib-scatter .ib-dot[tabindex="0"]').length,
+          focusedIsStop: document.activeElement.getAttribute('tabindex') === '0'})""")
+        assert moved["isDot"] and moved["label"] != start, (start, moved)
+        assert moved["stops"] == 1 and moved["focusedIsStop"], moved
+        pg.keyboard.press("Tab")
+        assert not pg.evaluate("() => document.activeElement.classList.contains('ib-dot')")
     finally:
         pg.close()
 

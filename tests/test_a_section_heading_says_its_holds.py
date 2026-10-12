@@ -14,4 +14,4 @@ SRC = Path(__file__).resolve().parents[1] / "dashboard" / "src" / "part_page.tsx
 
 def test_the_heading_counts_holds():
     src = SRC.read_text(encoding="utf-8")
-    assert 'return heldN ? ` open · ${heldN} held` : "";' in src
+    assert 'return heldN ? ` open · ${heldN} held in this table` : "";' in src

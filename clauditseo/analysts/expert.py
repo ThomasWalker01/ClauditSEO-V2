@@ -4696,7 +4696,8 @@ def _sweep_facts(conn: sqlite3.Connection | None, run_id: str | None) -> dict:
     if conn is None or not run_id:
         return {}
     from .contract import _path
-    run = conn.execute("SELECT dimensions FROM audit_runs WHERE id=?", (run_id,)).fetchone()
+    run = conn.execute("SELECT dimensions, started_at FROM audit_runs WHERE id=?",
+                       (run_id,)).fetchone()
     if not run:
         return {}
     raised: dict[str, set[str]] = {}
@@ -4712,7 +4713,8 @@ def _sweep_facts(conn: sqlite3.Connection | None, run_id: str | None) -> dict:
     free = [c for c, cost in check_costs().items() if "/" in c and cost == FREE]
     unassessed = _runs.not_assessed_payload(conn, run_id, checks_by_part={"all": free}).get("all", {})
     return {"sweep_raised": raised, "sweep_measured": set(json.loads(run["dimensions"] or "[]")),
-            "sweep_unassessed": unassessed}
+            "sweep_unassessed": unassessed,
+            "sweep_at": (run["started_at"] or "")[:10] or None}
 
 
 def _rename_facts(site: Any, evidence: dict | None) -> dict:

@@ -38,3 +38,36 @@ def test_the_location_checks_are_said_once_where_no_page_is_a_location():
     import inspect
     src = inspect.getsource(contract.enforce)
     assert "no page on the site record is typed location" in src
+
+
+def _said(evidence, note="", status="FAIL"):
+    r = _row("ONP/h1-triple-restated", page="/x/")
+    r.evidence, r.note, r.status = evidence, note, status
+    return contract._headings_guard(r, Rules())
+
+
+def test_a_page_with_no_triple_is_held_whatever_its_status():
+    # Screen audits round 3, Headings AC-01 and AC-02: twenty22's `/` came
+    # back PASS-OVERRIDE "no page triple supplied", drawn as a verdict closing
+    # nothing, and `/website-seo/` led the part as its one `high` on
+    # "location_entity n/a per TRIPLES, primary_entity also n/a".
+    kind, why = _said('h1 "SEO" - no page triple supplied (page_type other, primary_entity n/a)',
+                      status="PASS-OVERRIDE")
+    assert kind == "hold" and "no triple" in why
+    kind, why = _said('h1 "Search Engine Optimisation" - location entity absent '
+                      "(location_entity n/a per TRIPLES, primary_entity also n/a)")
+    assert kind == "hold" and "the GBP primary category" in why
+
+
+def test_a_missing_location_alone_is_a_record_blank_not_a_fault():
+    kind, why = _said('h1 "WebSite Design" - names primary entity (Website Design) but '
+                      "location entity absent (n/a per TRIPLES)", status="WARN")
+    assert kind == "hold" and "location entity" in why and "location pages" in why
+
+
+def test_an_h1_that_misses_its_primary_entity_still_stands():
+    # The row has a fault of its own besides the blank: it stays a row.
+    assert _said('h1 "Update Your Website" - names a generic action, not clearly the '
+                 'primary_entity "Website Redesign" per TRIPLES, and location entity absent',
+                 note="location entity still absent (n/a)", status="WARN") is None
+    assert _said('h1 "Gate Six" - brand only, primary entity absent') is None

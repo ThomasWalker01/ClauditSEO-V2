@@ -153,7 +153,8 @@ HOLD = "hold"
 
 def police_row(check: str, raw: dict, *, llms_txt_build: bool = False,
                unassessed: dict[str, str] | None = None,
-               raised: dict[str, set[str]] | None = None
+               raised: dict[str, set[str]] | None = None,
+               sweep_at: str | None = None
                ) -> tuple[dict | None, str | None, list[str]]:
     """One AI surface row, judged. Returns (the row as it may be stored or
     None, the reason it was dropped, notes on what was changed). A reason of
@@ -201,7 +202,16 @@ def police_row(check: str, raw: dict, *, llms_txt_build: bool = False,
         found = ("did not raise it" if paths is None
                  else f"raised it on {len(paths)} page{'s' if len(paths) != 1 else ''}" if paths
                  else "raised it for the site")
-        return None, (f"free check; the automatic checks measured it and {found}, "
+        # Screen audits round 3 (AI surface IP-02): `llms-txt-stale` read
+        # "clean", "not assessable: no /llms.txt" and "measured it and did not
+        # raise it" on one screen. Not raised because there is no file to
+        # judge is said as that, and the drop names the audit it read, since
+        # the part page's free line is the current reading's.
+        when = f" on the audit of {sweep_at} this analysis read" if sweep_at else ""
+        absent = (", as the site publishes no llms.txt for it to judge"
+                  if paths is None and bare.startswith("llms-txt") and "llms-txt-missing" in raised
+                  else "")
+        return None, (f"free check; the automatic checks measured it and {found}{when}{absent}, "
                       "so the analysis may only read it"), notes
     if bare == "llms-txt-authored" and not llms_txt_build:
         return None, ("llms-txt-authored may only be emitted when LLMS_TXT_BUILD is true, "

@@ -153,6 +153,13 @@ export function BytesForPixels({ payload, page, picked = null, onPick }: {
   onPick?: (dot: ImageDot | null) => void;
 }) {
   const [tip, setTip] = useState<{ dot: ImageDot; x: number; y: number } | null>(null);
+  // Screen audits round 3 (Images UX-01): one tab stop for the whole chart,
+  // not one per dot. twenty22 drew 108 dots, each `tabIndex=0`, in stacks of
+  // 8 to 12 at one point, and a keyboard reader tabbed 108 times to reach the
+  // checks table. The arrow keys move between dots, left to right (a roving
+  // tab stop); Tab leaves the chart.
+  const [roving, setRoving] = useState(0);
+  const chart = useRef<SVGSVGElement | null>(null);
   if (!payload) return null;
   const { budget } = payload;
   // Item 241: a dot is a distinct image, on every page it is placed on.
@@ -240,6 +247,27 @@ export function BytesForPixels({ payload, page, picked = null, onPick }: {
   const flatAt = Math.min(Math.max((budget.image_kb * KB) / budget.bytes_per_pixel,
                                    PX_AXIS_LO * PX_AXIS_LO * 4), pxMax);
 
+  // Where each dot is drawn, its place in the arrow keys' order (across, then
+  // up), and the dots that share its point: a stack reads "3 of 9 at this
+  // point" so the reader knows the next arrow stays where it is.
+  const xy = here.map((d) => [Math.min(lx(d.w * d.h), R - 6), ly(d.kb)] as const);
+  const order = here.map((_, n) => n)
+    .sort((a, b) => xy[a][0] - xy[b][0] || xy[b][1] - xy[a][1]);
+  const rank = new Map(order.map((n, i) => [n, i] as const));
+  const spot = (n: number) => `${Math.round(xy[n][0])}:${Math.round(xy[n][1])}`;
+  const stacks = new Map<string, number[]>();
+  for (const n of order) stacks.set(spot(n), [...(stacks.get(spot(n)) ?? []), n]);
+  const stackNote = (n: number) => {
+    const s = stacks.get(spot(n)) ?? [];
+    return s.length > 1 ? ` (${s.indexOf(n) + 1} of ${s.length} at this point)` : "";
+  };
+  const current = order[Math.min(roving, order.length - 1)] ?? 0;
+  const step = (from: number, by: number) => {
+    const i = Math.max(0, Math.min(order.length - 1, (rank.get(from) ?? 0) + by));
+    setRoving(i);
+    chart.current?.querySelectorAll<SVGCircleElement>("circle.ib-dot")[order[i]]?.focus();
+  };
+
   const named = (d: ImageDot) =>
     `${fileOf(d.src)}, ${d.w} by ${d.h} pixels${d.at ? ` at ${d.at} wide` : ""}, ${d.kb} kilobytes`
     + (d.weight_source === "header" ? " by the server's size header" : "")
@@ -255,11 +283,12 @@ export function BytesForPixels({ payload, page, picked = null, onPick }: {
           is not. A labelled group is what a chart whose marks are controls
           actually is, and the label below is still the sentence a reader who
           cannot see it needs. */}
-      <svg className={`ib-scatter${pickedKey ? " ib-has-pick" : ""}`} viewBox="0 0 1100 420" role="group"
+      <svg ref={chart} className={`ib-scatter${pickedKey ? " ib-has-pick" : ""}`} viewBox="0 0 1100 420" role="group"
            aria-label={`${here.length} images ${scope}, plotted by rendered size against `
                        + `transferred weight, against a ceiling of `
                        + `${bytes(budget.bytes_per_pixel)} a pixel and a `
-                       + `${budget.floor_kb} KB floor`}>
+                       + `${budget.floor_kb} KB floor. Arrow keys move between the images; `
+                       + "Tab leaves the chart"}>
         <polygon className="ib-band"
                  points={`${lx(samples[0])},${ly(budget.floor_kb)} ${band} `
                          + `${R},${ly(budget.floor_kb)}`} />
@@ -300,12 +329,13 @@ export function BytesForPixels({ payload, page, picked = null, onPick }: {
                   className={`ib-dot ib-${d.state}${d.weight_source === "header" ? " ib-header" : ""}`
                              + (pickedKey && dotKey(d) === pickedKey ? " ib-picked" : "")}
                   aria-pressed={Boolean(pickedKey && dotKey(d) === pickedKey)}
-                  cx={Math.min(lx(d.w * d.h), R - 6)} cy={ly(d.kb)} r={d.state === "mute" ? 3 : 4.5}
-                  role="button" tabIndex={0} aria-label={named(d)}
+                  cx={xy[n][0]} cy={xy[n][1]} r={d.state === "mute" ? 3 : 4.5}
+                  role="button" tabIndex={n === current ? 0 : -1} aria-label={named(d) + stackNote(n)}
                   onMouseEnter={(e) => setTip({ dot: d, x: e.clientX, y: e.clientY })}
                   onMouseMove={(e) => setTip({ dot: d, x: e.clientX, y: e.clientY })}
                   onMouseLeave={() => setTip(null)}
                   onFocus={(e) => {
+                    setRoving(rank.get(n) ?? 0);
                     const box = (e.target as SVGCircleElement).getBoundingClientRect();
                     setTip({ dot: d, x: box.left, y: box.top });
                   }}
@@ -313,6 +343,10 @@ export function BytesForPixels({ payload, page, picked = null, onPick }: {
                   onClick={() => toggle(d)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(d); }
+                    else if (e.key === "ArrowRight" || e.key === "ArrowUp") { e.preventDefault(); step(n, 1); }
+                    else if (e.key === "ArrowLeft" || e.key === "ArrowDown") { e.preventDefault(); step(n, -1); }
+                    else if (e.key === "Home") { e.preventDefault(); step(n, -order.length); }
+                    else if (e.key === "End") { e.preventDefault(); step(n, order.length); }
                   }} />
         ))}
       </svg>

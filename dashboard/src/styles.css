@@ -4190,6 +4190,8 @@ button.seccard[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--focus, var(--a
 .links-dist { font-size: .8rem; margin: .25rem 0 .75rem; }
 .prov-runs { font-size: .78rem; margin: .25rem 0 0; padding-left: 1.1rem; }
 .links-hub { overflow-wrap: anywhere; }
+/* The hub map's source and date (screen audits round 3, Links AC-02). */
+.links-hubs-source { font-size: .8rem; margin: 0 0 .5rem; }
 .ai-register summary h3 { display: inline; margin: 0; }
 .ai-absent code { font-size: .8rem; }
 .ai-candidates { margin: .5rem 0; padding-left: 1.1rem; }
@@ -4352,6 +4354,10 @@ button.seccard[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--focus, var(--a
 .part-fix-overtaken-pages { margin: var(--s2) 0 0; font-size: .8rem; }
 /* Item 269: an analysis verdict, said as one sentence and not as a change. */
 .fix-override { color: var(--text-soft); }
+/* Another card on the page proposes a different whole outline (screen audits round 3, Headings AC-04). */
+.fix-rivals { font-size: .8rem; margin: .4rem 0 0; }
+/* A structured-data card with no markup to paste says the change (screen audits round 3, Structured data US-01). */
+.schema-advice { white-space: normal; margin: .25rem 0 0; }
 /* Item 181: the landing's headline is the page's h1, drawn exactly as the
    sentence it wraps - the heading adds structure, not a look. */
 .bl-h1 { margin: 0; font: inherit; }

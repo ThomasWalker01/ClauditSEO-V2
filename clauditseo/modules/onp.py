@@ -1949,8 +1949,20 @@ class OnPageModule:
                                      "sources": sorted({str(b.get("source"))
                                                         for b in blocks}),
                                      "basis": "the blocks' own @type and @id"},
-                           recommendation="Keep one block per subject; a plugin and a "
-                                          "theme both writing it is the usual cause.")
+                           # Screen audits round 3 (Structured data US-01):
+                           # the change itself, naming the writer where the
+                           # blocks say which it is.
+                           recommendation=(
+                               f"Remove the second {key.split('|')[0]} block, keeping one "
+                               "per subject"
+                               + (f"; every one here is written by "
+                                  f"{sorted({str(b.get('source')) for b in blocks})[0]}, so "
+                                  "its output is doubled - check its settings for a second "
+                                  "copy, or a theme writing the same entity"
+                                  if len({str(b.get("source")) for b in blocks}) == 1
+                                  and blocks[0].get("source") else
+                                  "; a plugin and a theme both writing it is the usual cause")
+                               + "."))
 
             expected = SCHEMA_FOR_TYPE.get(page_type)
             if expected and not (types & set(expected)):

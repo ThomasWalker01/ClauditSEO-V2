@@ -477,5 +477,12 @@ def audit_entities(entities: list[dict]) -> list[dict]:
                 "properties": [entity_id],
                 "summary": f"@id {entity_id} is declared by {count} entities, so "
                            "references resolve ambiguously.",
+                # Screen audits round 3 (Structured data US-01): the fallback
+                # advice - "add the missing properties, or remove the type" -
+                # is for a type short of properties, and was this card's whole
+                # Replace-with. The fix for two nodes on one @id is one node.
+                "instead": f"Keep one node for {entity_id}: remove the second block "
+                           "that declares it, or merge the two into one. Where a "
+                           "plugin and a theme both write it, turn one of them off.",
             })
     return issues
