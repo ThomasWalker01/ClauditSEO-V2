@@ -98,6 +98,9 @@ _MOBILE_UA = (f"Mozilla/5.0 (Linux; Android 12; Pixel 5) AppleWebKit/537.36 "
 
 _RENDER_TIMEOUT_MS = 30_000
 _SETTLE_MS = 2_500
+#: The most the trace waits after `load` for the network to go quiet, so a
+#: lazily loaded hero is in the LCP it reads (screen audits round 4).
+_LCP_QUIET_MS = 8_000
 #: The head, "as fetched", capped — the brief asks for the first 4 KB.
 _HEAD_CAP = 4096
 
@@ -424,6 +427,16 @@ def _trace_one(page, cdp, url: str, first_party_host: str, coverage: bool,
     page.wait_for_timeout(_SETTLE_MS)
     try:
         page.wait_for_load_state("load", timeout=_RENDER_TIMEOUT_MS)
+    except Exception:
+        pass
+    # And until the network is quiet, capped (screen audits round 4, Speed
+    # AC-01): a lazily loaded hero is not waited for by `load`. twenty22's `/`
+    # read LCP 1004 ms, a text block, on 12 Oct while its 951 KB hero image
+    # finished at 5.6 s; the 10 Oct trace read the same page after the image
+    # and got 5652 ms. A largest paint is only final once nothing larger can
+    # still arrive. Beacons that never stop are why this is capped.
+    try:
+        page.wait_for_load_state("networkidle", timeout=_LCP_QUIET_MS)
     except Exception:
         pass
     frames = (_stop_screencast(cdp, filmstrip, frames_dir, frame_stem)

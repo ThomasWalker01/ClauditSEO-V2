@@ -3810,6 +3810,11 @@ export function AnatomyView({ siteId, a, states, selected, onSelect, rerunAsk = 
       const counted = mine.length ? mine.map((st) => wordOf(st.source)) : g.rows.map((f) => wordOf(f.source));
       g.sources = counted.reduce<Record<string, number>>((m, w) => ({ ...m, [w]: (m[w] ?? 0) + 1 }), {});
       g.candidates = mine.filter((st) => st.state === "candidate").length;
+      // A cause built from the brief's check list has no sentence of its
+      // own; its stored rows do (screen audits round 4, Local UX-01: three
+      // "to confirm" rows on Local read as bare check ids over sentences
+      // like "Locality (Bendigo vs North Bendigo) ... conflict").
+      if (!g.summary) g.summary = mine.find((st) => st.summary)?.summary ?? "";
       // Item 278 (row 9): the sentence shown is the automatic checks' where
       // they have a row. Filed site-wide (`affected_urls` empty) it is about
       // the site as one subject, and an analysis row's two pages from an

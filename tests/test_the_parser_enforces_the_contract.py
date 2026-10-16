@@ -348,3 +348,12 @@ def test_the_part_page_names_the_dropped_rows_and_the_report_lists_them(served):
     assert len(got["held"]) + in_lines == 3, got
     assert len(report["dropped"]) == 1 and report["dropped"][0][3].startswith("replacement outside bounds")
     assert [r[1] for r in report["needs"]] == ["/", "/events", "/richmond"], report
+
+
+def test_a_star_row_is_stored_for_the_site():
+    # Screen audits round 4, Images US-01: five site-wide image rows written
+    # `page: "*"` were dropped as "not in the run's page set".
+    got = _parse([_row("ONP/meta-desc-missing", "*", "keep")], contract.Rules())
+    assert [r.page for r in got.rows] == [BASE + "/"], got.dropped
+    assert got.rows[0].evidence.startswith("across the site:")
+    assert not any("page set" in d["reason"] for d in got.dropped)

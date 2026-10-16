@@ -54,7 +54,9 @@ def test_outside_it_every_call_reads_the_database(tmp_path):
     seen = _counting(conn)
     for _ in range(3):
         runs._audits_since(conn, site_id, run_id)
-    assert len(seen) == 3, seen
+    # Two reads a call since screen audits round 4 (Shop AC-01): the
+    # readings, and the part-only set they are counted without.
+    assert len(seen) == 6, seen
     conn.close()
 
 

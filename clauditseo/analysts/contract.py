@@ -299,6 +299,9 @@ class Rules:
     #: (item 143 step BD). None where the evidence predates the inventory, and
     #: the CSP origin rule then cannot be judged and is not applied.
     resource_origins: set[str] | None = None
+    #: The third-party hosts the run saw load scripts (screen audits round
+    #: 4, Security AC-02): a proposed policy that leaves one out blocks it.
+    script_origins: set[str] | None = None
     site_host: str = ""
     #: Item 216: the URLs brief's rename rules, from the crawl rather than
     #: from what the model said about it. Path -> distinct pages linking to
@@ -393,6 +396,21 @@ COPY_NOT_KEPT = "the replacement written was not kept: "
 #: 3, Speed AC-04).
 PAINT_CAUSE_CHECKS = ("PRF/lcp-cause", "PRF/critical-path")
 _LCP_SAID = re.compile(r"\bLCP\s*(?:of\s*)?(\d{3,5})\s*ms", re.I)
+
+
+def _island_change_astray(row: "Row") -> str | None:
+    """Why an island row's replacement does not connect the block it is
+    about, or None. The block is `Type#n`; a change that names neither the
+    type nor an `@id` built from it connects something else."""
+    if row.check_id not in ("schema-island",) or not row.replacement:
+        return None
+    kind = str(row.extra.get("block") or getattr(row, "block", None) or "").split("#")[0].strip()
+    if not kind or kind.lower() in ("block", ""):
+        return None
+    if kind.lower() in row.replacement.lower():
+        return None
+    return (f"it connects another node, not the {kind} block the row is about, "
+            f"so the {kind} stays unconnected")
 
 
 def _speed_guard(row: "Row") -> str | None:
@@ -718,6 +736,17 @@ def enforce(parsed: "Parsed", rules: Rules) -> "Parsed":
         if re.match(r"\s*not_assessable\b", rep, re.I):
             not_assessable(row, re.sub(r"^\s*not_assessable\s*[:\-]?\s*", "", rep, flags=re.I)
                            or "the analysis gave no reason")
+            continue
+        # Screen audits round 4 (Structured data AC-07): an island row's change
+        # connects the block the row is about. twenty22's two Person-block
+        # rows proposed `about` pointing at the Organization, which leaves
+        # the Person adrift, and the cards read "automatic checks and analysis
+        # agree". The island is real; the copy is not kept, and says why.
+        astray = _island_change_astray(row)
+        if astray:
+            row.note = "; ".join(filter(None, [row.note, f"{COPY_NOT_KEPT}{astray}"]))
+            row.replacement = None
+            kept.append(row)
             continue
         painted = _speed_guard(row)
         if painted:
@@ -1281,6 +1310,17 @@ def parse(report: str, checks: list[str], page_set: list[str],
                    "evidence": f"{page_raw}: {raw.get('evidence') or ''}".strip()}
             page_raw = ""
             page = pages.get("/") or (pages.get(_path(page_set[0])) if page_set else None)
+        if not page and page_raw.strip().lower() in ("*", "all", "site", "site-wide"):
+            # Screen audits round 4 (Images US-01): `*` is the model saying
+            # "across the site" - twenty22's five site-wide image rows, two of
+            # them on checks no free sweep raises, were dropped as "page '*'
+            # is not in the run's page set". Stored site-level against the
+            # site's entry, with the scope kept in the evidence, as a policy
+            # row is.
+            raw = {**raw, "page": None,
+                   "evidence": f"across the site: {raw.get('evidence') or ''}".strip()}
+            page_raw = ""
+            page = pages.get("/") or (pages.get(_path(page_set[0])) if page_set else None)
         if not page and ai_surface and not page_raw:
             # A site-level AI surface row (`page: null`): stored against the
             # site's own entry, as every site row in this part is.
@@ -1549,7 +1589,78 @@ def _security_refusal(check_id: str, raw: dict, config: list[dict],
         if unseen:
             return ("the proposed CSP names origins the crawl never saw the site load "
                     f"from: {', '.join(unseen[:6])}")
+    # **Nor leaves one out** (screen audits round 4, Security AC-02): the
+    # 23 Sept Report-Only proposal omitted static.cloudflareinsights.com,
+    # which loads a script on every page, so enforcing it breaks the beacon.
+    if check_id == "csp-policy" and rules is not None and rules.script_origins:
+        blocked = csp_blocks(str(raw.get("replacement") or ""), rules.script_origins,
+                             rules.site_host)
+        if blocked:
+            return ("the proposed CSP would block scripts the crawl saw the site load "
+                    f"from: {', '.join(blocked[:6])}")
+    # **A row about third-party scripts names hosts that load** (screen
+    # audits round 4, Security AC-03): the SRI card, "automatic checks and
+    # analysis agree", named cdn.jsdelivr.net and unpkg.com, which nothing
+    # loads from, and its fix was a jsdelivr script tag.
+    if check_id == "sri-missing" and rules is not None and rules.resource_origins is not None:
+        named = _hosts_named(text)
+        from clauditseo.modules.sec import _registrable
+        site_reg = _registrable(rules.site_host) if rules.site_host else ""
+        unseen = sorted(h for h in named if h not in rules.resource_origins
+                        and (not site_reg or _registrable(h) != site_reg))
+        if unseen:
+            return ("the row names hosts the crawl never saw the site load from: "
+                    f"{', '.join(unseen[:6])}")
     return None
+
+
+#: A bare host name in prose or markup: two or more labels and a letter TLD.
+_HOST_IN_TEXT = re.compile(r"(?<![@\w.-])((?:[a-z0-9-]+\.)+[a-z]{2,24})(?![\w-])", re.I)
+#: File names the host pattern would otherwise catch.
+_NOT_A_HOST = re.compile(r"\.(?:js|css|json|php|html?|png|jpe?g|svg|webp|txt|xml|map)$", re.I)
+
+
+def _hosts_named(text: str) -> set[str]:
+    """Hosts a row's text names, for the origin rules: URLs' hosts and bare
+    host names, never file names."""
+    out = set()
+    for m in _HOST_IN_TEXT.finditer(text or ""):
+        h = m.group(1).lower().rstrip(".")
+        if not _NOT_A_HOST.search(h) and "." in h:
+            out.add(h)
+    return out
+
+
+def csp_blocks(policy: str, script_hosts: set[str], site_host: str) -> list[str]:
+    """The third-party hosts the run saw load scripts that a proposed CSP's
+    script sources (script-src, else default-src) would not allow. A policy
+    with no script or default source restricts nothing, and blocks nothing."""
+    from clauditseo.modules.sec import _registrable
+    text = re.sub(r"^\s*content-security-policy(?:-report-only)?\s*:\s*", "", policy or "", flags=re.I)
+    directives = {}
+    for directive in text.split(";"):
+        tokens = directive.split()
+        if tokens:
+            directives[tokens[0].lower()] = [t.strip("\"'").lower() for t in tokens[1:]]
+    sources = directives.get("script-src") or directives.get("script-src-elem") \
+        or directives.get("default-src")
+    if sources is None or "*" in sources or "https:" in sources:
+        return []
+    site_reg = _registrable(site_host) if site_host else ""
+    allowed = []
+    for s in sources:
+        m = _CSP_HOST.match(s)
+        if m and not s.startswith("'"):
+            allowed.append((bool(m.group(1)), m.group(2).lower()))
+    out = []
+    for host in script_hosts:
+        h = host.lower()
+        if site_reg and _registrable(h) == site_reg:
+            continue
+        ok = any((h == a or h.endswith("." + a)) if wild else h == a for wild, a in allowed)
+        if not ok:
+            out.append(h)
+    return sorted(out)
 
 
 def _drop(parsed: Parsed, raw, reason: str) -> None:

@@ -73,7 +73,9 @@ export function screenName(hash: string): { screen: string; site: boolean; ownHe
   if (parts[0] === "runs") return { screen: parts[2] === "page" ? "Page in an audit" : "Audit run", site: true, ownHeading: false };
   if (parts[0] === "reports") return { screen: "Report", site: true, ownHeading: false };
   if (parts[0] === "client-reports") return { screen: "Delivered report", site: false, ownHeading: false };
-  if (parts[0] === "compare") return { screen: "Compare audits", site: false, ownHeading: false };
+  // A site's screen: the comparison takes its site from its runs (screen
+  // audits round 4, Run views IP-01).
+  if (parts[0] === "compare") return { screen: "Compare audits", site: true, ownHeading: false };
   if (parts[0] === "admin") {
     const tab = q.get("tab");
     return { screen: tab ? `Admin · ${tab[0].toUpperCase()}${tab.slice(1)}` : "Admin", site: false, ownHeading: false };

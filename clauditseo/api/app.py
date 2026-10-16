@@ -2353,6 +2353,22 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         head = runs.headline_numbers(conn, reading) if reading else None
         out["site_size"] = head["site_size"] if head else None
         out["audited"] = head["audited"] if head else None
+        # Whether that reading's crawl ran out of links rather than out of
+        # budget (screen audits round 4, launch AC-01): then what it read is
+        # every page there is, and the site size's link targets - 16
+        # numbered duplicate forms and a CDN path on twenty22 - are not pages
+        # a Full scan would add.
+        stats = {}
+        raw = runs.evidence_text(conn, reading) if reading else None
+        if raw:
+            try:
+                stats = (runs.parsed_evidence(raw) or {}).get("stats") or {}
+            except (TypeError, ValueError):
+                stats = {}
+        out["exhaustive"] = bool(stats) and not stats.get("truncated_by") \
+            and stats.get("queue_remaining") == 0 and not stats.get("errors")
+        # (And fetched every page it found: 22 fetch errors on 16 Oct left a
+        # 31-page reading that had also "run out of links".)
         return out
 
     @app.get("/api/sites/{site_id}/precheck/compare")

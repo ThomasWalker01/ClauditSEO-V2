@@ -153,6 +153,12 @@ export function pagesFor(scope: ScopeKey, pre: Precheck | null,
         // And where the current reading measured the site, its size: what
         // the sitemap declares and every page the crawl found besides (screen
         // audits round 3, launch IP-04: "Full ... 53 pages" on a site of 74).
+        // Where the current reading's crawl ran out of links, what it read
+        // is the site (screen audits round 4, launch AC-01): "Full · 74
+        // pages · nothing sampled out" counted 16 numbered duplicates and a
+        // CDN path among the 74, on a site whose Full scan read 45.
+        : pre.exhaustive && pre.audited
+          ? pre.audited
         : pre.site_size?.size != null
           ? Math.max(pre.site_size.size,
                      (pre.sitemap_urls ?? 0) + (pre.not_in_sitemap?.length ?? 0))

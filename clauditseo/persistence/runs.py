@@ -998,6 +998,14 @@ class Reading:
     #: Paths this run fetched that answered 400 or above (channel ruling
     #: 20261011-0745): not read, and not unknown either.
     errored: frozenset[str] = frozenset()
+    #: The site-level instruments the run got answers from ("dns",
+    #: "well_known", "ua_matrix"), and the checks whose own probe errored.
+    #: None where unknown (a caller with no evidence): then not asked.
+    instruments: frozenset[str] | None = None
+    probe_failed: frozenset[str] = frozenset()
+    #: Paths the rendered pass read (screen audits round 4): the instrument
+    #: the render-derived checks need. None where unknown: then not asked.
+    rendered: frozenset[str] | None = None
 
     @classmethod
     def of_result(cls, run_id: str, result: "AuditResult", site_reading: bool) -> "Reading":
@@ -1006,7 +1014,11 @@ class Reading:
                    frozenset(getattr(result, "traced_paths", None) or ()),
                    frozenset(getattr(result, "imaged_paths", None) or ()),
                    site_reading,
-                   frozenset(getattr(result, "errored_paths", None) or ()))
+                   frozenset(getattr(result, "errored_paths", None) or ()),
+                   frozenset(getattr(result, "instruments", None) or ()),
+                   frozenset(getattr(result, "probe_failed", None) or ()),
+                   _rendered_paths([f.evidence for f in getattr(result, "findings", None) or []
+                                    if getattr(f, "dimension", "") == "A11Y"]))
 
     @classmethod
     def of_stored(cls, conn: sqlite3.Connection, run_id: str) -> "Reading | None":
@@ -1040,7 +1052,84 @@ class Reading:
                    # Derived from the stored statuses, so a replay of an old
                    # run sets aside exactly what the live run would have.
                    frozenset(path(p["url"]) for p in pages
-                             if isinstance(p.get("status"), int) and p["status"] >= 400))
+                             if isinstance(p.get("status"), int) and p["status"] >= 400),
+                   *(frozenset(x) for x in instruments_of(
+                       ev.get("dns"), ev.get("well_known"), ev.get("ua_matrix"),
+                       ev.get("transport"))),
+                   _rendered_paths([_finding_evidence(r["evidence"]) for r in conn.execute(
+                       "SELECT evidence FROM findings WHERE run_id=? AND dimension='A11Y'",
+                       (run_id,))]))
+
+
+def _rendered_paths(evidences) -> frozenset[str] | None:
+    """The paths a run's rendered pass read, from the A11Y row that carries
+    its text blocks (`_text_blocks_for_run` reads the same row). None where
+    no row carries them: unknown, so the render rule is not asked."""
+    from urllib.parse import urlsplit
+    for ev in evidences:
+        blocks = ev.get("text_blocks") if isinstance(ev, dict) else None
+        if isinstance(blocks, dict):
+            return frozenset(urlsplit(u).path or "/" for u in blocks)
+    return None
+
+
+#: The checks only the rendered pass can measure (screen audits round 4): a
+#: run that did not render a page cleared `axe-color-contrast` and
+#: `links-behind-js` on /seo/technical/, and the next run that rendered it
+#: drew them as "back after a fix".
+def _render_derived(dimension: str, check_id: str) -> bool:
+    return ((dimension == "A11Y" and check_id.startswith("axe-")
+             and check_id not in ("axe-sampled", "axe-coverage"))
+            or (dimension, check_id) in {("TEC", "links-behind-js"), ("TEC", "render-only"),
+                                         ("TEC", "scripts-blocked-by-csp"),
+                                         ("TEC", "page-script-error"),
+                                         ("AIS", "content-behind-js")})
+
+
+def instruments_of(dns, well_known, ua_matrix, transport=None) -> tuple[set[str], set[str]]:
+    """Which site-level instruments a run got answers from, and which checks'
+    own probes errored (screen audits round 4). One reading of the crawl's
+    evidence for the live run and for a replay of a stored one."""
+    have: set[str] = set()
+    if isinstance(dns, dict) and dns.get("available") and dns.get("queries"):
+        have.add("dns")
+    fetched = (well_known or {}).get("fetched") if isinstance(well_known, dict) else None
+    if fetched:
+        have.add("well_known")
+    if ua_matrix:
+        have.add("ua_matrix")
+    # The transport probe's two halves (round 4 replay): a run with 22 fetch
+    # errors got no answer from http:// and read no certificate, and its
+    # silence cleared http-redirect and cert-san.
+    t = transport if isinstance(transport, dict) else {}
+    if t.get("http_redirects_to_https") is not None:
+        have.add("http_probe")
+    if t.get("cert_subject_alt_names"):
+        have.add("certificate")
+    failed = {str(r.get("purpose")) for r in (fetched or [])
+              if isinstance(r, dict) and r.get("purpose") and r.get("status") is None
+              and r.get("error")}
+    return have, failed
+
+
+#: Which instrument answers which site-level check, by dimension. A run that
+#: did not get an answer from the instrument did not measure the check.
+def _instrument_for(dimension: str, check_id: str) -> str | None:
+    if dimension == "SEC":
+        from clauditseo.modules.sec import DNS_CHECKS, WELL_KNOWN_CHECKS
+        if check_id in DNS_CHECKS:
+            return "dns"
+        if check_id in WELL_KNOWN_CHECKS:
+            return "well_known"
+        if check_id == "http-redirect":
+            return "http_probe"
+        if check_id in ("cert-san", "cert-key"):
+            return "certificate"
+    if dimension == "AIS":
+        from clauditseo.modules.ais import SAMPLED
+        if SAMPLED.get(check_id) == "probed":
+            return "ua_matrix"
+    return None
 
 
 def measured(reading: Reading, dimension: str, check_id: str, affected_urls: list[str],
@@ -1072,7 +1161,17 @@ def measured(reading: Reading, dimension: str, check_id: str, affected_urls: lis
         return "unmeasured", "an analysis's finding is measured only by its analysis"
     if cross_page(dimension, check_id) and not reading.site_reading:
         return "unmeasured", "a cross-page check needs a reading of the whole site"
+    # Screen audits round 4 (Security AC-01, AI surface AC-01): a site-level
+    # check is measured by its instrument, not by the run having read a page.
+    needs = _instrument_for(dimension, check_id)
+    if needs and reading.instruments is not None and needs not in reading.instruments:
+        return "unmeasured", f"the run got no answer from the {needs.replace('_', ' ')} instrument"
+    if check_id in reading.probe_failed:
+        return "unmeasured", "the check's own probe errored on this run"
     pages = pages_named_by(affected_urls)
+    if (_render_derived(dimension, check_id) and reading.rendered is not None
+            and pages and not pages & reading.rendered):
+        return "unmeasured", "the run did not render a page the finding names"
     # Channel ruling 20261011-0745: a page-level check on pages that now
     # answer an error no longer applies to them. Asked before the page-read
     # rule, which would call the finding unmeasured forever.
@@ -2347,6 +2446,18 @@ def _saw(named: set[str] | None, fetched: frozenset[str]) -> bool:
     return not named or bool(named & fetched)
 
 
+def _moved_at(conn: sqlite3.Connection, run_id: str | None, fallback: str) -> str:
+    """When the run that moved a state ran (its finish, else its start), for
+    the state's date: the Record says "since <date>" and "by the T2 audit of
+    <date>", and a recompute's own clock is neither (screen audits round 4,
+    Record AC-01)."""
+    if not run_id:
+        return fallback
+    row = conn.execute("SELECT finished_at, started_at FROM audit_runs WHERE id=?",
+                       (run_id,)).fetchone()
+    return (row["finished_at"] or row["started_at"]) if row else fallback
+
+
 def recompute_contract_states(conn: sqlite3.Connection, site_id: str,
                               tool_id: str) -> None:
     """Derive a conforming brief's finding states from its run history
@@ -2439,9 +2550,15 @@ def recompute_contract_states(conn: sqlite3.Connection, site_id: str,
                     "INSERT INTO finding_states (site_id, fingerprint, state,"
                     " changed_by_run, updated_at) VALUES (?, ?, ?, ?, ?)"
                     " ON CONFLICT(site_id, fingerprint) DO UPDATE SET"
-                    " state=excluded.state, changed_by_run=excluded.changed_by_run,"
-                    " updated_at=excluded.updated_at",
-                    (site_id, fp, state, changed_in, stamp))
+                    # Unmoved, the date stays (screen audits round 4, Record
+                    # AC-01): every recompute rewrote `updated_at` to its own
+                    # clock, and the Record's new "since" dates read the day
+                    # of the last re-read for rows that had not changed.
+                    " updated_at=CASE WHEN finding_states.state=excluded.state"
+                    " AND finding_states.changed_by_run IS excluded.changed_by_run"
+                    " THEN finding_states.updated_at ELSE excluded.updated_at END,"
+                    " state=excluded.state, changed_by_run=excluded.changed_by_run",
+                    (site_id, fp, state, changed_in, _moved_at(conn, changed_in, stamp)))
 
 
 def recompute_expert_states(conn: sqlite3.Connection, site_id: str,
@@ -2564,9 +2681,15 @@ def recompute_expert_states(conn: sqlite3.Connection, site_id: str,
                     "INSERT INTO finding_states (site_id, fingerprint, state,"
                     " changed_by_run, updated_at) VALUES (?, ?, ?, ?, ?)"
                     " ON CONFLICT(site_id, fingerprint) DO UPDATE SET"
-                    " state=excluded.state, changed_by_run=excluded.changed_by_run,"
-                    " updated_at=excluded.updated_at",
-                    (site_id, fp, state, changed_in, stamp))
+                    # Unmoved, the date stays (screen audits round 4, Record
+                    # AC-01): every recompute rewrote `updated_at` to its own
+                    # clock, and the Record's new "since" dates read the day
+                    # of the last re-read for rows that had not changed.
+                    " updated_at=CASE WHEN finding_states.state=excluded.state"
+                    " AND finding_states.changed_by_run IS excluded.changed_by_run"
+                    " THEN finding_states.updated_at ELSE excluded.updated_at END,"
+                    " state=excluded.state, changed_by_run=excluded.changed_by_run",
+                    (site_id, fp, state, changed_in, _moved_at(conn, changed_in, stamp)))
 
 
 def pages_for_findings(conn: sqlite3.Connection, site_id: str,
@@ -3842,7 +3965,10 @@ def site_reports(conn: sqlite3.Connection, site_id: str) -> dict:
     # lines below has carried `kind='audit'` the whole time — one screen,
     # two answers to one question.
     order = [r["id"] for r in bare if reads_site(r)]  # newest first
-    position = {run_id: i for i, run_id in enumerate(order)}
+    # Readings newer than each run that are not part-only re-checks (screen
+    # audits round 4, Shop AC-01, Reports IP-01): "4 audits since" on an
+    # analysis two full readings old counted the two Links-only re-checks.
+    position = _newer_full_readings(order, part_only)
     for r in reports:
         r["audits_since"] = position.get(r["run_id"])
         r["is_latest"] = position.get(r["run_id"]) == 0
@@ -5199,9 +5325,19 @@ def site_states(conn: sqlite3.Connection, site_id: str) -> list[dict]:
         "SELECT er.run_id, er.tool_id, er.created_at FROM expert_reports er"
         " JOIN audit_runs a ON a.id = er.run_id WHERE a.site_id=?", (site_id,))}
     cleared: dict[tuple[str, str], str] = {}
+    # A site-level automatic row (no page) cleared for the site clears the
+    # check on every page (screen audits round 4, Local AC-01): the local
+    # analysis's `localbusiness-schema-missing` stood open on six pages,
+    # corroborated only by a sweep row about the whole site that was fixed
+    # on 25 Sept and never raised again.
+    cleared_site: dict[str, str] = {}
     for r in rows:
         if r["source"] == "deterministic" and r["state"] == "fixed" and when.get(r["changed_by_run"]):
-            for u in json.loads(r["affected_urls"] or "[]"):
+            urls = json.loads(r["affected_urls"] or "[]")
+            if not urls:
+                cleared_site[r["check_id"]] = max(cleared_site.get(r["check_id"], ""),
+                                                  when[r["changed_by_run"]])
+            for u in urls:
                 key = (r["check_id"], _page_key(u))
                 cleared[key] = max(cleared.get(key, ""), when[r["changed_by_run"]])
 
@@ -5216,7 +5352,8 @@ def site_states(conn: sqlite3.Connection, site_id: str) -> list[dict]:
         finding_run = d.pop("finding_run", None)
         d["superseded_on"] = None
         if d["source"] == "model-judgement" and d["affected_urls"] and when.get(finding_run):
-            since = [cleared.get((d["check_id"], _page_key(u))) for u in d["affected_urls"]]
+            since = [cleared.get((d["check_id"], _page_key(u))) or cleared_site.get(d["check_id"])
+                     for u in d["affected_urls"]]
             if all(s and s > when[finding_run] for s in since):
                 d["superseded_on"] = max(since)
         # Item 249 step 4: a model row on a check the sweep can raise, which
@@ -6201,8 +6338,22 @@ def _audits_since(conn: sqlite3.Connection, site_id: str, run_id: str) -> int | 
             f" WHERE site_id=? AND {status_in(AUDITED_STATUSES)}"
             f" AND {kind_in_site_reading_kinds()}"
             " ORDER BY started_at DESC, rowid DESC", (site_id,)) if reads_site(r)]
-        return {rid: i for i, rid in enumerate(order)}
+        return _newer_full_readings(order, part_only_runs(conn, site_id))
     return _once_in_scope(conn, ("audits_since", site_id), positions).get(run_id)
+
+
+def _newer_full_readings(order: list[str], part_only) -> dict[str, int]:
+    """For each reading in `order` (newest first), how many readings newer
+    than it are not part-only re-checks: a re-check of one part is not an
+    audit of the site, and does not age every analysis by one (screen audits
+    round 4). A part-only run keeps its own position."""
+    out: dict[str, int] = {}
+    newer = 0
+    for rid in order:
+        out[rid] = newer
+        if rid not in part_only:
+            newer += 1
+    return out
 
 
 def _read_and_since(conn: sqlite3.Connection, site_id: str, run_id: str,

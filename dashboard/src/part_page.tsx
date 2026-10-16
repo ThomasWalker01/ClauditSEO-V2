@@ -1593,7 +1593,15 @@ function HeadingsFixBody({ fix, facts }: { fix: Fix; facts: Facts | null }) {
     if (fix.checkId === "h1-title-verbatim") return "restates the entity; not the title string";
     return `relevelled h${was.line.level} → h${line.level}`;
   };
-  const marks = after.map(change);
+  // A question card's change is its answer stubs, not the outline's other
+  // moves (screen audits round 4, Headings UX-01): the "Question heading
+  // with no answer" card on /website-seo/ showed the heading-skip card's
+  // three relevelled lines as its replacement and never its own stub.
+  const answerCard = fix.checkId === "h2-question-unanswered";
+  const stubbed = (line: Line) => line.text.trim().endsWith("?") && Boolean(line.next);
+  const marks = answerCard
+    ? after.map((line) => (stubbed(line) ? "answer added below" : null))
+    : after.map(change);
   /** The lines that move, each with one line of context above. */
   const keep = new Set<number>();
   marks.forEach((m, i) => { if (m) { keep.add(i); if (i > 0) keep.add(i - 1); } });
@@ -1617,7 +1625,9 @@ function HeadingsFixBody({ fix, facts }: { fix: Fix; facts: Facts | null }) {
     const now = carried.get(norm(l.text));
     return {
       line: l, i,
-      struck: now ? now.level !== l.level : l.inMain !== false,
+      // On a question card nothing is struck: the outline's other moves are
+      // other cards' (screen audits round 4, Headings UX-01).
+      struck: answerCard ? false : now ? now.level !== l.level : l.inMain !== false,
       skipped: skipCard && i > 0 && l.level > before[i - 1].level + 1,
     };
   });

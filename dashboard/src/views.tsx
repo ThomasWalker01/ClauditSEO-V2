@@ -1731,6 +1731,16 @@ const COMPARE_PAGE = 25;
 
 export function CompareView({ a, b }: { a: string; b: string }) {
   const { data, error, loading, retry } = useFetch<CompareResult>(`/api/compare?a=${a}&b=${b}`);
+  // The site is the runs' (screen audits round 4, Run views IP-01): the
+  // header's "WORKING ON" read "Moringa" over two twenty22 audits, because
+  // the route took whatever site the browser last remembered, and Home,
+  // Client and Reports in that header opened Moringa. Both runs are one
+  // site's (`compare_runs` refuses a cross-site pair).
+  const { siteId, setSiteId } = useSelection();
+  const { data: runOf } = useFetch<{ site_id: string }>(`/api/runs/${b}`);
+  useEffect(() => {
+    if (runOf?.site_id && runOf.site_id !== siteId) setSiteId(runOf.site_id);
+  }, [runOf?.site_id, siteId, setSiteId]);
   //: WF-21, carried High from report 026 to 094. `TEMPLATES` has held
   //: `comparison` for the product's whole life and the CLI has always asked
   //: for it, but the dashboard's only creating call to `/api/reports` posts

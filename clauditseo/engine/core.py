@@ -18,6 +18,15 @@ from . import registry, scoring
 from .types import Finding, Site, SubScore, Tier
 
 
+def _transport_dict(crawl_result) -> dict | None:
+    """The crawl's transport probe as the dict the stored evidence holds."""
+    t = getattr(crawl_result, "transport", None)
+    if t is None or isinstance(t, dict):
+        return t
+    from dataclasses import asdict, is_dataclass
+    return asdict(t) if is_dataclass(t) else getattr(t, "__dict__", None)
+
+
 @dataclass
 class AuditResult:
     site: Site
@@ -50,6 +59,15 @@ class AuditResult:
     #: Paths this run fetched that answered 400 or above (channel ruling
     #: 20261011-0745): what `measured` sets a page-level Links finding aside on.
     errored_paths: set[str] = field(default_factory=set)
+    #: The site-level instruments this run's crawl ran and got an answer
+    #: from (screen audits round 4, Security AC-01, AI surface AC-01):
+    #: "dns", "well_known", "ua_matrix". A T1 page scan runs none of them,
+    #: and its silence cleared dmarc, caa, dnssec, security-txt and four
+    #: firewall blocks that every later sweep raised again as "regressed".
+    instruments: set[str] = field(default_factory=set)
+    #: Checks whose own probe errored on this run (a well-known path that
+    #: timed out): not answered, so not clean.
+    probe_failed: set[str] = field(default_factory=set)
 
 
 def _merge_by_identity(findings: list[Finding]) -> list[Finding]:
@@ -146,6 +164,10 @@ def run_audit(
                       if (context.get("image_measurements") or {}).get(p.url)},
         errored_paths={urlsplit(p.url).path or "/" for p in crawl_result.pages
                        if isinstance(p.status, int) and p.status >= 400})
+    from clauditseo.persistence.runs import instruments_of
+    result.instruments, result.probe_failed = instruments_of(
+        getattr(crawl_result, "dns", None), getattr(crawl_result, "well_known", None),
+        getattr(crawl_result, "ua_matrix", None), _transport_dict(crawl_result))
     raw_subscores: dict[str, SubScore] = {}
 
     for code in _in_run_order(dimensions):

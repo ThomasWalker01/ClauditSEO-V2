@@ -4681,6 +4681,7 @@ def contract_rules(site: Any, strategy: str | None = None, evidence: dict | None
                  # SEC/csp-policy's origin rule (item 143 step BD). None where
                  # the evidence predates the inventory, which disables it.
                  resource_origins=_observed_origins(evidence),
+                 script_origins=_observed_origins(evidence, kinds=("script",)),
                  declared_paths=_declared_paths(evidence),
                  page_facts=_page_facts_for_rules(site, evidence),
                  read_only=(_briefs_mod.read_only_checks(tool_id) if tool_id else frozenset()),
@@ -4733,11 +4734,12 @@ def _rename_facts(site: Any, evidence: dict | None) -> dict:
                                   urlshape.DEFAULT_RENAME_INLINK_CAP)}
 
 
-def _observed_origins(evidence: dict | None) -> set[str] | None:
+def _observed_origins(evidence: dict | None, kinds: tuple[str, ...] | None = None) -> set[str] | None:
     inventory = (evidence or {}).get("resource_origins")
     if not isinstance(inventory, dict):
         return None
-    return {h for hosts in inventory.values() if isinstance(hosts, dict) for h in hosts}
+    return {h for kind, hosts in inventory.items()
+            if (kinds is None or kind in kinds) and isinstance(hosts, dict) for h in hosts}
 
 
 def _read_report(conn: sqlite3.Connection, run_id: str, tool_id: str, report: str,

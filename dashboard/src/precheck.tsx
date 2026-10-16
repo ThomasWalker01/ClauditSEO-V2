@@ -49,6 +49,9 @@ export interface Precheck {
   site_size?: { size: number | null; declared: number; discovered: number; gap: number } | null;
   /** Pages the current reading audited. */
   audited?: number | null;
+  /** That reading's crawl ran out of links, not out of budget: what it read
+   *  is every page there is (screen audits round 4, launch AC-01). */
+  exhaustive?: boolean;
 }
 
 export function usePrecheck(siteId: string | null, tick = 0) {
@@ -259,8 +262,21 @@ No model, a few seconds.">
           // Site and Full read the site's size where the current reading
           // measured one, as the grid below does (screen audits round 3,
           // launch IP-03: "49 Full" here, "53 pages" in the grid).
-          const sized = (key === "site" || key === "full") && data.site_size?.size != null
-            && data.site_size.size > (sc.pages ?? 0);
+          // Unless that reading's crawl ran out of links: then it read every
+          // page there is, and the site size's extra link targets (numbered
+          // duplicates, a CDN path) are not pages a scan adds.
+          const read = data.exhaustive && data.audited ? data.audited : null;
+          const sized = (key === "site" || key === "full") && read == null
+            && data.site_size?.size != null && data.site_size.size > (sc.pages ?? 0);
+          if ((key === "site" || key === "full") && read != null) {
+            return (
+              <div className="pre-scope" key={key}>
+                <span className="pre-n">{read}</span>
+                <span className="pre-label">{label}</span>
+                <span className="pre-basis">read by the last crawl, which ran out of links</span>
+              </div>
+            );
+          }
           return (
             <div className="pre-scope" key={key}>
               <span className="pre-n">{sized ? data.site_size!.size : sc.pages === null ? "—" : sc.pages}</span>
