@@ -42,7 +42,11 @@ def _crawl() -> CrawlResult:
                 f"<meta name=description content='{DESCRIPTION}'></head><body><main>"
                 f"<h1>Hi</h1><p>{'word ' * 400}</p></main></body></html>",
         headers={"cache-control": "max-age=3600"}, elapsed_ms=120)
-    return CrawlResult(start_url="https://x.test/", tier=Tier.T2, pages=[page])
+    # The site answered /llms.txt with a 404: a file read and absent. Left
+    # None it is a file never requested, which raises nothing (screen
+    # audits round 4, AI surface AC-02).
+    return CrawlResult(start_url="https://x.test/", tier=Tier.T2, pages=[page],
+                       llms_txt_status=404)
 
 
 class _Hub(ProviderHub):

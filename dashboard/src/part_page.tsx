@@ -315,6 +315,8 @@ type Fix = {
   /** The analysis wrote a replacement and the reader did not keep it, and
    *  why (screen audits round 3, Title & description AC-05). */
   copyNotKept?: string | null;
+  /** The analysis's own note on the row, for the AI surface card. */
+  analysisNote?: string | null;
   /** The finding states this card stands for (item 237): what Confirm,
    *  Accept and Withdraw write to. */
   fingerprints?: string[];
@@ -757,6 +759,7 @@ export function fixesOf(part: Category, states: FindingState[], page: string): F
       toConfirm: s.state === "candidate" && Boolean(s.to_confirm),
       regressed: s.state === "regressed",
       current: s.summary, replacement: s.proposed ?? null, note: "",
+      analysisNote: word === "brief" ? s.analysis_note ?? null : null,
       said: s.said ?? null, overPx: s.over_px ?? null,
       image: s.image ?? null,
       images: [...new Set([...(s.images ?? []), ...(s.image ? [s.image] : [])])],
@@ -944,8 +947,12 @@ const norm = outlineKey;
 
 /** What `copy outline` copies (item 268): the parsed lines, one `Hn text`
  *  each, with the model's tokens and stubs left out. */
+/** The paste. A question's answer stub goes under it as a plain line
+ *  (screen audits round 4, Headings UX-01): it was stripped, so the answer the
+ *  model wrote for /website-seo/'s question was on no surface. */
 export const outlineCopy = (replacement: string | null) =>
-  parseOutline(replacement).map((l) => `H${l.level} ${l.text}`).join("\n");
+  parseOutline(replacement).map((l) => `H${l.level} ${l.text}`
+    + (l.text.trim().endsWith("?") && l.next ? `\n  answer: ${l.next}` : "")).join("\n");
 const outlineLines = (replacement: string | null) => parseOutline(replacement).length;
 
 /** Write a brief for the page in hand (brief v17 step AX).
@@ -1261,10 +1268,15 @@ function Actions({ part, page, sweep, brief, pages, estSeconds, estCost,
               </>
             ) : (
               <>
+                {/* One ledger (screen audits round 4, Headings AC-01): rows
+                    the reader held were returned, and "17 rows returned"
+                    stood where the model returned 24. */}
                 {brief.rows != null
-                  ? ((part.brief_dropped ?? 0) > 0
-                      ? ` · ${brief.rows + (part.brief_dropped ?? 0)} rows returned · ${brief.rows} kept`
-                        + ` · ${part.brief_dropped} dropped`
+                  ? ((part.brief_dropped ?? 0) > 0 || (brief.held_rows ?? 0) > 0
+                      ? ` · ${brief.rows + (part.brief_dropped ?? 0) + (brief.held_rows ?? 0)} rows returned`
+                        + ` · ${brief.rows} kept`
+                        + ((brief.held_rows ?? 0) > 0 ? ` · ${brief.held_rows} held` : "")
+                        + ((part.brief_dropped ?? 0) > 0 ? ` · ${part.brief_dropped} dropped` : "")
                       : ` · ${brief.rows} row${brief.rows === 1 ? "" : "s"}`)
                   : ""}
                 {/* Items 277 (row 9), 273 (row 8): the holds, so the
@@ -1295,7 +1307,9 @@ function Actions({ part, page, sweep, brief, pages, estSeconds, estCost,
                 ? ` · ${b.audits_since} audit${b.audits_since === 1 ? "" : "s"} since` : ""}
               {b.crawl_at ? ` · read the crawl of ${stamp(b.crawl_at)}` : ""}
               {b.model ? ` · ${b.model}` : ""}
-              {` · ${b.rows + b.dropped} rows returned · ${b.rows} kept · ${b.dropped} dropped`}
+              {` · ${b.rows + b.dropped + (b.held_rows ?? 0)} rows returned · ${b.rows} kept`}
+              {(b.held_rows ?? 0) > 0 ? ` · ${b.held_rows} held` : ""}
+              {` · ${b.dropped} dropped`}
               {b.cost != null ? ` · ${money(b.cost)}` : ""}
             </li>
           ))}
@@ -1528,6 +1542,28 @@ function HeadingsNow({ facts, fixes }: {
   );
 }
 
+
+/** Which line of `a` each line of `b` is, and back: the longest run of
+ *  equal keys kept in order (an LCS), so two headings spelled alike are two
+ *  lines and each is matched at most once. Exported for its guard. */
+export function pairLines(a: string[], b: string[]): [(number | null)[], (number | null)[]] {
+  const n = a.length, m = b.length;
+  const L = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      L[i][j] = a[i] === b[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+    }
+  }
+  const bOf: (number | null)[] = new Array(m).fill(null);
+  const aOf: (number | null)[] = new Array(n).fill(null);
+  let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) { aOf[i] = j; bOf[j] = i; i++; j++; }
+    else if (L[i + 1][j] >= L[i][j + 1]) i++;
+    else j++;
+  }
+  return [bOf, aOf];
+}
 /** Block 3, Headings' fix body: the affected lines before and after.
  *
  *  A brief answers a heading row with the whole corrected outline, so the
@@ -1577,14 +1613,21 @@ function HeadingsFixBody({ fix, facts }: { fix: Fix; facts: Facts | null }) {
   // last-wins matched a typo fix to a later duplicate.
   const byText = new Map<string, { line: Line; i: number }>();
   before.forEach((l, i) => { if (!byText.has(norm(l.text))) byText.set(norm(l.text), { line: l, i }); });
+  // Each line is matched once, in order (screen audits round 4, Headings
+  // AC-03): a key alone stood for every heading spelled alike, so on
+  // /web-design1/ the empty "Outdated Design" H3 matched the full one lower
+  // down and was drawn as kept on the card about removing it.
+  const [beforeOf, afterOf] = pairLines(before.map((l) => norm(l.text)),
+                                        after.map((l) => norm(l.text)));
   /** What happened to one line of the corrected outline, in a word.
    *  Screen audits round 3 (headings AC-03): a line the key matches differs
    *  at most in case, spacing or an apostrophe, which is how a heading is
    *  written and not a change - 263 "reworded" marks on one page were letter
    *  case. `[proposed]` is the model's own flag, for a heading where none
    *  stands; any other line without a match is a rewording. */
-  const change = (line: Line): string | null => {
-    const was = byText.get(norm(line.text));
+  const change = (line: Line, j: number): string | null => {
+    const at = beforeOf[j];
+    const was = at != null ? { line: before[at], i: at } : byText.get(norm(line.text));
     if (!was) return line.proposed ? "[proposed]" : "reworded";
     if (was.line.level === line.level) return null;
     if (was.line.level === 1 && fix.checkId === "h1-multiple") {
@@ -1601,7 +1644,7 @@ function HeadingsFixBody({ fix, facts }: { fix: Fix; facts: Facts | null }) {
   const stubbed = (line: Line) => line.text.trim().endsWith("?") && Boolean(line.next);
   const marks = answerCard
     ? after.map((line) => (stubbed(line) ? "answer added below" : null))
-    : after.map(change);
+    : after.map((line, j) => change(line, j));
   /** The lines that move, each with one line of context above. */
   const keep = new Set<number>();
   marks.forEach((m, i) => { if (m) { keep.add(i); if (i > 0) keep.add(i - 1); } });
@@ -1619,10 +1662,9 @@ function HeadingsFixBody({ fix, facts }: { fix: Fix; facts: Facts | null }) {
   // navigation would read as "delete this heading". On a level-skip card
   // the heading that skipped is marked, by the engine's rule (a level more
   // than one below the heading before it, `onp.heading_outline_state`).
-  const carried = new Map(after.map((l) => [norm(l.text), l]));
   const skipCard = fix.checkId === "heading-skip";
   const was = before.map((l, i) => {
-    const now = carried.get(norm(l.text));
+    const now = afterOf[i] != null ? after[afterOf[i]!] : undefined;
     return {
       line: l, i,
       // On a question card nothing is struck: the outline's other moves are
@@ -1639,8 +1681,8 @@ function HeadingsFixBody({ fix, facts }: { fix: Fix; facts: Facts | null }) {
   });
   marks.forEach((m, i) => {
     if (m !== "[proposed]" || i === 0) return;
-    const above = byText.get(norm(after[i - 1].text));
-    if (above) keepWas.add(above.i);
+    const above = beforeOf[i - 1] ?? byText.get(norm(after[i - 1].text))?.i;
+    if (above != null) keepWas.add(above);
   });
   const stub = fix.checkId === "h2-question-unanswered";
   // Item 268 (row 4): which crawl "Now" is. The analysis may have read an
@@ -1708,7 +1750,7 @@ function HeadingsFixBody({ fix, facts }: { fix: Fix; facts: Facts | null }) {
  */
 function ImageBand({ facts, band, cap, problems }: {
   facts: Facts; band: "header" | "body" | "footer"; cap: number;
-  problems: (src: string) => { key: string; checkId: string; needs?: string }[];
+  problems: (src: string, alt?: string | null) => { key: string; checkId: string; needs?: string }[];
 }) {
   // The one place cards are made is the one place the inventory is read,
   // and the cap sits between the field and the map on both branches - the
@@ -1793,7 +1835,7 @@ function ImageBand({ facts, band, cap, problems }: {
               )}
               <div className={`img-alt${i.alt ? "" : " img-alt-none"}`}>{altOf(i)}</div>
               <div className="img-tags">
-                {problems(i.src).map((f) => (
+                {problems(i.src, i.alt).map((f) => (
                   <span key={f.key}
                         className={`out-tag ${f.needs ? "out-held" : "out-bad"}`}>
                     {f.needs ? `${plainName(f.checkId)} — held` : plainName(f.checkId)}
@@ -1864,8 +1906,13 @@ function ImagesNow({ facts, fixes }: {
   /** Every problem on one image, including the ones a single
    *  replacement closes alongside its own check: the image has them, and
    *  a grid that named only the surviving row would under-report it. */
-  const problems = (src: string) => {
-    const mine = fixes.filter((f) => f.image && sameImage(f.image, src));
+  const problems = (src: string, alt?: string | null) => {
+    // An alt finding is about one placement's alt (screen audits round 4,
+    // Images AC-07): "Alt repeats the filename" was drawn on the header and
+    // nav logos, whose alt is fine, for the footer's "Frames (Bricks)".
+    const quotes = (f: Fix) => !f.checkId.startsWith("img-alt") || alt == null || !alt
+      || !/“/.test(f.current) || f.current.includes(`“${alt}”`);
+    const mine = fixes.filter((f) => f.image && sameImage(f.image, src) && quotes(f));
     const named = new Set(mine.map((f) => f.checkId));
     const also = mine.flatMap((f) => (f.alsoResolves ?? []).map((c) => c.split("/").pop() as string))
       .filter((c) => !named.has(c));
@@ -1893,7 +1940,7 @@ function ImagesNow({ facts, fixes }: {
     // sentence about nothing, and a page carrying three of them looks like
     // one that failed to load.
     if (!mine.length) return null;
-    const faults = mine.reduce((n, i) => n + problems(i.src).length, 0);
+    const faults = mine.reduce((n, i) => n + problems(i.src, i.alt).length, 0);
     const pages = bandPages(fixes, mine);
     return (
       <details className={`img-band img-band-${name}`}>
@@ -4735,9 +4782,10 @@ function FixCard({ fix, facts, render, onCopy, copied, n, fixHeld = false,
  *  the cause table use - not a looser one of its own. Two pages under one
  *  first segment were a "template" here and ten were needed there, so the
  *  skip table said "no shared template" above a group line naming one. */
-export function templateOf(pages: string[]): { prefix: string; n: number } | null {
+export function templateOf(pages: string[], segments?: Record<string, number>)
+    : { prefix: string; n: number } | null {
   const best = templatesOf(pages.map((u) => ({ fingerprint: u, urls: [u], state: "open",
-                                               names_a_page: true })))
+                                               names_a_page: true })), segments)
     .find((t) => t.prefix !== "");
   return best ? { prefix: best.prefix, n: best.pages } : null;
 }
@@ -5116,7 +5164,11 @@ function Fixes({ fixes, facts, render, page, part, cost, onGlow, siteId, onState
                     another check's id (`schema-redundant-block` on twenty22),
                     so it read 10 under the table's 11 even by the table's
                     cost rule. The table counts checks; this counts cards. */}
-                · {mine.length + held.length} card{mine.length + held.length === 1 ? "" : "s"}
+                {/* Screen audits round 4 (Headings, r3 IP-02): holds are the
+                    lines under the cards, not cards - "20 cards" stood over
+                    four. They are said apart. */}
+                {mine.length > 0 && <>· {mine.length} card{mine.length === 1 ? "" : "s"}</>}
+                {held.length > 0 && <> · {held.length} held</>}
                 {led && " · holds the most severe fix"}
               </span>
               {folded(cost, section) && (
@@ -5139,7 +5191,7 @@ function Fixes({ fixes, facts, render, page, part, cost, onGlow, siteId, onState
               // stood over /about/, /privacy-policy/ and /seo-category/seo-local/.
               const sample = !page && ranked.length > CARDS_PER_CHECK
                 && !stepOf(checkId) && !ranked.every((f) => f.needs)
-                ? templateOf(ranked.map((f) => f.page)) : null;
+                ? templateOf(ranked.map((f) => f.page), part.shapes?.segments) : null;
               const cards = sample
                 ? [...ranked.filter((f) => pathOf(f.page).startsWith(sample.prefix)),
                    ...ranked.filter((f) => !pathOf(f.page).startsWith(sample.prefix))]
@@ -5156,7 +5208,7 @@ function Fixes({ fixes, facts, render, page, part, cost, onGlow, siteId, onState
                     // Item 268 (row 6): a group of holds has nothing to fix, so
                     // a template on it read as "fix this template" over none.
                     const tpl = step || cards.every((f) => f.needs) ? null
-                      : templateOf(cards.map((f) => f.page));
+                      : templateOf(cards.map((f) => f.page), part.shapes?.segments);
                     return (
                       <p className="muted fix-group">
                         <code>{cards[0].check}</code> · {groupCount(checkId, cards)}
@@ -5276,9 +5328,13 @@ function Fixes({ fixes, facts, render, page, part, cost, onGlow, siteId, onState
                                                  .filter((p) => p && !SITE_WIDE_PAGES.has(p)))];
                         // Narrowed to one page, the page is the scope: not said again.
                         if (!paths.length || page) return "";
-                        const shown = paths.slice(0, 3).join(", ");
+                        // Up to five named whole (screen audits round 4,
+                        // Headings IP-01): "4 pages (... and 1 more)" sent the
+                        // operator to the record for the fourth.
+                        const cap = paths.length <= 5 ? 5 : 3;
+                        const shown = paths.slice(0, cap).join(", ");
                         return ` on ${paths.length === 1 ? shown : `${paths.length} pages (${shown}`
-                          + (paths.length > 3 ? ` and ${paths.length - 3} more)` : ")")}`;
+                          + (paths.length > cap ? ` and ${paths.length - cap} more)` : ")")}`;
                       })()} — {heldSays(l.needs ?? "")}
                       {heldLink(l.needs ?? "")
                         ? <> — <a href="#/admin?tab=sites" onClick={goHandler("#/admin?tab=sites")}>
@@ -5352,7 +5408,7 @@ function Fixes({ fixes, facts, render, page, part, cost, onGlow, siteId, onState
           {/* Item 277 (row 14): grouped by reason, each reason said once with
               the checks it dropped, rather than the same sentence eleven times. */}
           <ul className="rep-dropped-rows">
-            {droppedByReason(part.brief_dropped_rows ?? []).map((g) => (
+            {droppedByReason((part.brief_dropped_rows ?? []).filter((d) => !d.hold)).map((g) => (
               <li key={g.key}>
                 {g.rows.length} row{g.rows.length === 1 ? "" : "s"}: {g.reason}
                 {" "}({g.checks.map(([c, n]) => (n > 1 ? `${c} ×${n}` : c)).join(", ")})
@@ -5369,8 +5425,9 @@ function Fixes({ fixes, facts, render, page, part, cost, onGlow, siteId, onState
               </li>
             ))}
           </ul>
-          {(part.brief_dropped_rows ?? []).length < dropped && (
-            <p>{dropped - (part.brief_dropped_rows ?? []).length} more are in the report.</p>
+          {(part.brief_dropped_rows ?? []).filter((d) => !d.hold).length < dropped && (
+            <p>{dropped - (part.brief_dropped_rows ?? []).filter((d) => !d.hold).length} more are in
+              the report.</p>
           )}
         </details>
       )}
@@ -5626,7 +5683,16 @@ function ChecksTable({ part, fixes, cost, pops, siteScope = false, sweepAt = nul
       {SECTIONS.map(([section, title]) => {
         const mine = rows.filter((r) => costOf(part, r.full) === section);
         if (!mine.length) return null;
-        const open = mine.filter((r) => r.n > 0 && !r.outranked);
+        // Worst first (screen audits round 4, Speed UX-03): the High
+        // `lcp-poor` row stood last, under an Info "not measured" row. A row
+        // with no severity of its own (holds) after the ones that have one;
+        // otherwise the brief's order stands.
+        const rankOf = (r: { severity?: string | null; held?: boolean }) =>
+          r.held || !r.severity || !RANK.includes(r.severity) ? RANK.length : RANK.indexOf(r.severity);
+        const open = mine.filter((r) => r.n > 0 && !r.outranked)
+          .map((r, i) => ({ r, i }))
+          .sort((a, b) => rankOf(a.r) - rankOf(b.r) || a.i - b.i)
+          .map(({ r }) => r);
         // Item 157: clean means measured and found nothing. A row this run
         // could not measure is neither clean nor open, and it gets the line
         // below instead of being counted as a pass.
@@ -5666,7 +5732,12 @@ function ChecksTable({ part, fixes, cost, pops, siteScope = false, sweepAt = nul
           && (part.site_level_checks ?? []).includes(r.checkId);
         const spotlessSiteLevel = spotlessAll.filter(siteLevel);
         const spotlessPartly = section === "model" ? [] : spotlessAll.filter((r) => partly(r) && !siteLevel(r));
-        const spotless = spotlessAll.filter((r) => !traced.has(r.checkId) && !ownSample(r)
+        // Less the passed ones (screen audits round 4, Structured data
+        // AC-01): schema-review-unsupported read "returned no row for ...
+        // not a clean result" two lines above "judged and found nothing
+        // wrong with".
+        const spotless = spotlessAll.filter((r) => !spotlessPassed.includes(r))
+          .filter((r) => !traced.has(r.checkId) && !ownSample(r)
           && !byOrder(r) && !spotlessDropped.includes(r) && !partly(r) && !siteLevel(r));
         const spotlessSampled = spotlessAll.filter((r) => !traced.has(r.checkId) && ownSample(r)
           && !siteLevel(r));
@@ -5687,9 +5758,16 @@ function ChecksTable({ part, fixes, cost, pops, siteScope = false, sweepAt = nul
                     as nothing there. */}
                 {(() => {
                   const heldN = mine.filter((r) => r.counted === 0 && /not assessable/.test(r.state)).length;
+                  // Screen audits round 4 (Headings, r3 IP-06): rows waiting
+                  // on the operator are "to confirm", as the STATE column and
+                  // the head say - "4 open" stood over four of them.
+                  const n = open.filter((r) => r.counted > 0).length;
+                  const waiting = open.filter((r) => r.counted > 0 && r.state === candidateWord(true)).length;
+                  const word = waiting && waiting === n ? " to confirm"
+                    : waiting ? ` open, ${waiting} of them to confirm` : heldN ? " open" : "";
                   // "in this table": the part's own count is every held check;
                   // a held check the automatic checks raised is listed open.
-                  return heldN ? ` open · ${heldN} held in this table` : "";
+                  return word + (heldN ? ` · ${heldN} held in this table` : "");
                 })()}</span>
               {away && (
                 <span className="muted checks-folded">
@@ -5780,7 +5858,16 @@ function ChecksTable({ part, fixes, cost, pops, siteScope = false, sweepAt = nul
                       {anyBlocks && <td className="num">{r.blocks
                         ? <Counted pops={pops} count={makeCount(r.blocks, "record")} />
                         : "\u2014"}</td>}
-                      <td className="muted">{r.state}</td>
+                      <td className="muted">{r.state}
+                        {/* The record field a hold waits on, reachable from
+                            its row (screen audits round 4, Indexability UX-01,
+                            AI surface UX-03, Structured data UX-01): the
+                            reasons named `intended_noindex`, `sub_services`,
+                            `authors` and no way to set them. */}
+                        {r.held && heldLink(r.state) && (
+                          <> — <a href="#/admin?tab=sites" onClick={goHandler("#/admin?tab=sites")}>
+                            set it on Admin › Sites</a></>
+                        )}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -5961,12 +6048,17 @@ function ChecksTable({ part, fixes, cost, pops, siteScope = false, sweepAt = nul
         const raisedIds = new Set(fixes.filter((f) => !f.needs && f.sources.includes("sweep"))
                                        .map((f) => f.checkId));
         const heldOnRaised = [...heldChecks].filter((c) => raisedIds.has(c)).length;
-        const held = heldChecks.size - heldOnRaised;
+        // A check held on some pages and kept as a row on another was
+        // assessed (screen audits round 4, Headings AC-02): "4 checks could
+        // not be assessed" counted h1-triple-restated above its own card.
+        const rowIds = new Set(rows.map((f) => f.checkId));
+        const heldInPart = [...heldChecks].filter((c) => !raisedIds.has(c) && rowIds.has(c)).length;
+        const held = heldChecks.size - heldOnRaised - heldInPart;
         // Item 275 (row 5): a check the model returned as NOT_ASSESSABLE is
         // dropped as a row and drawn as a hold; it is counted once, as the
         // hold it is.
         const alsoHeld = (part.brief_dropped_rows ?? []).filter(
-          (d) => heldChecks.has(d.check.split("/").pop() ?? d.check)).length;
+          (d) => !d.hold && heldChecks.has(d.check.split("/").pop() ?? d.check)).length;
         const dropped = Math.max(0, (part.brief_dropped ?? 0) - alsoHeld);
         const kept = whole ? part.brief_run?.rows ?? null : null;
         const undrawn = kept != null ? Math.max(0, kept - rows.length) : 0;
@@ -5978,8 +6070,14 @@ function ChecksTable({ part, fixes, cost, pops, siteScope = false, sweepAt = nul
             {verdicts > 0 && <> · {verdicts} verdict{verdicts === 1 ? "" : "s"} closing an
               automatic finding</>}
             {undrawn > 0 && <> · {undrawn} kept but on no card here</>}
-            {" · "}{dropped} dropped
+            {" · "}{dropped + alsoHeld} dropped
+            {/* Screen audits round 4 (AI surface IP-05): one dropped count
+                on the three lines that state it; the rows of checks it also
+                held are said inside it, not taken out of it. */}
+            {alsoHeld > 0 && <> ({alsoHeld} of them rows for checks it held)</>}
             {held > 0 && <>; {held} check{held === 1 ? "" : "s"} could not be assessed</>}
+            {heldInPart > 0 && <>; {heldInPart} more held on some pages and assessed on
+              others</>}
             {heldOnRaised > 0 && <>; {heldOnRaised} more held where the automatic checks
               raised {heldOnRaised === 1 ? "it" : "them"}</>}
             {others.length > 0 && (

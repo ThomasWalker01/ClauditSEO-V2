@@ -523,7 +523,7 @@ function Deliverables({ siteId, tick = 0 }: { siteId: string; tick?: number }) {
                 {r.audits_since === null ? (
                   <span className="muted">audit no longer in history</span>
                 ) : r.audits_since > 0 ? (
-                  <Pill tone="state-regressed">
+                  <Pill tone="count-info">
                     {r.audits_since} audit{r.audits_since === 1 ? "" : "s"} since
                   </Pill>
                 ) : (
@@ -667,8 +667,10 @@ export function ReportsView({ siteId }: { siteId: string }) {
         Reports{site && <span className="muted"> · {site.client}</span>}
       </h2>
       {/* Item 166: the chips a report row and its hold draw. */}
-      <Legend ids={["action-primary", "sev-critical", "sev-high", "sev-medium",
-                    "state-regressed", "report-held"]} />
+      {/* Screen audits round 4 (Reports IP-02): no control here is a "next
+          step", and the red-outlined pill was "N audits since", which the
+          legend defined as a fault that came back. */}
+      <Legend ids={["sev-critical", "sev-high", "sev-medium", "audits-since", "report-held"]} />
       {/* What these are, in the reader's terms. "Brief" is the word this
           codebase uses for the operator-written prompt that casts a model as
           a named specialist — it names the instruction, not the output, so on
@@ -826,7 +828,7 @@ export function ReportsView({ siteId }: { siteId: string }) {
                           an operator can act on, but "three audits since" is
                           — one is a re-read, five is a rewrite. */}
                       {!r.is_latest && r.audits_since ? (
-                        <Pill tone="state-regressed" className="stale-mark"
+                        <Pill tone="count-info" className="stale-mark"
                               title={"The site has been audited again since "
                                      + "this was written; it may name "
                                      + "findings a later audit has closed."}>

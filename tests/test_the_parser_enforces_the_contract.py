@@ -77,7 +77,7 @@ def test_a_to_confirm_replacement_moves_its_row_to_not_assessable():
                  contract_rules(Site(domain="birch.fixture")))
     assert [r.page for r in got.rows] == [BASE + "/about"]
     assert got.not_assessable == [{"check": "ONP/meta-desc-missing", "page": "/team",
-                                   "needs": "page has enough distinct content to describe"}]
+                                   "needs": "page has enough distinct content to describe", "rows": 1}]
     assert not got.dropped
     # Nothing to store, so nothing to copy: the row is not in `rows`.
     assert not any(r.replacement and r.replacement.startswith("[TO") for r in got.rows)
@@ -96,13 +96,13 @@ def test_an_alignment_row_needs_the_gbp_category_and_a_location_page_its_entity(
                                   "needs": "GBP primary category"}])
     assert not got.rows and not got.dropped
     assert got.not_assessable == [
-        {"check": "ONP/title-entity-alignment", "page": "/", "needs": "GBP primary category"},
-        {"check": "ONP/title-entity-alignment", "page": "/richmond", "needs": "GBP primary category"}]
+        {"check": "ONP/title-entity-alignment", "page": "/", "needs": "GBP primary category", "rows": 1},
+        {"check": "ONP/title-entity-alignment", "page": "/richmond", "needs": "GBP primary category", "rows": 1}]
     # The category set, the location page still needs its entity.
     got = _parse(rows, contract_rules(Site(domain="birch.fixture", gbp_primary_category="Events Company")))
     assert [r.page for r in got.rows] == [BASE + "/"]
     assert got.not_assessable == [{"check": "ONP/title-entity-alignment", "page": "/richmond",
-                                   "needs": "location entity for /richmond"}]
+                                   "needs": "location entity for /richmond", "rows": 1}]
     # Both supplied: both rows stand.
     got = _parse(rows, contract_rules(Site(
         domain="birch.fixture", gbp_primary_category="Events Company",

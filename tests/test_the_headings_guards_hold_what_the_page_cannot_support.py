@@ -53,7 +53,7 @@ def test_a_page_with_no_triple_is_held_whatever_its_status():
     # "location_entity n/a per TRIPLES, primary_entity also n/a".
     kind, why = _said('h1 "SEO" - no page triple supplied (page_type other, primary_entity n/a)',
                       status="PASS-OVERRIDE")
-    assert kind == "hold" and "no triple" in why
+    assert kind == "hold" and why == contract.TRIPLE_NONE
     kind, why = _said('h1 "Search Engine Optimisation" - location entity absent '
                       "(location_entity n/a per TRIPLES, primary_entity also n/a)")
     assert kind == "hold" and "the GBP primary category" in why

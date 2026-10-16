@@ -15,5 +15,7 @@ SRC = Path(__file__).resolve().parents[1] / "dashboard" / "src" / "part_page.tsx
 
 def test_a_hold_on_a_raised_check_is_said_apart():
     src = SRC.read_text(encoding="utf-8")
-    assert "const held = heldChecks.size - heldOnRaised;" in src
+    # Less a check held in part, which was assessed (screen audits round 4,
+    # Headings AC-02).
+    assert "const held = heldChecks.size - heldOnRaised - heldInPart;" in src
     assert "more held where the automatic checks" in src

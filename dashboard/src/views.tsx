@@ -975,7 +975,11 @@ export function SiteDetailView({ siteId }: { siteId: string }) {
       {/* The legend, a strip above the content (brief v4 Item 3d): the
           symbols in play on this pane, and never inside the sidebar -
           `listShowing` applies that rule to the analyses list (item 197). */}
-      {SIDEBAR_PANES.includes(tab as SidebarPane) && tab !== "landing" && (
+      {/* Not on the Record's Audits view or one audit's history (screen
+          audits round 4, Record UX-02): no Part select or counts there for
+          its "pick a part to narrow the record" to point at. */}
+      {SIDEBAR_PANES.includes(tab as SidebarPane) && tab !== "landing"
+       && !(tab === "all" && recordView === "audits") && (
         <LegendStrip pane={tab as SidebarPane} a={anat}
                      catalogueOpen={tab === "findings" && catalogue}
                      listShowing={tab === "findings" && (!part || catalogue)}
@@ -1071,18 +1075,11 @@ export function SiteDetailView({ siteId }: { siteId: string }) {
           client report do not read it, so a page to leave alone is still
           judged; set its finding’s state on the Record to answer it.
         </p>
-        <form className="inline-form" onSubmit={async (e) => {
-          e.preventDefault();
-          const input = (e.target as HTMLFormElement)
-            .elements.namedItem("note") as HTMLInputElement;
-          if (!input.value.trim()) return;
-          await api.post(`/api/sites/${siteId}/notes`, { note: input.value });
-          input.value = "";
-          setTick((t) => t + 1);
-        }}>
-          <input name="note" aria-label="Note" placeholder="Add a note…" style={{ flex: 1 }} />
-          <SecondaryButton submit>Add</SecondaryButton>
-        </form>
+        <NoteForm siteId={siteId} onSaved={() => setTick((t) => t + 1)} />
+        {/* Screen audits round 4 (Notes IP-05): an empty list says so. */}
+        {!((data as any).notes ?? []).length && (
+          <p className="muted">No notes on this site yet.</p>
+        )}
         <ul className="group-pages">
           {((data as any).notes ?? []).map((n: any) => (
             <li key={n.id}>
@@ -1122,6 +1119,40 @@ export function SiteDetailView({ siteId }: { siteId: string }) {
 /** The panes the sidebar stands beside: the five steps. */
 const SIDEBAR_PANES: readonly SidebarPane[] = ["landing", "history", "findings", "all"];
 
+/** The longest note the server keeps (`app.py` cuts at 2000). */
+const NOTE_MAX = 2000;
+
+/** Add a note (screen audits round 4, Notes UX-08): a failed save said
+ *  nothing and cleared nothing, and a note past the server's 2000 characters
+ *  was cut without a word. The field stops at the limit and a failure is
+ *  said, with the text kept. */
+function NoteForm({ siteId, onSaved }: { siteId: string; onSaved: () => void }) {
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <>
+      <form className="inline-form" onSubmit={async (e) => {
+        e.preventDefault();
+        const input = (e.target as HTMLFormElement)
+          .elements.namedItem("note") as HTMLInputElement;
+        if (!input.value.trim()) return;
+        try {
+          await api.post(`/api/sites/${siteId}/notes`, { note: input.value });
+          setError(null);
+          input.value = "";
+          onSaved();
+        } catch (err) {
+          setError(`The note was not saved: ${(err as Error).message}`);
+        }
+      }}>
+        <input name="note" aria-label="Note" placeholder="Add a note…" maxLength={NOTE_MAX}
+               style={{ flex: 1 }} />
+        <SecondaryButton submit>Add</SecondaryButton>
+      </form>
+      {error && <ErrorNote error={error} />}
+    </>
+  );
+}
+
 /** The precheck's own figure for Crawl & sitemaps, on Audit beside the
  *  counts it is about (brief v24 step BN; it rode the sidebar's Crawl row
  *  as the `preBadge`, and 155 left it out of the populations). */
@@ -1150,19 +1181,39 @@ const PAGE_ROWS = 15;
 /** Jump to any crawled page's dossier — the page-first door. */
 function PageFinder({ siteId, latestRunId }:
     { siteId: string; latestRunId?: string }) {
-  const [pages, setPages] = useState<FoundPage[]>([]);
+  const [pages, setPages] = useState<FoundPage[] | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
   const [fUrl, setFUrl] = useState("");
   const [allRows, setAllRows] = useState(false);
   useEffect(() => {
     if (!latestRunId) return;
     let live = true;
+    setFailed(null);
     api.get<{ pages: FoundPage[] }>(
       `/api/runs/${latestRunId}/pages`)
       .then((d) => { if (live) setPages(d.pages ?? []); })
-      .catch(() => { if (live) setPages([]); });
+      .catch((e: Error) => { if (live) setFailed(e.message); });
     return () => { live = false; };
-  }, [latestRunId]);
-  if (!pages.length) return null;
+  }, [latestRunId, retry]);
+  // Screen audits round 4 (Pages UX-07): a failed fetch and an audit with no
+  // pages each say so; the pane was a heading over nothing.
+  if (!latestRunId) {
+    return <Card><h3>Pages</h3><p className="muted">No audit has run on this site yet.</p></Card>;
+  }
+  if (failed) {
+    return (
+      <Card>
+        <h3>Pages</h3>
+        <ErrorNote error={`The page list did not load: ${failed}`} />
+        <p><SecondaryButton onClick={() => setRetry((n) => n + 1)}>try again</SecondaryButton></p>
+      </Card>
+    );
+  }
+  if (!pages) return <Loading />;
+  if (!pages.length) {
+    return <Card><h3>Pages</h3><p className="muted">The latest audit stored no pages.</p></Card>;
+  }
   const shown = pages.filter((p) =>
     !fUrl || p.url.toLowerCase().includes(fUrl.toLowerCase()));
   /** How many pages the rest of the screen counts: `pathKey`'s set, which is
@@ -1179,12 +1230,14 @@ function PageFinder({ siteId, latestRunId }:
   const shared = [...variants].filter(([, n]) => n > 1);
   return (
     <Card>
-      <h3>Page dossier</h3>
+      {/* Screen audits round 4 (Pages UX-10): the card is the pages; a
+          page's link opens its dossier. */}
+      <h3>Pages</h3>
       {/* Item 166: the severity chips a page's findings wear. */}
       <Legend ids={["sev-critical", "sev-high", "sev-medium", "sev-low", "sev-info"]} />
       <p className="muted">
-        Everything known about one page — crawl history, every finding that
-        names it, every analysis that read it.
+        Open a page for its dossier: everything known about it — crawl
+        history, every finding that names it, every analysis that read it.
       </p>
       {/* A crawl is 557 pages on this instance's largest site, and an
           <option> list is the one collection a browser will not let you
@@ -1218,31 +1271,10 @@ function PageFinder({ siteId, latestRunId }:
             : null}
         </span>
       </div>
-      {/* Named: the visible heading above is not programmatically attached,
-          so a screen reader announced this only as "combo box". Found by
-          running our own axe pass over our own dashboard. */}
-      <select className="input" style={{ maxWidth: "100%" }} defaultValue=""
-              aria-label="Open the dossier for a page"
-              onChange={(e) => {
-                if (e.target.value) {
-                  goto(`#/sites/${siteId}/dossier/${encodeURIComponent(e.target.value)}`);
-                }
-              }}>
-        <option value="" disabled>
-          {shown.length ? "Choose a page…" : "No page matches that filter"}
-        </option>
-        {/* The variant marked in its own row, so a reader who wonders why the
-            two figures differ finds the answer in the list rather than
-            subtracting (ruling 20260918-1430). `option` takes no markup, so
-            the mark is in its text. */}
-        {shown.map((p) => (
-          <option key={p.url} value={p.url}>
-            {p.url}{(variants.get(pathKey(p.url)) ?? 1) > 1
-                      ? `  — one of ${variants.get(pathKey(p.url))} spellings of this page`
-                      : ""}
-          </option>
-        ))}
-      </select>
+      {/* Screen audits round 4 (Pages UX-04): the select that navigated on
+          change is gone - a keyboard reader was sent away while reading the
+          list (WCAG 2.2 SC 3.2.2) - and the table's links do its job. The
+          spellings note it carried is on the row. */}
       {/* Screen audits round 3 (Pages US-01): which pages carry the
           problems. The endpoint returned title, words and depth and nothing
           drew them, and no count per page existed, so the question took 45
@@ -1255,9 +1287,12 @@ function PageFinder({ siteId, latestRunId }:
           <>
             <h4 className="pages-table-head">Pages by open findings</h4>
             <p className="muted">
-              Open and regressed findings in the record that name each page, at
-              their worst severity; a finding about several pages counts on each.
+              Checks with an open or back-after-a-fix finding in the record
+              naming each page, at their worst severity: one per check, whether
+              the automatic checks or an analysis found it, and a finding about
+              several pages counts on each.
             </p>
+            {!ranked.length && <p className="muted">No page matches that filter.</p>}
             <div className="table-scroll">
               <table className="findings pages-table">
                 <thead><tr><th>Page</th><th>Title</th><th className="num">Words</th>
@@ -1267,7 +1302,11 @@ function PageFinder({ siteId, latestRunId }:
                     const href = `#/sites/${siteId}/dossier/${encodeURIComponent(p.url)}`;
                     return (
                       <tr key={p.url}>
-                        <td><a href={href} onClick={navHandler(href)}><code>{pathKey(p.url)}</code></a></td>
+                        <td><a href={href} onClick={navHandler(href)}><code>{pathKey(p.url)}</code></a>
+                          {(variants.get(pathKey(p.url)) ?? 1) > 1 && (
+                            <span className="muted"> · one of {variants.get(pathKey(p.url))} spellings
+                              of this page</span>
+                          )}</td>
                         <td>{p.title || <span className="muted">no title</span>}</td>
                         <td className="num pages-n">{p.words ?? "—"}</td>
                         <td className="num pages-n">{p.depth ?? "—"}</td>
@@ -1306,8 +1345,9 @@ function RecordAudits(props: Parameters<typeof AuditPane>[0]) {
   // be undone - defined once above it, as on the Record's other view.
   return run ? <HistoryView siteId={props.siteId} run={run} />
              : <>
-                 <Legend ids={["sev-critical", "sev-high", "sev-medium", "sev-low", "sev-info",
-                               "action-danger", "danger-undone"]} />
+                 {/* Screen audits round 4 (Record IP-04): no row on this
+                     view carries a severity, so none is keyed. */}
+                 <Legend ids={["action-danger", "danger-undone"]} />
                  <AuditPane {...props} show="history" />
                </>;
 }
@@ -1326,12 +1366,14 @@ function HistoryView({ siteId, run }: {
         Viewing as of audit {[run.tier, stamp(run.started_at)].filter(Boolean).join(" · ")}
         {" · "}<a href={back} onClick={navHandler(back)}>back to current</a>
       </p>
-      <RunDetailView runId={run.id} />
+      <RunDetailView runId={run.id} embedded />
     </>
   );
 }
 
-export function RunDetailView({ runId }: { runId: string }) {
+/** `embedded` inside the Record's history view, which has its own way back
+ *  (screen audits round 4, Record UX-03: "back to site" quietly left it). */
+export function RunDetailView({ runId, embedded = false }: { runId: string; embedded?: boolean }) {
   const [tick, setTick] = useState(0);
   const [flat, setFlat] = useState(false);
   const { data, error, loading, retry } = useFetch<Run>(`/api/runs/${runId}`, tick);
@@ -1363,7 +1405,7 @@ export function RunDetailView({ runId }: { runId: string }) {
           carry no scope, and say nothing rather than being given one. */}
       <ScanBanner run={data as unknown as ScanBannerRun} />
       <p className="muted">
-        <a href={`#/sites/${data.site_id}`}>back to site</a> · {data.tier} ·{" "}
+        {!embedded && <><a href={`#/sites/${data.site_id}`}>back to site</a> · </>}{data.tier} ·{" "}
         {data.dimensions.join(", ")}
         {(data as unknown as { engine_version: string }).engine_version &&
           <> · engine v{(data as unknown as { engine_version: string }).engine_version}</>}

@@ -344,6 +344,29 @@ def _norm_head(s: str | None) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", (s or "").lower()))
 
 
+#: One reason per cause for a held `h1-triple-restated` (screen audits round
+#: 4, Headings IP-01, UI-02): the model's "page triple (location_entity n/a,
+#: primary_entity n/a in TRIPLES)" and the guard's own sentence were one
+#: blank in three wordings, drawn as three hold lines.
+TRIPLE_NONE = ("a page triple on the site record: the GBP primary category and this "
+               "page's location entity")
+TRIPLE_LOCATION = ("this page's location entity (location pages on the site record); "
+                   "the H1 names the primary entity")
+
+
+def _triple_needs(needs: str) -> str | None:
+    """The one reason a model's own triple hold is said as, or None."""
+    said = needs.lower()
+    if needs in (TRIPLE_NONE, TRIPLE_LOCATION) or ("triple" not in said and "entity" not in said):
+        return None
+    location_na = bool(re.search(r"location[ _]entity[^.;|]{0,40}n/a", said))
+    primary_na = bool(re.search(r"primary[ _]entity[^.;|]{0,40}n/a", said))
+    if ("names primary entity" in said or "names the primary entity" in said
+            or (location_na and not primary_na and "triple" not in said)):
+        return TRIPLE_LOCATION
+    return TRIPLE_NONE
+
+
 def _headings_guard(row: "Row", rules: "Rules") -> tuple[str, str] | None:
     """A Headings row the page it names cannot support (item 268, row 7):
     ("hold", reason) or ("drop", reason), or None.
@@ -368,13 +391,10 @@ def _headings_guard(row: "Row", rules: "Rules") -> tuple[str, str] | None:
                            or ("location entity absent" in said and "n/a" in said))
         primary_na = bool(re.search(r"primary[ _]entity (also )?n/a", said))
         if "no page triple" in said or (primary_na and location_na):
-            return ("hold", "the site record gives this page no triple - no primary or "
-                            "location entity - so there is nothing for the H1 to restate "
-                            "until the GBP primary category and the page's location are set")
+            return ("hold", TRIPLE_NONE)
         if location_na and "names primary entity" in said \
                 and not re.search(r"not clearly|generic", said):
-            return ("hold", "the page's location entity, which the site record's "
-                            "location pages leave empty: the H1 names the primary entity")
+            return ("hold", TRIPLE_LOCATION)
     facts = (rules.page_facts or {}).get(_path(row.page))
     if facts is None:
         return None
@@ -670,7 +690,18 @@ def enforce(parsed: "Parsed", rules: Rules) -> "Parsed":
         key = (row.check, _path(row.page))
         if key not in have:
             have.add(key)
-            parsed.not_assessable.append({"check": row.check, "page": _path(row.page), "needs": needs})
+            # As the row wrote it (screen audits round 4, Headings IP-02):
+            # the key's spelling, "/web-design1", stood beside every card's
+            # "/web-design1/".
+            parsed.not_assessable.append({"check": row.check, "page": _shown_path(row.page),
+                                          "needs": needs})
+        # How many returned rows the reader held here (screen audits round 4,
+        # Headings AC-01): seven h1-triple-restated rows held on read left
+        # "17 rows returned" where the model returned 24.
+        for n in parsed.not_assessable:
+            if isinstance(n, dict) and (n.get("check"), _path(str(n.get("page") or ""))) == key:
+                n["rows"] = int(n.get("rows") or 0) + 1
+                break
 
     # Item 221: a hold on a free check the sweep measured is a hold on a check
     # that ran. Counted as dropped, so the accounting still sums (item 209).
@@ -978,9 +1009,19 @@ def clean_holds(parsed: "Parsed") -> "Parsed":
         if _INPUT_NAME.match(needs):
             needs = _input_words(needs)
         needs = _SETTING.sub(lambda m: m.group(1).replace("_", " "), needs)
+        if check_id_of(check) == "h1-triple-restated":
+            needs = _triple_needs(needs) or needs
         kept.append({**n, "needs": needs} if needs or "needs" in n else n)
     parsed.not_assessable = kept
     return parsed
+
+
+def _shown_path(url: str) -> str:
+    """A page's path as written, for display: `_path` less its folding."""
+    try:
+        return urlsplit(url).path or "/"
+    except ValueError:
+        return url
 
 
 def _path(url: str) -> str:

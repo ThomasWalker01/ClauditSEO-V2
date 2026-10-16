@@ -215,14 +215,14 @@ def test_the_dossier_offers_the_three_answers_and_one_is_taken(served):
                     wait_until="load", timeout=30_000)
             pg.wait_for_selector("table.findings .fix-confirm", timeout=30_000)
             before = pg.evaluate("""() => ({
-              state: [...document.querySelectorAll('table.findings .state')].map((e) => e.textContent.trim()),
+              state: [...document.querySelectorAll('table.findings .tone[class*=tone-state-]')].map((e) => e.textContent.trim()),
               controls: [...document.querySelectorAll('table.findings .fix-confirm button')].map((e) => e.textContent.trim()),
             })""")
             pg.click("table.findings .fix-confirm-withdraw")
             pg.wait_for_function(
                 "() => !document.querySelector('table.findings .fix-confirm')", timeout=15_000)
             after = pg.evaluate(
-                "() => [...document.querySelectorAll('table.findings .state')].map((e) => e.textContent.trim())")
+                "() => [...document.querySelectorAll('table.findings .tone[class*=tone-state-]')].map((e) => e.textContent.trim())")
         finally:
             b.close()
     assert before["state"] == ["to confirm"], before

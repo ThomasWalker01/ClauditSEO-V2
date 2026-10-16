@@ -251,7 +251,11 @@ class AiSurfaceModule:
         crawl: CrawlResult = context["crawl"]
         findings: list[Finding] = []
 
-        if crawl.llms_txt_status != 200:
+        # Screen audits round 4 (AI surface AC-02): a status of None is a
+        # file the crawl did not request (robots, or no answer), not a file
+        # that is absent - "/llms.txt: not requested on this audit" stood
+        # over "No llms.txt file found." on the same audit.
+        if crawl.llms_txt_status is not None and crawl.llms_txt_status != 200:
             findings.append(Finding(
                 dimension=self.code, check_id="llms-txt-missing", severity=Severity.INFO,
                 summary="No llms.txt file found.",

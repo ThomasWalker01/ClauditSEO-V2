@@ -187,7 +187,9 @@ PROBE_URL = "**/api/clients"
 #: quietly stopped testing it — which is the failure mode that let a defect
 #: sit behind six green screens.
 MUST_RENDER = {
-    "sev": "severity chip on a finding",
+    # "sev" retired (screen audits round 4, Pages UI-01): the dossier was its
+    # last user, and its chips are `SeverityTag`'s `tone-sev-*` now; the
+    # class had no rule left in styles.css.
     "score": "score badge",
     "stat": "headline number",
     "tone": "action pill",

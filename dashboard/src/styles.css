@@ -1695,6 +1695,13 @@ td.num .prev-outside { font-size: .9em; }
 .sp-this-page { margin: 0 0 var(--s2); }
 /* Item 257: which run a crawl row was. */
 .dossier-run { white-space: nowrap; }
+/* Screen audits round 4 (Pages UX-06): the crawl row's link to its run is
+   seen as a link; the count, source, title and notes lines. */
+.row-link.dossier-run-link { color: var(--accent, #2563eb); text-decoration: underline; }
+.dossier-count { margin: 0.25rem 0 0.5rem; }
+.dossier-source { white-space: nowrap; font-size: 0.8rem; }
+.dossier-title { overflow-wrap: anywhere; font-size: 0.85rem; }
+.dossier-notes { font-size: 0.8rem; }
 /* Item 256: what a generated document is made from. */
 .report-gen-from { max-width: 72ch; }
 /* What the generator asks to be checked before sending (screen audits round 3,
@@ -4494,3 +4501,9 @@ summary { min-height: 24px; padding-block: 3px; box-sizing: border-box; }
 .cn-unmeasured { color: var(--text-muted); }
 /* Items 274, 276: analysis checks with no row, which are not a pass. */
 .cause-unreturned-line { font-size: var(--fs-ui); margin: var(--s1) 0; }
+
+/* Screen audits round 4 (AI surface US-02): the model's note on a card. */
+.ai-note { font-style: italic; }
+
+/* Screen audits round 4 (Home UX-02): the regressed count opens its rows. */
+.home-card-regressed { font-weight: 600; text-decoration: underline; }

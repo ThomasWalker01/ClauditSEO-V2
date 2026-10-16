@@ -338,8 +338,13 @@ def dns_verdicts(dns_ev: dict | None) -> tuple[list[dict], dict[str, str]]:
             gaps = (["p=none - monitoring, not enforcement"] if tags.get("p", "").lower() == "none" else []) + (
                 ["no rua - nobody receives the reports"] if "rua" not in tags else [])
             if gaps:
+                # Screen audits round 4 (Security AC-06): with the policy at
+                # quarantine or reject, a missing rua is a monitoring gap -
+                # the policy is enforced - and not one of the part's Highs.
+                enforced = tags.get("p", "").lower() in ("quarantine", "reject")
                 rows.append({"check": "dmarc", "summary": f"DMARC for {apex}: {'; '.join(gaps)}.",
-                             "evidence": {"dmarc": rec}})
+                             "evidence": {"dmarc": rec},
+                             **({"severity": Severity.MEDIUM} if enforced else {})})
 
     dkim = [one(f"{sel}._domainkey.{apex}", "TXT") for sel in dnsq.DKIM_SELECTORS]
     if any(q and q["status"] == dnsq.OK and q["records"] for q in dkim):
@@ -567,7 +572,7 @@ class SecurityModule:
         rows, _skipped = dns_verdicts(getattr(crawl, "dns", None))
         for row in rows:
             out.append(Finding(dimension=self.code, check_id=row["check"],
-                               severity=DEFAULT_SEVERITY[row["check"]],
+                               severity=row.get("severity") or DEFAULT_SEVERITY[row["check"]],
                                summary=row["summary"], subject="site",
                                affected_urls=[crawl.start_url], evidence=row["evidence"],
                                recommendation=_DNS_FIX[row["check"]]))

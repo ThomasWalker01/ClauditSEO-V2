@@ -469,6 +469,9 @@ export type FindingState = {
   /** Why the analysis's replacement for this row was not kept, where it
    *  wrote one (screen audits round 3, Title & description AC-05). */
   copy_not_kept?: string | null;
+  /** The model's own note on an analysis row (screen audits round 4, AI
+   *  surface US-02). */
+  analysis_note?: string | null;
   /** A duplicate row's shared string, from either source (brief v11 step
    *  AH): the record's group line counts the groups. */
   group?: string | null;

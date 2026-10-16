@@ -19,11 +19,15 @@ ROOT = Path(__file__).resolve().parent.parent
 def test_open_findings_are_counted_per_page_at_their_worst(monkeypatch):
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    conn.execute("CREATE TABLE rows (affected_urls TEXT, severity TEXT)")
-    conn.executemany("INSERT INTO rows VALUES (?, ?)", [
-        (json.dumps(["https://gate-six.test/", "https://gate-six.test/a/"]), "medium"),
-        (json.dumps(["https://gate-six.test/"]), "critical"),
-        (json.dumps(["https://gate-six.test/a/?utm=x"]), "low"),
+    conn.execute("CREATE TABLE rows (affected_urls TEXT, severity TEXT, dimension TEXT,"
+                 " check_id TEXT)")
+    conn.executemany("INSERT INTO rows VALUES (?, ?, ?, ?)", [
+        (json.dumps(["https://gate-six.test/", "https://gate-six.test/a/"]), "medium", "ONP", "a"),
+        (json.dumps(["https://gate-six.test/"]), "critical", "SEC", "b"),
+        (json.dumps(["https://gate-six.test/a/?utm=x"]), "low", "ONP", "c"),
+        # The same check again on `/`, as an analysis row beside the sweep's
+        # (screen audits round 4, Pages AC-03): one check, counted once.
+        (json.dumps(["https://gate-six.test/"]), "high", "SEC", "b"),
     ])
     real = conn.execute
 
@@ -32,7 +36,7 @@ def test_open_findings_are_counted_per_page_at_their_worst(monkeypatch):
 
         def execute(self, sql, params=()):
             assert "state IN ('open','regressed')" in sql and "NOT " in sql
-            return real("SELECT affected_urls, severity FROM rows")
+            return real("SELECT affected_urls, severity, dimension, check_id FROM rows")
 
     got = runs.open_by_page(Conn(), "site")
     assert got == {"/": {"open": 2, "worst": "critical"},

@@ -99,6 +99,23 @@ function parityWords(p: ParityPair): string {
 /** "What each device and Googlebot is served" — the probe's sentence, then a
  *  row per probed page. States the absence and the JavaScript limit in words,
  *  because both are the difference between "tested clean" and "not tested". */
+/** The agent matrix's header, for the matrix and its folded rows alike. */
+function MatrixHead({ row }: { row: { fetched: { url: string }[] } }) {
+  return (
+    <thead>
+      <tr>
+        <th>Agent</th>
+        <th>Class</th>
+        <th>robots.txt</th>
+        {row.fetched.map((f) => (
+          <th key={f.url}>Fetched {pathLabel(f.url)}</th>
+        ))}
+        <th>Note</th>
+      </tr>
+    </thead>
+  );
+}
+
 function ParitySection({ parity }: { parity: MobileParity | null | undefined }) {
   if (!parity) {
     return (
@@ -129,7 +146,12 @@ function ParitySection({ parity }: { parity: MobileParity | null | undefined }) 
             </tr>
           </thead>
           <tbody>
-            {parity.pages.map((r) => (
+            {/* The pages that differ first (screen audits round 4, Crawl
+                UI-03): 13 exceptions sat among 45 rows. */}
+            {[...parity.pages].sort((a, b) =>
+              Number(parityKind(a.device) !== "fail" && parityKind(a.bot) !== "fail")
+              - Number(parityKind(b.device) !== "fail" && parityKind(b.bot) !== "fail"))
+              .map((r) => (
               <tr key={r.url}>
                 <td>{r.path}</td>
                 <td className="cn-note">
@@ -298,17 +320,7 @@ export function CrawlNowBlock({ now }: { now: CrawlNow }) {
       {now.ua_matrix && now.ua_matrix.length > 0 ? (
         <>
           <table className="cn-matrix">
-            <thead>
-              <tr>
-                <th>Agent</th>
-                <th>Class</th>
-                <th>robots.txt</th>
-                {now.ua_matrix[0].fetched.map((f) => (
-                  <th key={f.url}>Fetched {pathLabel(f.url)}</th>
-                ))}
-                <th>Note</th>
-              </tr>
-            </thead>
+            <MatrixHead row={now.ua_matrix[0]} />
             <tbody>
               {/* Item 275 (row 11): the rule blocks and refusals first - the
                   rows that say something - and the agents served on every
@@ -324,7 +336,11 @@ export function CrawlNowBlock({ now }: { now: CrawlNow }) {
                 {now.ua_matrix.filter(servedEverywhere).length} agents allowed by robots.txt and
                 served on every probed page
               </summary>
+              {/* Its own header row (screen audits round 4, Crawl UX-04,
+                  UI-01): a headerless table read "allow" and "200" with no
+                  column (WCAG 1.3.1). */}
               <table className="cn-matrix">
+                <MatrixHead row={now.ua_matrix[0]} />
                 <tbody>
                   {now.ua_matrix.filter(servedEverywhere).map((r) => (
                     <UaMatrixRow key={r.agent} r={r} />

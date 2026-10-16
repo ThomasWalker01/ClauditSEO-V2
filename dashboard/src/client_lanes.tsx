@@ -141,7 +141,10 @@ export function ago(iso: string | null | undefined, now: number = Date.now()): s
   if (min < 60) return `${min} minute${min === 1 ? "" : "s"} ago`;
   const h = Math.floor(min / 60);
   if (h < 24) return `${h} hour${h === 1 ? "" : "s"} ago`;
-  const d = Math.floor(h / 24);
+  // Calendar days in the reader's zone (screen audits round 4, Home IP-02):
+  // 92 hours floored to "3 days ago" for an audit of the 12th read on the 16th.
+  const midnight = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const d = Math.max(1, Math.round((midnight(new Date(now)) - midnight(new Date(iso))) / 86_400_000));
   return d === 1 ? "yesterday" : `${d} days ago`;
 }
 

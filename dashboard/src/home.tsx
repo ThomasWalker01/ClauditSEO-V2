@@ -90,10 +90,14 @@ const WORDS = ["No", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eig
 /** A count that opens a sentence, in words while it is small. */
 const Count = (n: number) => WORDS[n] ?? String(n);
 
-/** How long ago, in the words a card uses. */
-function ago(iso: string | null): string {
+/** How long ago, in the words a card uses: calendar days in the reader's
+ *  zone (screen audits round 4, Home IP-02). Elapsed time floored to days
+ *  read "3 days ago" on 16 Oct for an audit of the 12th. */
+export function ago(iso: string | null, now: Date = new Date()): string {
   if (!iso) return "never";
-  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+  const then = new Date(iso);
+  const midnight = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round((midnight(now) - midnight(then)) / 86_400_000);
   return days <= 0 ? "today" : days === 1 ? "yesterday" : `${days} days ago`;
 }
 
@@ -270,8 +274,15 @@ function SiteCard({ row: s, businessTypes, onChanged }: {
         </> : !audited ? <>
           {s.open > 0 ? `${s.open} open. ` : "Nothing open. "}No audit has completed, so there is no score.
         </> : <>
-          {s.regressed > 0 && <strong className="regressed">{s.regressed} back after a fix. </strong>}
-          {s.open} open{s.notes ? ` · ${coverageNotes(s.notes)} not counted` : ""},
+          {/* Screen audits round 4 (Home IP-01, UX-02): "11 back after a
+              fix. 621 open" read as 632, and the red count opened nothing.
+              The regressed rows are inside the open count, said so, and
+              open the Record on them. */}
+          {s.open} open{s.regressed > 0 && <>, <a className="regressed home-card-regressed"
+            href={`#/sites/${s.site_id}?tab=all&state=regressed`}
+            onClick={goHandler(`#/sites/${s.site_id}?tab=all&state=regressed`)}>
+            {s.regressed} of them back after a fix</a></>}
+          {s.notes ? ` · ${coverageNotes(s.notes)} not counted` : ""},
           {" "}{(s.to_confirm ?? 0) > 0 ? `${s.to_confirm} to confirm, ` : ""}
           {s.candidate - (s.to_confirm ?? 0)} seen once. Audited {ago(s.recheck_label ? s.score_at ?? null : s.last_run_at)}{moved}.
           {s.score == null && s.narrow_score != null && (
@@ -311,7 +322,7 @@ function SiteCard({ row: s, businessTypes, onChanged }: {
       )}
       <div className="home-card-foot">
         <span className={`home-tag${audited ? "" : " home-tag-warn"}`}>
-          {audited ? `audited ${ago(s.last_run_at)}`
+          {audited ? `audited ${ago(s.recheck_label ? s.score_at ?? null : s.last_run_at)}`
             : narrowOnly ? `${s.narrow_scope} scan only` : "never audited"}
         </span>
         {s.last_run_status && !hasScore(s.last_run_status) && <RunStatusChip status={s.last_run_status} />}

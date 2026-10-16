@@ -313,9 +313,22 @@ def _alt_says_nothing(alt: str, src: str) -> str | None:
         return None
     if said in BUILDER_ALTS or (alt or "").strip().lower() in BUILDER_ALTS:
         return "a page builder's default"
-    if said == fold(_src_stem(src)):
+    if said in (fold(_src_stem(src)), fold(_bare_stem(_src_stem(src)))):
         return "the file's name"
     return None
+
+
+#: What a CMS appends to an uploaded file's name (screen audits round 4,
+#: Images AC-08): WordPress's size variant (`-300x300`), its edit stamp
+#: (`-e1733966478717`) and its big-image copy (`-scaled`). On
+#: /website-blogs/ six alts were the file's name in words and none was
+#: raised, because each file carried `-300x300`.
+_CMS_SUFFIX = re.compile(r"(?:-\d+x\d+|-e\d{10,}|-scaled)+$", re.I)
+
+
+def _bare_stem(stem: str) -> str:
+    """A file's stem without the suffixes a CMS appends to it."""
+    return _CMS_SUFFIX.sub("", stem or "")
 
 
 def _src_stem(src: str) -> str:

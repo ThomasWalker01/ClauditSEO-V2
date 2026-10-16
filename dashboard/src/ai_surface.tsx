@@ -454,7 +454,8 @@ export function aiSurfaceCopy(replacement: string,
 export function AiSurfaceFixBody({ fix }: { fix: { current: string; note: string; replacement: string | null;
                                                     payload?: Record<string, unknown>;
                                                     checkId?: string;
-                                                    recommendation?: string | null }; facts: unknown }) {
+                                                    recommendation?: string | null;
+                                                    analysisNote?: string | null }; facts: unknown }) {
   const p = fix.payload ?? {};
   const candidates = (p.candidates as Candidate[] | undefined) ?? [];
   const criteria = p.criteria as Record<string, boolean> | undefined;
@@ -463,6 +464,13 @@ export function AiSurfaceFixBody({ fix }: { fix: { current: string; note: string
   return (
     <>
       <p className="fix-why">{fix.current || fix.note}</p>
+      {/* Screen audits round 4 (AI surface US-02): the model's note reaches
+          the card where a current string stood in front of it - "'Twenty22'
+          is used because it is the domain name ... a naming assumption" went
+          out with the copy and never reached the screen. */}
+      {fix.analysisNote && fix.analysisNote !== fix.current && (
+        <p className="muted fix-meta ai-note">Analysis note: {fix.analysisNote}</p>
+      )}
       {/* Item 267 (row 7): the automatic check's own advice, which reached
           no screen - the four HIGH firewall cards carried the summary and
           nothing to act on. A firewall block is a policy the client may have
@@ -491,9 +499,14 @@ export function AiSurfaceFixBody({ fix }: { fix: { current: string; note: string
       {typeof p.passage === "string" && (
         <div className="img-panel">
           <h5 className="muted">Passage{typeof p.place === "string" ? ` · ${p.place}` : ""}</h5>
-          <p className="fix-new"><span className="fix-rep">{p.passage}</span></p>
+          {/* Labelled (screen audits round 4, AI surface AC-03): the passage
+              is the change, and the criteria read the page as it stands -
+              "named subject: no" sat under a passage that names it. */}
+          <p className="fix-new"><span className="fix-lbl">Change: </span>
+            <span className="fix-rep">{p.passage}</span></p>
           {criteria && (
             <p className="muted fix-meta">
+              The page as it stands:{" "}
               {Object.entries(criteria).map(([k, v]) => `${k.replace(/_/g, " ")}: ${v ? "yes" : "no"}`).join(" · ")}
             </p>
           )}

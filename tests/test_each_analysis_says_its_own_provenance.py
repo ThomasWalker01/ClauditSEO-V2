@@ -26,5 +26,6 @@ def test_the_payload_carries_one_line_per_analysis():
 
 def test_the_screen_counts_each_analysis_by_itself():
     page = SRC.read_text(encoding="utf-8")
-    assert "{` · ${b.rows + b.dropped} rows returned · ${b.rows} kept · ${b.dropped} dropped`}" in page
+    # Held rows count as returned (screen audits round 4, Headings AC-01).
+    assert "b.rows + b.dropped + (b.held_rows ?? 0)} rows returned" in page
     assert "part.brief_runs!.reduce((s, b) => s + (b.cost ?? 0), 0)" in page

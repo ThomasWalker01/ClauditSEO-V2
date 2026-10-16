@@ -71,7 +71,8 @@ def test_two_spellings_of_one_heading_share_a_key(got):
 
 
 def test_copy_outline_copies_the_parsed_lines(got):
-    assert got["copy"] == "H2 A\nH3 B?", got["copy"]
+    # A question's stub is pasted under it (screen audits round 4, Headings UX-01).
+    assert got["copy"] == "H2 A\nH3 B?\n  answer: x", got["copy"]
 
 
 def test_the_marks_say_what_changed():
@@ -80,7 +81,7 @@ def test_the_marks_say_what_changed():
     unmatched line whatever the model flagged, and a typo fix matched a later
     duplicate because the map kept the last line per key."""
     src = (DASH / "src" / "part_page.tsx").read_text(encoding="utf-8").replace("\r\n", "\n")
-    body = src.split("const change = (line: Line): string | null => {", 1)[1].split("\n  };", 1)[0]
+    body = src.split("const change = (line: Line, j: number): string | null => {", 1)[1].split("\n  };", 1)[0]
     assert 'if (!was) return line.proposed ? "[proposed]" : "reworded";' in body
     assert "if (was.line.level === line.level) return null;" in body
     assert "if (!byText.has(norm(l.text))) byText.set(" in src

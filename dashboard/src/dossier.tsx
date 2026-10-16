@@ -5,18 +5,26 @@
  */
 import { useEffect, useState } from "react";
 import { ApiError, api } from "./api";
-import { Card, ErrorNote, Loading } from "./components";
-import { day } from "./dates";
-import { ConfirmControls, candidateWord } from "./to_confirm";
+import { Card, ErrorNote, Loading, SeverityTag } from "./components";
+import { day, stamp } from "./dates";
+import { ConfirmControls, TO_CONFIRM_LEGEND, candidateWord } from "./to_confirm";
+import { Legend, entry } from "./glossary";
+import { Pill, Tone } from "./pill";
+import type { Severity } from "./api";
 import { ExpertPanel, ExpertSpec } from "./expert";
 import { useAnalyses } from "./analyses";
+import { goHandler } from "./nav";
 
 type Dossier = {
   url: string;
   history: { run_id: string; at: string; source: string; status: number | null;
              /** Which run (item 257): its kind, tier and scope. */
              kind?: string; tier?: string | null; scope?: string | null;
+             /** The server's label ("Links only") for a re-check of some
+              *  parts (screen audits round 4, Pages IP-01), or null. */
+             part_only?: string | null;
              title: string | null; word_count: number | null;
+             meta_description?: string | null;
              click_depth: number | null;
              content_dates: Record<string, string> }[];
   findings: { dimension: string; check_id: string; severity: string;
@@ -31,7 +39,12 @@ type Dossier = {
               /** The record's reconciliation (screen audits round 3): an
                *  analysis row a later automatic reading cleared, and one it
                *  has not raised since. */
-              superseded_on?: string | null; unseen_since?: string | null }[];
+              superseded_on?: string | null; unseen_since?: string | null;
+              /** Screen audits round 4 (Pages IP-02, AC-04, AC-05, IP-06). */
+              source_word?: string | null; coverage_note?: boolean;
+              brief_status?: string | null; state_at?: string | null }[];
+  /** The Pages table's count for this page, by its rule (one per check). */
+  open_checks?: number;
   page_briefs: { tool_id: string; model_id: string; created_at: string;
                  tokens: number | null; findings: number }[];
   /** The run that last measured this page: what a page-level analysis runs
@@ -47,6 +60,7 @@ type Dossier = {
  *  scope, or a re-check of one part. */
 function runLabel(h: Dossier["history"][number]): string {
   if (h.kind === "refresh") return "re-check";
+  if (h.part_only) return `re-check · ${h.part_only}`;
   if (h.kind && h.kind !== "audit") return h.kind;
   const scope = h.scope ? ` · ${h.scope}` : "";
   return `${h.tier ?? "audit"}${scope}`;
@@ -90,6 +104,16 @@ export function PageDossierView({ siteId, url }:
   if (!data) return <Loading />;
 
   const latest = data.history[0];
+  // A PASS the analysis returned is not a fault to confirm (screen audits
+  // round 4, Pages AC-05): "home page correctly carries no BreadcrumbList"
+  // stood with Confirm, Accept and Withdraw.
+  const passed = (f: Dossier["findings"][number]) =>
+    f.state === "candidate" && /^PASS/i.test(f.brief_status ?? "");
+  // Coverage notes are not findings (AC-04): said under the table.
+  const notes = data.findings.filter((f) => f.coverage_note);
+  const rows = data.findings.filter((f) => !f.coverage_note);
+  const waiting = rows.filter((f) => f.state === "candidate" && f.to_confirm && !passed(f)).length;
+  const fixedN = rows.filter((f) => f.state === "fixed").length;
   const previous = data.history[1];
   const wordShift = latest?.word_count != null && previous?.word_count
     ? latest.word_count - previous.word_count : null;
@@ -98,7 +122,10 @@ export function PageDossierView({ siteId, url }:
     <>
       <h2 className="dossier-url">{data.url}</h2>
       <p className="muted">
-        <a href={`#/sites/${siteId}`}>back to site</a> ·{" "}
+        {/* Screen audits round 4 (Pages UX-05): back to the table the page
+            was opened from. */}
+        <a href={`#/sites/${siteId}?tab=pages`}
+           onClick={goHandler(`#/sites/${siteId}?tab=pages`)}>back to pages</a> ·{" "}
         <a href={data.url} target="_blank" rel="noreferrer noopener">open page</a>
         {/* Item 257: what was counted. It read "seen in 6 crawl(s)" on a
             site with eleven: only the newest six are opened. */}
@@ -132,41 +159,79 @@ export function PageDossierView({ siteId, url }:
           <Card>
             <h3>Crawl history</h3>
             <table className="findings">
-              <thead><tr><th>When</th><th>Run</th><th>Status</th><th>Words</th><th>Depth</th></tr></thead>
+              <thead><tr><th>When</th><th>Run</th><th>Status</th><th>Words</th><th>Depth</th>
+                         <th>Title</th></tr></thead>
               <tbody>
-                {data.history.map((h) => (
-                  <tr key={h.run_id} className="linked-row">
-                    <td><a className="row-link" href={`#/runs/${h.run_id}`}>
-                      {day(h.at)}</a></td>
-                    <td className="muted dossier-run">{runLabel(h)}</td>
-                    <td>{h.status ?? "—"}</td>
-                    <td>{h.word_count ?? "—"}</td>
-                    <td>{h.click_depth ?? "—"}</td>
-                  </tr>
-                ))}
+                {data.history.map((h, i) => {
+                  // Screen audits round 4 (Pages US-03): the title the crawl
+                  // fetched, marked where it changed from the crawl before.
+                  const older = data.history[i + 1];
+                  const titleMoved = older && older.title !== h.title;
+                  const descMoved = older && (older.meta_description ?? null) !== (h.meta_description ?? null);
+                  return (
+                    <tr key={h.run_id} className="linked-row">
+                      <td><a className="row-link dossier-run-link" href={`#/runs/${h.run_id}`}>
+                        {stamp(h.at)}</a></td>
+                      <td className="muted dossier-run">{runLabel(h)}</td>
+                      <td>{h.status ?? "—"}</td>
+                      <td>{h.word_count ?? "—"}</td>
+                      <td>{h.click_depth ?? "—"}</td>
+                      <td className="dossier-title">
+                        {h.title ?? <span className="muted">none</span>}
+                        {titleMoved && <span className="muted"> · title changed</span>}
+                        {descMoved && <span className="muted"> · description changed</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </Card>
         </div>
       )}
 
-      <h3>Findings naming this page</h3>
+      {/* Screen audits round 4 (Pages UX-01): the analyses before the
+          findings heading, so the heading heads the table. */}
       {data.measured_run_id && (
         <ExpertPanel runId={data.measured_run_id} siteId={siteId} tools={pageExperts} url={url}
                      heading="Page-level experts" latestForPage />
       )}
-      {data.findings.length ? (
+      <h3>Findings naming this page</h3>
+      {rows.length > 0 && (
+        <p className="muted dossier-count">
+          {/* The Pages table's number, by its rule (screen audits round 4,
+              Pages AC-03, UX-03): one per check, whoever found it. */}
+          {data.open_checks ?? 0} check{data.open_checks === 1 ? "" : "s"} open or back after a fix
+          {waiting > 0 && <> · {waiting} to confirm</>}
+          {fixedN > 0 && <> · {fixedN} fixed</>}
+          {" · "}{rows.length} row{rows.length === 1 ? "" : "s"} in all
+        </p>
+      )}
+      {rows.length > 0 && (
+        // Screen audits round 4 (Pages IP-04): the severities and states
+        // the table draws, and the three answers where a row waits on them.
+        <Legend ids={[...[...new Set(rows.map((f) => `sev-${f.severity}`))],
+                      ...[...new Set(rows.filter((f) => f.state && f.state !== "candidate")
+                                         .map((f) => `state-${f.state}`))],
+                      ...(waiting ? TO_CONFIRM_LEGEND : [])]} />
+      )}
+      {rows.length ? (
         <table className="findings">
-          <thead><tr><th>Severity</th><th>Check</th><th>Summary</th>
-                     <th>Memory</th></tr></thead>
+          <thead><tr><th>Severity</th><th>Check</th><th>Source</th><th>Summary</th>
+                     <th>State</th></tr></thead>
           <tbody>
-            {data.findings.map((f, i) => (
+            {rows.map((f, i) => (
               <tr key={i}>
-                <td><span className={`sev sev-${f.severity}`}>{f.severity}</span></td>
+                <td><SeverityTag severity={f.severity as Severity} /></td>
                 <td><code>{f.dimension}/{f.check_id}</code></td>
+                <td className="muted dossier-source">
+                  {f.source_word === "brief" ? "analysis" : "automatic"}
+                </td>
                 <td>{f.summary}</td>
                 <td>
-                  {f.superseded_on
+                  {passed(f)
+                    ? <span className="muted">passed by the analysis</span>
+                    : f.superseded_on
                     // Overtaken: the automatic checks read this page after
                     // the analysis and cleared the check. Said as that, not
                     // as the row's own "open" beside the sweep's "fixed".
@@ -174,21 +239,32 @@ export function PageDossierView({ siteId, url }:
                         overtaken: the automatic checks cleared it {day(f.superseded_on)}
                       </span>
                     : f.state
-                    ? <span className={`state state-${f.state}`}>
-                        {f.state === "candidate" ? candidateWord(f.to_confirm) : f.state}
-                      </span>
-                    : <span className="muted">untracked</span>}
+                    ? <Pill tone={(f.state === "candidate" ? "state-candidate"
+                                   : `state-${f.state}`) as Tone}>
+                        {f.state === "candidate" ? candidateWord(f.to_confirm)
+                          : entry(`state-${f.state}`).word}
+                      </Pill>
+                    : <span className="muted">not on the record</span>}
                   {!f.superseded_on && f.unseen_since && (
                     <span className="muted"> · not seen by the automatic checks since {day(f.unseen_since)}</span>
                   )}
                   {/* Item 250: the same three answers the part page offers. */}
-                  {f.to_confirm && f.fingerprint && (
+                  {f.to_confirm && f.fingerprint && !passed(f) && (
+                    // The legend above says what the three answers do, once
+                    // (screen audits round 4, Pages UX-09: fifteen copies).
                     <ConfirmControls fingerprints={[f.fingerprint]} siteId={siteId}
-                                     subject={`${f.dimension}/${f.check_id}`}
+                                     subject={`${f.dimension}/${f.check_id}`} explain={false}
                                      onStateChanged={() => setTick((t) => t + 1)} />
                   )}
                   {f.attempted_at && <span className="muted"> · fix attempted</span>}
-                  {(f.analysed_at || f.measured_at) && (
+                  {/* A fixed row is dated by the reading that cleared it
+                      (screen audits round 4, Pages IP-06, AC-01): "fixed ·
+                      measured 11 Oct" stood beside its old failing figure. */}
+                  {f.state === "fixed" && f.state_at ? (
+                    <span className="muted dossier-measured">
+                      {" · "}cleared {day(f.state_at)}; the summary is the last reading that raised it
+                    </span>
+                  ) : (f.analysed_at || f.measured_at) && (
                     <span className="muted dossier-measured">
                       {" · "}{f.analysed_at ? `analysed ${day(f.analysed_at)}`
                                            : `measured ${day(f.measured_at)}`}
@@ -201,6 +277,12 @@ export function PageDossierView({ siteId, url }:
         </table>
       ) : <p className="muted">No finding names this page. That is a statement
            about the checks run so far, not a clean bill of health.</p>}
+      {notes.length > 0 && (
+        <p className="muted dossier-notes">
+          Not findings, so not counted: {notes.map((f) => `${f.dimension}/${f.check_id}`).join(", ")}
+          {" "}— what an audit of this kind cannot observe.
+        </p>
+      )}
 
       {!!data.page_briefs.length && (
         <>

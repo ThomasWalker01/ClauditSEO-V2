@@ -167,7 +167,8 @@ def run_audit(
     from clauditseo.persistence.runs import instruments_of
     result.instruments, result.probe_failed = instruments_of(
         getattr(crawl_result, "dns", None), getattr(crawl_result, "well_known", None),
-        getattr(crawl_result, "ua_matrix", None), _transport_dict(crawl_result))
+        getattr(crawl_result, "ua_matrix", None), _transport_dict(crawl_result),
+        getattr(crawl_result, "llms_txt_status", "unknown"))
     raw_subscores: dict[str, SubScore] = {}
 
     for code in _in_run_order(dimensions):

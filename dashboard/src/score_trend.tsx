@@ -241,7 +241,10 @@ export function ScoreTrend({ points }: { points: TrendPoint[] }) {
     + `${latest.engine_version ?? "unknown"}, ${latest.scope?.basis ?? "unknown basis"}`;
   const sentence = shared > 1
     ? `${shared} points share the latest basis (${frame}). Only those move `
-      + "together; everything left of the first rule is history, not trend."
+      // Screen audits round 4 (Record IP-02): the shaded stretch can be
+      // split by rules, and the sentence named the eleven points left of the
+      // first one.
+      + "together; every point outside the shaded stretch is history, not trend."
     : "The latest point stands alone. Nothing before it was measured the same "
       + `way — ${frame} — so there is no trend yet, only a start. The next audit `
       + "on this basis is the first comparison.";

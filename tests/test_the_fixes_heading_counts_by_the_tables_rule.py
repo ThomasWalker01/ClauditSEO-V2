@@ -17,5 +17,9 @@ SRC = Path(__file__).resolve().parents[1] / "dashboard" / "src" / "part_page.tsx
 def test_the_fixes_heading_says_cards_only():
     src = SRC.read_text(encoding="utf-8")
     head = src.split('className={`fixes-head fixes-head-${section}`}', 1)[1].split("</h4>", 1)[0]
-    assert "· {mine.length + held.length} card{" in head
+    # Holds are said apart from cards (screen audits round 4, Headings r3
+    # IP-02: "20 cards" over four cards and sixteen hold lines).
+    assert "· {mine.length} card{" in head
+    assert "{held.length} held" in head
+    assert "mine.length + held.length" not in head
     assert "new Set(" not in head

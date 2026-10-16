@@ -1055,7 +1055,7 @@ class Reading:
                              if isinstance(p.get("status"), int) and p["status"] >= 400),
                    *(frozenset(x) for x in instruments_of(
                        ev.get("dns"), ev.get("well_known"), ev.get("ua_matrix"),
-                       ev.get("transport"))),
+                       ev.get("transport"), ev.get("llms_txt_status", "unknown"))),
                    _rendered_paths([_finding_evidence(r["evidence"]) for r in conn.execute(
                        "SELECT evidence FROM findings WHERE run_id=? AND dimension='A11Y'",
                        (run_id,))]))
@@ -1086,7 +1086,12 @@ def _render_derived(dimension: str, check_id: str) -> bool:
                                          ("AIS", "content-behind-js")})
 
 
-def instruments_of(dns, well_known, ua_matrix, transport=None) -> tuple[set[str], set[str]]:
+#: `instruments_of`'s llms status where the caller says nothing of it.
+_NOT_TOLD = object()
+
+
+def instruments_of(dns, well_known, ua_matrix, transport=None,
+                   llms_status=_NOT_TOLD) -> tuple[set[str], set[str]]:
     """Which site-level instruments a run got answers from, and which checks'
     own probes errored (screen audits round 4). One reading of the crawl's
     evidence for the live run and for a replay of a stored one."""
@@ -1106,6 +1111,11 @@ def instruments_of(dns, well_known, ua_matrix, transport=None) -> tuple[set[str]
         have.add("http_probe")
     if t.get("cert_subject_alt_names"):
         have.add("certificate")
+    # /llms.txt (screen audits round 4, AI surface AC-02): a status of None
+    # is a file the crawl did not request. "unknown" is evidence stored
+    # before the key, read as before.
+    if llms_status is not _NOT_TOLD and llms_status is not None:
+        have.add("llms_txt")
     failed = {str(r.get("purpose")) for r in (fetched or [])
               if isinstance(r, dict) and r.get("purpose") and r.get("status") is None
               and r.get("error")}
@@ -1126,6 +1136,8 @@ def _instrument_for(dimension: str, check_id: str) -> str | None:
         if check_id in ("cert-san", "cert-key"):
             return "certificate"
     if dimension == "AIS":
+        if check_id.startswith("llms-txt-"):
+            return "llms_txt"
         from clauditseo.modules.ais import SAMPLED
         if SAMPLED.get(check_id) == "probed":
             return "ua_matrix"
@@ -1178,6 +1190,12 @@ def measured(reading: Reading, dimension: str, check_id: str, affected_urls: lis
     if (pages and (dimension, check_id) in SET_ASIDE_CHECKS
             and pages <= reading.errored):
         return "inapplicable", "every page the finding names answered an error on this run"
+    # Screen audits round 4 (Links AC-01): `/cdn-cgi/l/email-protection` stood
+    # as an open High `broken-internal` card from 3 Oct. The crawler stopped
+    # counting the CDN's paths on 7 Oct (`crawl.is_edge_path`) and so never
+    # read it again, and the row was unmeasured on every run since.
+    if pages and reading.site_reading and all(p.startswith("/cdn-cgi/") for p in pages):
+        return "inapplicable", "the CDN in front of the site serves these paths, not the site"
     if pages and not pages & reading.crawled:
         return "unmeasured", "the run did not read a page the finding names"
     if not pages and not reading.site_reading:
@@ -3134,6 +3152,10 @@ def page_dossier(conn: sqlite3.Connection, site_id: str, url: str) -> dict:
     its memory state), and every page-scoped brief that read it.
     """
     history = []
+    # A re-check of some parts is no screen's audit (screen audits round 4,
+    # Pages IP-01): two Links-only re-checks read "T2 · site" in the crawl
+    # history, the same as the full audit of the same day.
+    part_only = part_only_runs(conn, site_id)
     # How many crawls there are to look in, so the screen can say what it
     # counted (item 257): it said "seen in 6 crawl(s)" on a site with eleven,
     # because only the newest `DOSSIER_RUNS` are opened.
@@ -3157,6 +3179,7 @@ def page_dossier(conn: sqlite3.Connection, site_id: str, url: str) -> dict:
                 # Which run it was (item 257): an audit's tier and scope, or
                 # a re-check of one part, so two rows of one day differ.
                 "kind": run["kind"], "tier": run["tier"], "scope": scope_of(run),
+                "part_only": part_only_label(part_only.get(run["id"])),
                 "source": evidence.get("source", "crawler"),
                 "status": page.get("status"),
                 "title": page.get("title"),
@@ -3193,7 +3216,16 @@ def page_dossier(conn: sqlite3.Connection, site_id: str, url: str) -> dict:
           # raised since. Without them the dossier said "open" and "fixed"
           # for one check on one page, in adjacent rows.
           "superseded_on": st.get("superseded_on"),
-          "unseen_since": st.get("unseen_since")}
+          "unseen_since": st.get("unseen_since"),
+          # Screen audits round 4 (Pages IP-02, AC-04, AC-05, IP-06): who
+          # found it, whether it is a coverage note, the analysis's own
+          # status (a PASS was offered as a fault to confirm), and when the
+          # state last moved - a fixed row read "measured" on the day of the
+          # run that last raised it, beside its old failing figure.
+          "source_word": st.get("source_word"),
+          "coverage_note": bool(st.get("coverage_note")),
+          "brief_status": st.get("brief_status"),
+          "state_at": st.get("updated_at")}
          for st in site_states(conn, site_id)
          if any(_page_key(u) == key for u in st["affected_urls"])),
         key=lambda f: (rank.get((f["severity"] or "").lower(), 4), f["check_id"]))
@@ -3206,8 +3238,13 @@ def page_dossier(conn: sqlite3.Connection, site_id: str, url: str) -> dict:
     for brief in briefs:
         brief["findings"] = len(json.loads(brief.pop("findings") or "[]"))
 
+    # The Pages table's count for this page, by its own rule, so the two
+    # screens one click apart state one number (screen audits round 4, Pages
+    # AC-03, UX-03).
+    from urllib.parse import urlsplit
+    own = open_by_page(conn, site_id).get(urlsplit(url).path or "/") or {"open": 0}
     return {"url": url, "history": history, "findings": findings,
-            "page_briefs": briefs,
+            "page_briefs": briefs, "open_checks": own["open"],
             # The crawls the history was looked for in: the newest
             # `DOSSIER_RUNS` of `crawls`.
             "crawls": {"looked_in": min(crawls, DOSSIER_RUNS), "total": crawls},
@@ -5275,6 +5312,8 @@ def _unseen_by_sweeps(conn: sqlite3.Connection, site_id: str):
                 break
             if any((check_id, p) in raised(sweep) for p in pages):
                 break
+            if pages == {"/"} and any(c == check_id for c, _p in raised(sweep)):
+                break
             found, n = sweep["at"], n + 1
         return found, n
 
@@ -5379,6 +5418,11 @@ def site_states(conn: sqlite3.Connection, site_id: str) -> list[dict]:
             note = str(_evidence_key(d.get("evidence"), "note") or "")
             if COPY_NOT_KEPT in note:
                 d["copy_not_kept"] = note.split(COPY_NOT_KEPT, 1)[1].strip() or None
+            # The model's own note on the row (screen audits round 4, AI
+            # surface US-02): "'Twenty22' is used because it is the domain
+            # name ... a naming assumption" never reached the card.
+            elif note.strip():
+                d["analysis_note"] = note.strip()
         # The specialist that judges this check, or None (FEATURES.md F-02).
         # Same decision as `_finding_dict` makes for the run-scoped shape:
         # the server decides, so a row cannot offer a control the server
@@ -6432,7 +6476,9 @@ def _element_said(e: dict) -> str:
     """One element from a Mobile row's evidence, as a line: tag and first
     class, its text, its box, and what it uses."""
     cls = str(e.get("cls") or "").split()
-    said = str(e.get("tag") or "element") + (f".{cls[0]}" if cls else "")
+    # `element` is a head-divergent row's key (screen audits round 4, Crawl
+    # IP-10): nine cards ended "Where: element".
+    said = str(e.get("tag") or e.get("element") or "element") + (f".{cls[0]}" if cls else "")
     if e.get("text"):
         said += f' "{str(e["text"])[:40]}"'
     if e.get("w") is not None and e.get("h") is not None:
@@ -6587,9 +6633,14 @@ def anatomy_view(conn: sqlite3.Connection, site_id: str,
             if not isinstance(d, dict):
                 continue
             row = d.get("row") if isinstance(d.get("row"), dict) else {}
+            # A row the model returned PASS is a pass (screen audits round 4,
+            # Crawl AC-06): `crawl-budget-waste` read "every one dropped by
+            # the reader, so neither clean nor open" over its one PASS row.
+            passed = str(row.get("status") or "").strip().upper() == "PASS"
             brief_dropped_rows.setdefault(part, []).append({
                 "check": str(row.get("check") or ""), "page": row.get("page") or row.get("url"),
-                "reason": str(d.get("reason") or "no reason was recorded"),
+                "reason": "a pass, not a hold" if passed
+                          else str(d.get("reason") or "no reason was recorded"),
                 "tool": er["tool_id"]})
         # Item 211, on read as well as on parse: a contract stored before
         # the rule still holds its variable-name reasons and its passes, and
@@ -6600,11 +6651,10 @@ def anatomy_view(conn: sqlite3.Connection, site_id: str,
             not_assessable=[h for h in (c.get("not_assessable") or []) if isinstance(h, dict)]))
         held = cleaned.not_assessable
         for d in cleaned.dropped:
-            brief_dropped[part] = brief_dropped.get(part, 0) + 1
             brief_dropped_rows.setdefault(part, []).append({
                 "check": str((d.get("row") or {}).get("check") or ""),
                 "page": (d.get("row") or {}).get("page"), "reason": d["reason"],
-                "tool": er["tool_id"]})
+                "tool": er["tool_id"], "hold": True})
         brief_not_assessable[part] = brief_not_assessable.get(part, 0) + len(held)
         # `needs` is the input a held check waits on (brief v15 step AQ). The
         # brief v20 schemas write a different shape - `scope` and `reason`,
@@ -6626,6 +6676,7 @@ def anatomy_view(conn: sqlite3.Connection, site_id: str,
         brief_run.setdefault(part, {
             "tool": er["tool_id"], "model": er["model_id"], "at": er["created_at"],
             "run_id": er["run_id"], "rows": len(c.get("rows") or []),
+            "held_rows": sum(int(h.get("rows") or 0) for h in held),
             "cost": er["cost"], "status": c.get("status"),
             # How many readings of the site have run since the audit this
             # analysis read — `site_reports` computes the same number for the
@@ -6651,6 +6702,9 @@ def anatomy_view(conn: sqlite3.Connection, site_id: str,
             "tool": er["tool_id"], "model": er["model_id"], "at": er["created_at"],
             "run_id": er["run_id"], "rows": len(c.get("rows") or []),
             "dropped": brief_dropped.get(part, 0) - dropped_before,
+            # Rows the reader held (screen audits round 4, Headings AC-01):
+            # returned, so counted in "rows returned".
+            "held_rows": sum(int(h.get("rows") or 0) for h in held),
             "cost": er["cost"], "audits_since": _audits_since(conn, site_id, er["run_id"]),
             # Per tool (screen audits round 3, Content AC-04): one part's
             # analyses can be written under briefs of different ages.
@@ -8866,6 +8920,23 @@ def _speed_field_data(conn: sqlite3.Connection, site_id: str) -> dict:
     except sqlite3.Error:
         source = None
     if not source:
+        # Screen audits round 4 (Speed US-02): with a CrUX key set, the note
+        # does not ask for one - twenty22's key was set and answered "CrUX
+        # holds no record for this URL" on the same screen.
+        from clauditseo import secrets as _secrets
+        try:
+            have_key = bool(_secrets.get("CLAUDITSEO_CRUX_KEY"))
+        except Exception:  # noqa: BLE001 - an unreadable store is "not known"
+            have_key = False
+        if have_key:
+            return {"connected": False, "source": None,
+                    "good": None, "needs_improvement": None, "poor": None,
+                    "note": "not read: the share of real visits that were good, needs "
+                            "improvement or poor is CrUX's distribution, which this "
+                            "build does not read yet. The CrUX key is set: the vitals "
+                            "above carry a real-user p75 where Google holds a record "
+                            "for the page, and are lab where it does not.",
+                    "action": None}
         return {"connected": False, "source": None,
                 "good": None, "needs_improvement": None, "poor": None,
                 # Screen audits round 3 (Speed US-02): what can be done, and
@@ -9317,7 +9388,7 @@ def open_by_page(conn: sqlite3.Connection, site_id: str) -> dict[str, dict]:
     order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
     out: dict[str, dict] = {}
     for r in conn.execute(
-            "SELECT f.affected_urls, f.severity FROM finding_states fs"
+            "SELECT f.affected_urls, f.severity, f.dimension, f.check_id FROM finding_states fs"
             f" JOIN findings f ON f.rowid = ({_latest_finding()})"
             f" WHERE fs.site_id=? AND fs.state IN ('open','regressed')"
             f" AND NOT {coverage_note_sql()}", (site_id,)):
@@ -9326,11 +9397,19 @@ def open_by_page(conn: sqlite3.Connection, site_id: str) -> dict[str, dict]:
         except (TypeError, ValueError):
             continue
         sev = str(r["severity"] or "").lower()
+        # One per check per page (screen audits round 4, Pages AC-03): a
+        # check the sweep and an analysis both hold, or two sweep rows of one
+        # check, counted twice - `/` read 58 over 39 distinct checks.
+        check = f"{r['dimension']}/{r['check_id']}"
         for path in {urlsplit(str(u)).path or "/" for u in urls if u}:
-            got = out.setdefault(path, {"open": 0, "worst": None})
-            got["open"] += 1
+            got = out.setdefault(path, {"open": 0, "worst": None, "_checks": set()})
+            if check not in got["_checks"]:
+                got["_checks"].add(check)
+                got["open"] += 1
             if got["worst"] is None or order.get(sev, 9) < order.get(got["worst"], 9):
                 got["worst"] = sev
+    for got in out.values():
+        got.pop("_checks", None)
     return out
 
 
@@ -9901,8 +9980,19 @@ def heading_shapes_payload(conn: sqlite3.Connection,
                                      "tone": "warn", "check": "heading-skip"})
         if codes:
             at[page["url"]] = codes
+    # Channel ruling 20261016-1440 (screen audits round 3, Headings US-01):
+    # the pages read under each first segment, so `templatesOf` can call a
+    # segment a template when every page of it carries the fault. twenty22's
+    # five /seo-category/ pages are all H1 -> H3 and are one archive template,
+    # which the ten-page count alone never names on a small site.
+    segments: dict[str, int] = {}
+    for page in read:
+        parts = [s for s in (_split(page["url"]).path or "/").split("/") if s]
+        if len(parts) >= 2:
+            key = f"/{parts[0]}/"
+            segments[key] = segments.get(key, 0) + 1
     return {**base, "recorded": True, "pages": len(read), "at": at,
-            "labels": labels}
+            "labels": labels, "segments": segments}
 
 
 #: How many chains the site-scope block draws before it says it has

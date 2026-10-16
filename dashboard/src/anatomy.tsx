@@ -266,11 +266,15 @@ export type Category = {
   /** The analysis's assessment section as the model wrote it (item 210). */
   brief_prose?: string | null;
   /** The dropped rows with their reasons (item 209), capped at 200. */
-  brief_dropped_rows?: { check: string; page: string | null; reason: string; tool?: string }[];
+  brief_dropped_rows?: { check: string; page: string | null; reason: string; tool?: string;
+                         /** A hold the reader set aside, not a returned row
+                          *  (screen audits round 4, Security AC-05). */
+                         hold?: boolean }[];
   /** Every analysis writing to this part, newest per tool, each with its own
    *  rows, drops and cost (item 269, row 4). */
   brief_runs?: { tool: string; model: string | null; at: string; run_id: string;
                  rows: number; dropped: number; cost: number | null;
+                 held_rows?: number;
                  audits_since?: number; crawl_at?: string | null;
                  /** This tool's brief has changed since its run (screen
                   *  audits round 3, Content AC-04). */
@@ -312,6 +316,9 @@ export type Category = {
                      rule?: string; note?: string }[];
   brief_run?: { tool: string; model: string | null; at: string; run_id: string;
                 rows: number; cost: number | null; status?: string | null;
+                /** Returned rows the reader held (screen audits round 4,
+                 *  Headings AC-01). */
+                held_rows?: number;
                 /** Readings of the site since the audit this analysis read
                  *  (the Reports screen's count, on the part page). */
                 audits_since?: number | null;
@@ -472,6 +479,9 @@ export type HeadingShapes = {
   /** Pages that answered an error, which no heading check reads (item 268,
    *  row 5). */
   errored?: string[];
+  /** Pages read under each first segment, counting only paths below it
+   *  (channel ruling 20261016-1440): `templatesOf`'s coverage test. */
+  segments?: Record<string, number>;
 };
 
 type Related = { jaccard: number; shared: number; of_selected: number };
@@ -671,16 +681,40 @@ export const templatePrefixOf = (p: string) => {
   return seg ? `/${seg}/` : "/";
 };
 
-export const templatesOf = (items: Templated[]): Template[] => {
+/** A segment whose every page carries the fault is a template once it has
+ *  this many pages (channel ruling 20261016-1440). */
+export const COVERED_TEMPLATE_MIN = 3;
+
+/** `segments`, where the caller has it, is the pages read under each first
+ *  segment (paths below it only). With it a segment is also a template when
+ *  the fault is on every one of its pages and it has at least three: the
+ *  coverage test beside the count test, so a small site's one archive
+ *  template is named. Every reader passes the same counts, so the rule stays
+ *  one rule (item 268). */
+export const templatesOf = (items: Templated[],
+                            segments?: Record<string, number>): Template[] => {
   const pathOf = templatePathOf;
   const prefixOf = templatePrefixOf;
   const paths = new Set(items.flatMap((i) => i.urls.map(pathOf)));
-  if (paths.size < 10) return [];
-  // Group the pages by first segment; a group of ten or more is a template.
+  if (paths.size < 10 && !segments) return [];
+  // Group the pages by first segment; a group of ten or more is a template,
+  // and so is a group that is every page of its segment.
   const by = new Map<string, number>();
-  for (const p of paths) by.set(prefixOf(p), (by.get(prefixOf(p)) ?? 0) + 1);
-  const heads = [...by.entries()].filter(([prefix, n]) => n >= 10 && prefix !== "/")
+  // The coverage test counts paths below a segment only, as `segments` does.
+  const below = new Map<string, number>();
+  for (const p of paths) {
+    by.set(prefixOf(p), (by.get(prefixOf(p)) ?? 0) + 1);
+    if (p.split("/").filter(Boolean).length >= 2)
+      below.set(prefixOf(p), (below.get(prefixOf(p)) ?? 0) + 1);
+  }
+  const covered = (prefix: string) => {
+    const n = below.get(prefix) ?? 0;
+    return !!segments && n >= COVERED_TEMPLATE_MIN && segments[prefix] === n;
+  };
+  const heads = [...by.entries()]
+    .filter(([prefix, n]) => prefix !== "/" && ((paths.size >= 10 && n >= 10) || covered(prefix)))
     .sort((x, y) => y[1] - x[1]).map(([prefix]) => prefix);
+  if (!heads.length && paths.size < 10) return [];
   const bucket = (prefix: string): Template => {
     const inside = (p: string) => prefix === "" ? !heads.includes(prefixOf(p))
                                                 : prefixOf(p) === prefix;

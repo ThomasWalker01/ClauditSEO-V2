@@ -89,6 +89,10 @@ PAGES += [(f"/guides/{i}", _plain(f"/guides/{i}", [1, 2, 4]), ["heading-skip"],
            ["skip:2>4"]) for i in range(1, 12)]
 PAGES += [(f"/news/{i}", _plain(f"/news/{i}", [1, 2, 3, 5]), ["heading-skip"],
            ["skip:3>5"]) for i in range(1, 5)]
+#: A fifth `/news/*` page that is clean: the four faulted ones are not every
+#: page of their segment, so the coverage test (channel ruling 20261016-1440)
+#: does not call `/news/*` a template and the row stays the residual one.
+PAGES.append(("/news/5", _plain("/news/5", [1, 2, 3]), [], []))
 
 #: A page long enough that its skip falls past the ladder's cap, which is
 #: what Acme's `/line-of-credit` is: 46 headings with the H2->H4 at the
@@ -322,6 +326,9 @@ def test_the_shapes_payload_reads_every_page_the_run_recorded(served):
     shapes = _part(base, sites["full"])["shapes"]
     assert shapes["recorded"] is True
     assert shapes["pages"] == len(PAGES)
+    # The pages read under each first segment, for the coverage test
+    # (channel ruling 20261016-1440); top-level pages are in none.
+    assert shapes["segments"] == {"/blog/": 12, "/guides/": 11, "/news/": 5}, shapes["segments"]
     expected = {_url(p): c for p, _h, _ck, c in PAGES if c}
     assert shapes["at"] == expected
     assert set(shapes["labels"]) == {c for codes in expected.values() for c in codes}
@@ -560,12 +567,11 @@ def test_skips_group_by_shape_and_template(browser, served):
     # four `/news/*` pages share a segment `templatesOf` will not call a
     # template under ten, and the row says so rather than calling them
     # top-level pages with `/news/1` printed beside the claim.
-    assert shaped[3][1].startswith("no shared template"), shaped[3][1]
-    assert "/news/1, /news/2, /news/3" in shaped[3][1], shaped[3][1]
-    # But it says the segment they share (screen audits round 3, Headings
-    # US-01: five of seven under /seo-category/ read "no shared template"
-    # with the paths alphabetical). The top-level row shares none.
-    assert "4 of 4 share /news/*" in shaped[3][1], shaped[3][1]
+    # It says the segment they share as itself (screen audits round 3 and
+    # 4, Headings US-01: "no shared template · 5 of 7 share /seo-category/*"
+    # contradicted itself). The top-level row shares none.
+    assert shaped[3][1].startswith("/news/* on 4 of 4"), shaped[3][1]
+    assert "no shared template" not in shaped[3][1], shaped[3][1]
     assert " share " not in shaped[2][1], shaped[2][1]
     # Rows of one page collapse rather than becoming a list of pages.
     ones = [r for r in rows if "other page" in r[0]]

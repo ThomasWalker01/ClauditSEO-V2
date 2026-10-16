@@ -263,6 +263,10 @@ export type SkipRow = {
    *  seven H1 -> H3 pages read "no shared template" with five of them under
    *  `/seo-category/` and the cell's examples alphabetical. */
   shares?: { prefix: string; pages: number } | null;
+  /** Where `shares` is set, the residual pages outside that segment, up to
+   *  three (screen audits round 4, Headings US-01): the cell's examples were
+   *  all from the cluster, so the two pages outside it were named nowhere. */
+  outside?: string[];
 };
 
 /** The residual bucket's largest shared first segment, where two or more of
@@ -277,6 +281,15 @@ function sharedSegment(urls: string[]): { prefix: string; pages: number } | null
   }
   const top = [...by.entries()].sort((a, b) => b[1].size - a[1].size || a[0].localeCompare(b[0]))[0];
   return top && top[1].size >= 2 ? { prefix: top[0], pages: top[1].size } : null;
+}
+
+/** The residual paths outside its shared segment, up to three. */
+function outsideOf(urls: string[]): string[] {
+  const share = sharedSegment(urls);
+  if (!share) return [];
+  return [...new Set(urls.map(templatePathOf))].sort()
+    .filter((p) => !(templatePrefixOf(p) === share.prefix && p.split("/").filter(Boolean).length >= 2))
+    .slice(0, 3);
 }
 
 /** Up to three paths, the shared segment's first so the cluster is visible
@@ -312,7 +325,7 @@ export function skipRows(shapes: HeadingShapes): SkipRow[] {
     // an edge case: a shape on nine pages has no template, so it is one row
     // over all of them.
     const groups = templatesOf(urls.map((u) => ({
-      fingerprint: u, urls: [u], state: "open", names_a_page: true })));
+      fingerprint: u, urls: [u], state: "open", names_a_page: true })), shapes.segments);
     const heads = groups.map((g) => g.prefix).filter((p) => p !== "");
     const buckets = groups.length ? groups.map((g) => g.prefix) : [""];
     for (const prefix of buckets) {
@@ -341,7 +354,8 @@ export function skipRows(shapes: HeadingShapes): SkipRow[] {
                   // "/apply, /apply, /broker-cheat-sheet" on Acme before
                   // this line said so.
                   examples: prefix === "" ? examplesOf(inside) : [],
-                  shares: prefix === "" ? sharedSegment(inside) : null });
+                  shares: prefix === "" ? sharedSegment(inside) : null,
+                  outside: prefix === "" ? outsideOf(inside) : [] });
     }
   }
   return rows.sort((a, b) => b.pages - a.pages
@@ -468,13 +482,23 @@ export function SkipsByTemplate({ shapes }: { shapes: HeadingShapes | null | und
             <tr key={`${r.code}|${r.prefix}`}>
               <td><code className={`ho-shape ho-shape-${r.tone}`}>{r.label}</code></td>
               <td className="ho-tpl">
-                <code>{templateWord(r)}</code>
-                {r.shares && (
-                  <span className="muted"> · {r.shares.pages} of {r.pages} share{" "}
-                    <code>{r.shares.prefix}*</code></span>
-                )}
-                {r.examples.length > 0 && (
-                  <span className="muted"> · {r.examples.join(", ")}</span>
+                {/* Screen audits round 4 (Headings US-01): a cluster is said
+                    as itself, not after "no shared template", and the pages
+                    outside it are named. */}
+                {r.shares ? (
+                  <>
+                    <code>{r.shares.prefix}*</code>
+                    <span className="muted"> on {r.shares.pages} of {r.pages}
+                      {(r.outside ?? []).length > 0 && <>; also {r.outside!.join(", ")}</>}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <code>{templateWord(r)}</code>
+                    {r.examples.length > 0 && (
+                      <span className="muted"> · {r.examples.join(", ")}</span>
+                    )}
+                  </>
                 )}
               </td>
               <td className="ho-pages">

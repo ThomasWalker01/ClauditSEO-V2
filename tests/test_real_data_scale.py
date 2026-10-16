@@ -1138,24 +1138,14 @@ def test_every_image_states_its_own_alt(served, browser_page):
 
 
 
-#: The picker's own option list, asked whether it has narrowed off `was`.
-#: `document.querySelectorAll` rather than a Playwright locator because the
-#: caller's `opts` is already a raw CSS selector and the count is the whole
-#: question.
-OPTIONS_NARROWED = """([sel, was]) => {
-  const n = document.querySelectorAll(sel).length;
-  return n > 0 && n < was;
-}"""
-
-#: The same list, asked whether it is down to exactly `want` options - the
-#: empty-result half, where `want` is 1 for a picker with a pinned selection
-#: and 0 for one without.
-OPTIONS_LEFT = """([sel, want]) =>
-  document.querySelectorAll(sel).length === want"""
+#: The Pages table's count line, asked whether it reads `want`: the filter's
+#: own signal, and the assertion's, so `_settled` waits on it.
+COUNT_READS = """([sel, want]) =>
+  (document.querySelector(sel)?.innerText || '').trim().startsWith(want)"""
 
 
 def _settled(pg, js: str, arg) -> None:
-    """Wait for the option list to reach `js`, and swallow the timeout.
+    """Wait for the list to reach `js`, and swallow the timeout.
 
     KI-22, and Q-31's authorisation to rearrange it. Both call sites below
     were `pg.wait_for_timeout(200)`: under `-n auto` beside seven other
@@ -1190,93 +1180,41 @@ def _settled(pg, js: str, arg) -> None:
         pass
 
 
-def _picker_narrows(pg, opts: str, needle: str, misses: str) -> None:
-    """Hold one bounded page picker to the rule the outline is held to.
+def _table_narrows(pg, needle: str, misses: str) -> None:
+    """The Pages table narrowed by its URL filter, and its count line saying
+    so.
 
-    One helper and two call sites, because `views.tsx` and `tools.tsx` render
-    the same control twice and a clause written twice is how two screens end
-    up reporting different totals for the same list — the defect B-12 closed
-    in the product, re-entered from the test side.
-
-    `needle` must match a strict subset of the crawled pages and `misses`
-    none of them; both are asserted rather than assumed, for the reason the
-    images clause above records: a filter that selects everything satisfies
-    every count by identity, which is exactly what CQ-141 was.
-
-    `opts` selects the option elements of this screen's own picker: both
-    screens render exactly one `input[aria-label='page URL filter']`, so the
-    filter needs no scoping, but a bare `select option` would collect the
-    audience and template pickers beside it.
-
-    **The pinned option, and it is correct.** `tools.tsx:217-218` keeps
-    `p.url === pageUrl` in the list whatever the filter says, because that
-    picker is a controlled `<select>` with a real selection: an option list
-    that dropped its own current value would reset the operator's choice to
-    whatever the filter happened to leave first. `views.tsx` has no pin
-    because its picker is a navigation door with `defaultValue=""` and no
-    selection to lose. Two screens, two right answers.
-
-    This clause first asserted that every surviving option matches the
-    needle, and the drive said otherwise — `['…/', '…/gallery']` for
-    `gallery`, home being the default selection. The dead end is recorded
-    here rather than fixed away: the assertion below allows exactly the
-    selected value through and nothing else, so a picker that stopped
-    filtering still fails while one that protects its selection passes.
+    It drove a `<select>` until screen audits round 4 (Pages UX-04): that
+    picker navigated on change (WCAG 2.2 SC 3.2.2) and the table's links now
+    do its job, so the table is what the filter narrows. `needle` must match
+    a strict subset of the crawled pages and `misses` none of them; both are
+    asserted rather than assumed, because a filter that selects everything
+    satisfies every count by identity, which is what CQ-141 was.
     """
     sel = "input[aria-label='page URL filter']"
-    sel_el = opts.split(" option")[0]
-
+    links = "table.pages-table tbody tr td:first-child a"
     # The page list arrives after the screen; under a parallel run it can
     # arrive after this reader, which read 0 twice on 2026-09-03.
     pg.wait_for_function("(o) => document.querySelectorAll(o).length > 1",
-                         arg=opts, timeout=15_000)
-    # The pinned selection is read AFTER that wait, and was read before it
-    # until 2026-09-20. `tools.tsx` sets the options and the selected value in
-    # one response handler, so before the options exist the value is still ""
-    # - and an empty `pinned` turns the home option, which the pin is there to
-    # protect, into "an option survived the filter without matching". That is
-    # what the full suite reported while the file passed alone: the failure was
-    # the reader arriving early, not the picker keeping the wrong row.
-    pinned = pg.eval_on_selector(sel_el, "el => el.value") or ""
-    before = pg.eval_on_selector_all(opts, "els => els.length")
-    assert before > 1, f"the picker offers too few pages to narrow: {before}"
-    # `startswith` rather than `==`, and only for the two counts the
-    # Pages pane may extend: that pane appends a distinct-page clause when the
-    # run fetched one page under two spellings (`16 URLs fetched · 15 distinct
-    # pages (2 spellings of /apply)`), which is a second fact and not this
-    # clause's. The prefix still separates the states it has to: a filtered
-    # render reads `N of M URLs fetched` and does not begin `M URLs fetched`.
-    assert pg.inner_text(".page-count").strip().startswith(f"{before} URLs fetched"), (
-        "unfiltered, the count beside the picker must name the whole list: "
-        f"{pg.inner_text('.page-count').strip()!r} against {before} options")
+                         arg=links, timeout=15_000)
+    count = pg.inner_text(".page-count").strip()
+    total = int(count.split(" ", 1)[0])
+    assert count.startswith(f"{total} URLs fetched") and total > 1, count
 
     pg.fill(sel, needle)
-    _settled(pg, OPTIONS_NARROWED, [opts, before])
-    after = pg.eval_on_selector_all(opts, "els => els.map(e => e.value)")
-    assert 0 < len(after) < before, (
-        f"the URL filter rendered but narrowed nothing: {before} -> "
-        f"{len(after)} for {needle!r}")
-    assert all(needle in u.lower() or u == pinned for u in after), (
-        f"an option survived the {needle!r} filter without matching, and it "
-        f"is not the pinned selection {pinned!r}: {after!r}")
-    assert pg.inner_text(".page-count").strip().startswith(
-            f"{len(after)} of {before} URLs fetched"), (
-        f"the count says {pg.inner_text('.page-count').strip()!r} and the "
-        f"picker holds {len(after)} of {before}")
+    _settled(pg, "([s, n]) => (document.querySelector(s)?.innerText || '').includes(' of ' + n)",
+             [".page-count", total])
+    hrefs = pg.eval_on_selector_all(links, "els => els.map(e => decodeURIComponent(e.getAttribute('href')))")
+    assert 0 < len(hrefs) < total, (
+        f"the URL filter rendered but narrowed nothing: {total} -> {len(hrefs)} for {needle!r}")
+    assert all(needle in h.lower() for h in hrefs), hrefs
+    assert pg.inner_text(".page-count").strip().startswith(f"{len(hrefs)} of {total} URLs fetched")
 
-    # The empty result, which is the state an unbounded list never had to have
-    # a word for. A `<select>` with no options reads as "this site has no
-    # pages" rather than "none match", so the placeholder has to say which.
+    # The empty result says what it is empty of.
     pg.fill(sel, misses)
-    _settled(pg, OPTIONS_LEFT, [opts, 1 if pinned else 0])
-    left = pg.eval_on_selector_all(opts, "els => els.map(e => e.value)")
-    assert left == ([pinned] if pinned else []), (
-        f"{misses!r} was supposed to leave nothing but the pinned selection "
-        f"{pinned!r} and left {left!r}")
-    assert pg.inner_text(".page-count").strip().startswith(f"{len(left)} of "), (
-        f"an empty result must still say what it is empty of: "
-        f"{pg.inner_text('.page-count').strip()!r}")
-
+    _settled(pg, COUNT_READS, [".page-count", "0 of "])
+    assert pg.eval_on_selector_all(links, "els => els.length") == 0
+    assert "No page matches that filter" in pg.inner_text("body")
 
 @live
 def test_the_page_dossier_picker_is_narrowed_by_its_url_filter(served, browser_page):
@@ -1297,10 +1235,7 @@ def test_the_page_dossier_picker_is_narrowed_by_its_url_filter(served, browser_p
     browser_page.goto(f"{base}/#/sites/{ids['site']}?tab=pages", wait_until="load")
     browser_page.wait_for_selector("input[aria-label='page URL filter']",
                                    timeout=15_000)
-    _picker_narrows(browser_page,
-                    "select[aria-label='Open the dossier for a page'] "
-                    "option:not([disabled])",
-                    "gallery", "zzzz-no-such-page")
+    _table_narrows(browser_page, "gallery", "zzzz-no-such-page")
 
 
 # RETIRED with item 188 (test_the_brief_target_picker_is_narrowed_by_its_url_filter):
