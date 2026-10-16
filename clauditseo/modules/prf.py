@@ -319,7 +319,10 @@ class PerformanceModule:
                     dimension=self.code,
                     check_id=f"{metric.split('_')[0]}-{band.replace(' ', '-')}",
                     severity=CWV_SEVERITY[band],
-                    summary=(f"{label} p75 is {_fmt(metric, got.value)} — "
+                    # "p75" only of field data (screen audits round 3, Pages
+                    # AC-03): one lab run has no 75th percentile.
+                    summary=(f"{label} {'p75 ' if got.source == 'crux' else ''}is "
+                             f"{_fmt(metric, got.value)} — "
                              f"{band} (good is {_fmt(metric, good)} or "
                              f"under, poor is above {_fmt(metric, poor)}). "
                              f"Measured from {basis}."),

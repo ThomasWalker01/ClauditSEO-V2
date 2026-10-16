@@ -26,4 +26,9 @@ def test_and_still_nothing_reads_them():
         for f in (ROOT / "clauditseo" / sub).rglob("*"):
             if f.suffix in (".py", ".md") and f.is_file():
                 text = f.read_text(encoding="utf-8", errors="ignore")
-                assert "FROM notes" not in text and "site_notes" not in text, f
+                # Any route to the table or the site payload's copy of it
+                # (channel 20261016-1300): a read through `site["notes"]` or a
+                # join would pass a test for the SQL string alone.
+                for needle in ("FROM notes", "site_notes", '["notes"]', "JOIN notes",
+                               "notes WHERE", ".notes"):
+                    assert needle not in text, (f, needle)

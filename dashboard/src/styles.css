@@ -430,6 +430,8 @@ table.findings th { font-size: 0.8rem; text-transform: uppercase; letter-spacing
                     color: var(--text-muted); }
 .rec { font-size: 0.85rem; margin-top: 0.2rem; }
 .cites { font-size: 0.78rem; }
+/* The pages one observation was made on (screen audits round 3, Run views AC-03). */
+.insight-pages { font-size: 0.78rem; overflow-wrap: anywhere; }
 
 .filters { display: flex; gap: 0.5rem; align-items: center; }
 
@@ -1090,6 +1092,8 @@ button.chip:hover, button.chip:focus-visible { border-color: var(--border-strong
 .prov-range { display: block; }
 .age-days { width: 5rem; }
 .parts-seen-once { font-size: .72rem; }
+/* Rows waiting on the operator, apart from seen once (screen audits round 3, landing IP-04). */
+.parts-to-confirm { font-style: italic; }
 /* In the sticky switcher, "+N" in place of "· N seen once" (the words stay
    for a screen reader), so the pills keep to the strip's two rows. */
 .parts-seen-plus { display: none; }
@@ -3903,6 +3907,8 @@ tr.marked .f-sum { text-decoration: line-through; text-decoration-thickness: 1px
         border-radius: 6px; border: 1px solid var(--border); border-left-width: 4px;
         margin: 0 0 .8rem; }
 .secv h3 { font-size: .95rem; margin: 0; }
+/* What the automatic checks saw loading, beside the verdict (screen audits round 3, Security AC-06). */
+.secv-origins { margin: .25rem 0 0; font-size: .8rem; overflow-wrap: anywhere; }
 .secv span { font-size: .78rem; }
 .secv-clear { border-left-color: var(--good); }
 .secv-found { border-left-color: var(--danger); }

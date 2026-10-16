@@ -254,6 +254,9 @@ export type Category = {
   /** Checks the sweep tests only in part, by bare id, with what it does not
    *  test (screen audits round 3): its silence on them is not a pass. */
   partly_measured?: Record<string, string>;
+  /** Security: the hosts the sweep's run loaded scripts and styles from
+   *  (screen audits round 3, Security AC-06). */
+  load_origins?: string[];
   /** Page mode: checks whose rows name no page, so a page is neither clean
    *  nor open on them (screen audits round 3, Speed AC-01). */
   site_level_checks?: string[];
@@ -268,7 +271,10 @@ export type Category = {
    *  rows, drops and cost (item 269, row 4). */
   brief_runs?: { tool: string; model: string | null; at: string; run_id: string;
                  rows: number; dropped: number; cost: number | null;
-                 audits_since?: number; crawl_at?: string | null }[];
+                 audits_since?: number; crawl_at?: string | null;
+                 /** This tool's brief has changed since its run (screen
+                  *  audits round 3, Content AC-04). */
+                 brief_changed?: boolean | null }[];
   brief_not_assessable?: number;
   /** The rows the brief could not assess, each naming the input it needs;
    *  the run that produced them; and the brief's own verdict sentence
@@ -2147,9 +2153,16 @@ function sequenceSteps({ siteId, current, latestRun, lanes,
       // The state line still names the outstanding count when it is ticked,
       // so a tick beside "1085 outstanding" reads as what it is rather than
       // as a claim the site is clean.
-      status: recordDone ? "done" : "idle",
+      // Screen audits round 3 (landing IP-05): not "done" while the client
+      // report is held. The hold is worked in this pane (the Critical and
+      // High it names are answered on the record), and "Record AUTOMATIC
+      // DONE" sat beside "held for assessment · 84" with the qualifying
+      // sentence in the hidden panel.
+      status: recordDone && !held ? "done" : recordDone ? "partial" : "idle",
       state: unknown ? unsaid
         : !audited ? "needs an audit"
+        : held
+          ? `${held} Critical or High still open · the client report waits on them`
         : current?.awaiting_a_look
           ? `${current.awaiting_a_look} awaiting a look`
         : current?.outstanding
@@ -2434,10 +2447,14 @@ function Sequence({ steps, next, busyAt, here, report = null, held = null, compa
     { name: "Deliver", cls: "seq-deliver", members: [2, 3] },
   ];
   const chapterOf = (i: number) => CHAPTERS.find((c) => c.members.includes(i)) ?? CHAPTERS[0];
-  const find = steps[0];
-  const findWord = busyAt === 0 ? "running now"
-    : find?.status === "done" ? "done"
-    : find?.status === "partial" || next === 0 ? "in progress" : "not started";
+  // Screen audits round 3 (landing IP-03): the chapter over both its members.
+  // It read `steps[0]` only, so "Find done" sat over an Analyses pill marked
+  // NEXT - one strip saying finished and the next thing to do inside it.
+  const findSteps = CHAPTERS[0].members.map((i) => steps[i]).filter(Boolean);
+  const findWord = CHAPTERS[0].members.includes(busyAt ?? -1) ? "running now"
+    : findSteps.length && findSteps.every((s) => s.status === "done") ? "done"
+    : findSteps.some((s) => s.status === "done" || s.status === "partial")
+      || CHAPTERS[0].members.includes(next) ? "in progress" : "not started";
   // Item 178 (08-3): a held report is the Deliver chapter's state, whatever
   // an earlier report did - "done" in green beside a held button was one
   // screen saying both.
@@ -3494,7 +3511,12 @@ export function SiteLanding({ siteId, a }: { siteId: string; a: AnatomyScreen })
                           title="Open the audit these counts are computed from - the one that last moved them">
                          as of {stamp(move.at)}
                          {move.kind !== "audit" ? ` · ${kind}` : ""}
-                         {word ? ` · ${word}` : ""}
+                         {/* The mover's scope in site mode only (screen
+                             audits round 3, landing IP-06): in page mode the
+                             figures are the page's, and "· site-wide" sat
+                             over "Regressed on this page 11". */}
+                         {word && !page ? ` · ${word}` : ""}
+                         {page ? " · this page's share" : ""}
                        </a>
                      );
                    })()} />
@@ -4140,6 +4162,10 @@ export function AnatomyView({ siteId, a, states, selected, onSelect, rerunAsk = 
                     {current.total.value} open
                     {current.regressed.value > 0
                       ? `, ${current.regressed.value} of them back after a fix` : ""}
+                    {/* Screen audits round 3 (URLs AC-01): to confirm apart
+                        from seen once, as the record and the lane say it. */}
+                    {(current.to_confirm?.value ?? 0) > 0
+                      ? ` · ${current.to_confirm!.value} to confirm` : ""}
                     {(current.seen_once?.value ?? 0) > 0
                       ? ` · ${current.seen_once!.value} ${entry("state-candidate").word}` : ""}
                     {heldChecks > 0
@@ -4253,10 +4279,13 @@ export function AnatomyView({ siteId, a, states, selected, onSelect, rerunAsk = 
                     is grouped by dimension, and nothing said which fed
                     which — so a reader who improved Headings could not tell
                     which sub-score should move. */}
-                {data.category_dimensions?.[current.key]?.length ? (
+                {data.category_dimensions?.[current.key]?.some((d) => !d.startsWith("EXP")) ? (
                   <span className="anat-dims">
+                    {/* Not EXP (screen audits round 3, Local AC-02): an
+                        analysis row is kept out of the composite, so a part
+                        never scores under it. */}
                     {" "}Scores under{" "}
-                    {data.category_dimensions[current.key].join(", ")}.
+                    {data.category_dimensions[current.key].filter((d) => !d.startsWith("EXP")).join(", ")}.
                   </span>
                 ) : null}
               </p>

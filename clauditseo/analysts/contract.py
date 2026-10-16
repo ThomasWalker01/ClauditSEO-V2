@@ -404,10 +404,13 @@ def _speed_guard(row: "Row") -> str | None:
     if row.check not in PAINT_CAUSE_CHECKS:
         return None
     from clauditseo.modules.prf import LCP_GOOD_MS
-    said = _LCP_SAID.search(row.evidence or "")
-    if not said or int(said.group(1)) > LCP_GOOD_MS:
+    # Every LCP the row states, not the first (channel 20261016-1302): a row
+    # giving a Good lab figure and then a poor one is about a slow paint.
+    said = [int(n) for n in _LCP_SAID.findall(row.evidence or "")]
+    if not said or max(said) > LCP_GOOD_MS:
         return None
-    return (f"the page's LCP, {said.group(1)} ms by the row's own evidence, is inside the "
+    figure = f"{said[0]} ms" if len(set(said)) == 1 else f"{min(said)} to {max(said)} ms"
+    return (f"the page's LCP, {figure} by the row's own evidence, is inside the "
             f"{LCP_GOOD_MS} ms Good band, so there is no slow paint to explain; a slow "
             "server response is the automatic ttfb-slow check's")
 

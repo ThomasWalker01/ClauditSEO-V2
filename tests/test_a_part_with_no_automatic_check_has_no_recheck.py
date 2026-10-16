@@ -48,4 +48,4 @@ def test_an_analysis_check_with_no_row_is_not_called_clean():
     assert '{!away && section !== "model" && spotless.length > 0 && (' in src
     assert "returned no row for" in src and "It reports faults, not passes" in src
     # And on one page: the pass line names free checks only.
-    assert 'const cleanModel = cleanMeasured.filter((c) => costOf(part, fullOf(c)) === "model");' in src
+    assert 'const cleanModel = cleanMeasured.filter((c) => costOf(part, fullOf(c)) === "model" && !passedHere.has(c));' in src

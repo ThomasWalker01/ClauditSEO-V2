@@ -3222,6 +3222,16 @@ def create_app(db_path: Path | None = None) -> FastAPI:
             if cat["key"] == "ai-surface":
                 cat["samples"] = _ais_samples(
                     (cat.get("sweep_run") or {}).get("run_id") or (latest["id"] if latest else None))
+            if cat["key"] == "crawl":
+                # `render-only` reads only the pages the rendered pass visited
+                # (screen audits round 3, Crawl AC-03): clean "on every page
+                # this audit fetched (45 crawled)" was a claim over 45 pages
+                # for a check measured on 5. Its own population, as AI
+                # surface's rendered checks have.
+                _rid = (cat.get("sweep_run") or {}).get("run_id") or (latest["id"] if latest else None)
+                _rendered = len(runs._text_blocks_for_run(conn, _rid)) if _rid else 0
+                if _rendered:
+                    cat["samples"] = {"render-only": {"n": _rendered, "basis": "rendered"}}
             cat["not_assessed"] = dict(not_assessed.get(cat["key"], {}))
             if cat["key"] == "security":
                 # The layer cards (143 addendum): each domain's layer and
@@ -3230,6 +3240,21 @@ def create_app(db_path: Path | None = None) -> FastAPI:
                 from clauditseo.modules.sec import PARTLY_MEASURED as _sec_partly
                 cat["sec_domains"] = _sec_domains
                 cat["partly_measured"] = _sec_partly
+                # The origins the sweep's run loaded scripts and styles from
+                # (screen audits round 3, Security AC-06): the verdict's
+                # basis is the model's inventory, which left out two
+                # third-party origins the SRI card names.
+                _rid = (cat.get("sweep_run") or {}).get("run_id") or (latest["id"] if latest else None)
+                _ev = {}
+                _raw = runs.evidence_text(conn, _rid) if _rid else None
+                if _raw:
+                    try:
+                        _ev = runs.parsed_evidence(_raw) or {}
+                    except (TypeError, ValueError):
+                        _ev = {}
+                _inv = _ev.get("resource_origins") if isinstance(_ev.get("resource_origins"), dict) else {}
+                cat["load_origins"] = sorted({h for kind in ("script", "style")
+                                              for h in (_inv.get(kind) or {})})
             # Page mode (brief v23 step BK) and item 157 together. Rung 2
             # is RUN-level: a run that traced any page leaves the trace
             # checks measured. On one page that is false wherever the trace

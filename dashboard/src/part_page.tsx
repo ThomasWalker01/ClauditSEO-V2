@@ -562,10 +562,18 @@ export function owedPages(checkId: string, fixes: { checkId: string; page: strin
  *  a "not assessable" row the table did not draw). */
 export function sweepOutranks(part: Category, full: string, checkId: string,
                               sweepAt: string | null | undefined,
-                              unmeasured: Map<string, unknown>): boolean {
-  const briefAt = part.brief_run?.at ?? null;
-  return Boolean(sweepAt && briefAt
-                 && new Date(sweepAt).getTime() > new Date(briefAt).getTime())
+                              unmeasured: Map<string, unknown>,
+                              sweepRun: string | null = null): boolean {
+  // By the crawl each read, not when each ran (screen audits round 3,
+  // Indexability AC-01): the analysis of 3 Oct read the 2 Oct crawl the
+  // sweep measured, and the hold outranked a measurement of the same pages
+  // because the analysis ran a day later. The sweep's reading of the crawl
+  // the analysis read, or of any later one, is the newer evidence.
+  const read = part.brief_run;
+  const readAt = read?.crawl_at ?? read?.at ?? null;
+  const sameCrawl = Boolean(sweepRun && read?.run_id === sweepRun);
+  return (sameCrawl || Boolean(sweepAt && readAt
+                 && new Date(sweepAt).getTime() >= new Date(readAt).getTime()))
     && costOf(part, full) === "free" && !unmeasured.has(checkId)
     // Nor where the sweep tests the check only in part (screen audits round
     // 3, Security AC-01): its silence on cert-chain is an expiry date, not a
@@ -3371,10 +3379,21 @@ function SecurityVerdict({ part }: { part: Category }) {
     ?? (c ? c.verdict : "No Security analysis has run on this site, and compromise triage is the "
         + "analysis's judgement over the page sources, script inventory and cloaking diff. "
         + "Nothing below says the site is secure.");
+  // What the automatic checks saw loading, beside the model's inventory, and
+  // any host the verdict's basis does not name (screen audits round 3,
+  // Security AC-06).
+  const seen = part.load_origins ?? [];
+  const unnamed = c ? seen.filter((h) => !(basis ?? "").toLowerCase().includes(h.toLowerCase())) : [];
   return (
     <div className={`secv secv-${kind}`} role="note">
       <h3>{head}</h3>
       <span className="muted">{basis}</span>
+      {seen.length > 0 && (
+        <p className="muted secv-origins">
+          The automatic checks saw scripts and styles load from {seen.join(", ")}.
+          {unnamed.length > 0 && <> The analysis&rsquo;s basis does not name {unnamed.join(", ")}.</>}
+        </p>
+      )}
     </div>
   );
 }
@@ -4970,8 +4989,14 @@ function Fixes({ fixes, facts, render, page, part, cost, onGlow, siteId, onState
   const cleanMeasured = clean.filter((c) => !unmeasured.has(c) && !cannot.includes(c)
                                             && !notRead.includes(c));
   const fullOf = (c: string) => (part.brief_checks ?? []).find((f) => f.split("/").pop() === c) ?? c;
-  const cleanModel = cleanMeasured.filter((c) => costOf(part, fullOf(c)) === "model");
-  const cleanFree = cleanMeasured.filter((c) => !cleanModel.includes(c));
+  // A check the analysis passed - on this page, or for the site - is not
+  // "no row, which is not a pass" (screen audits round 3, Structured data
+  // AC-03): its row was dropped as "a pass, not a hold".
+  const passedHere = new Set((part.brief_dropped_rows ?? [])
+    .filter((d) => d.reason === PASS_NOT_HOLD && (!d.page || !page || pathOf(d.page) === pathOf(page)))
+    .map((d) => d.check.split("/").pop() ?? d.check));
+  const cleanModel = cleanMeasured.filter((c) => costOf(part, fullOf(c)) === "model" && !passedHere.has(c));
+  const cleanFree = cleanMeasured.filter((c) => costOf(part, fullOf(c)) !== "model" || passedHere.has(c));
   /** Which of the two sections a card belongs to (brief v17 step AV3).
    *
    *  A replacement that closes checks from both groups is analysis - the
@@ -5035,7 +5060,7 @@ function Fixes({ fixes, facts, render, page, part, cost, onGlow, siteId, onState
         // Whether the checks table states this hold on the check's own row.
         const onTable = (f: Fix) => !page
           && !shownFixes.some((x) => x.checkId === f.checkId && !x.needs && !x.coverageNote)
-          && !sweepOutranks(part, f.check, f.checkId, sweep?.at, unmeasured);
+          && !sweepOutranks(part, f.check, f.checkId, sweep?.at, unmeasured, sweep?.run_id ?? null);
         // Item 266 (row 3): moved ahead of its usual place, it says why.
         const led = section === order[0][0] && section !== SECTIONS[0][0];
         const groups = new Map<string, Fix[]>();
@@ -5152,7 +5177,13 @@ function Fixes({ fixes, facts, render, page, part, cost, onGlow, siteId, onState
                              rivals={rivalsOf(f)}
                              fixHeld={Boolean(f.needs) && firing.has(`${f.checkId}|${pathOf(f.page)}`)}
                              awaiting={f.candidate && !f.needs && Boolean(f.toConfirm)}
-                             earlierBrief={!!part.brief_run?.brief_changed}
+                             // The card's own analyses' briefs (screen audits
+                             // round 3, Content AC-04): one part-wide flag put
+                             // "under an earlier brief" on coverage's and
+                             // cannibalisation's cards for substance's brief.
+                             earlierBrief={(part.brief_runs ?? []).some((r) => r.brief_changed
+                               && (f.briefs ?? []).includes(r.tool))
+                               || (!(part.brief_runs ?? []).length && !!part.brief_run?.brief_changed)}
                              sweep={sweep} briefAt={part.brief_run?.at ?? null}
                              siteId={siteId} onStateChanged={onStateChanged}
                              done={part.key === "a11y" && siteId && markable(f)
@@ -5371,7 +5402,7 @@ export function droppedByReason(rows: { check: string; page: string | null; reas
 
 /** Block 2 on the whole site — every check the part's briefs may emit,
  *  what each source counted, and where it stands. */
-function ChecksTable({ part, fixes, cost, pops, siteScope = false, sweepAt = null,
+function ChecksTable({ part, fixes, cost, pops, siteScope = false, sweepAt = null, sweepRun = null,
                        whole = false, onePage = false }: {
   part: Category; fixes: Fix[]; cost: string;
   /** Page mode: a clean line is about this page, not every page the audit
@@ -5385,6 +5416,8 @@ function ChecksTable({ part, fixes, cost, pops, siteScope = false, sweepAt = nul
    *  is the newer measurement's, so an analysis that held a free check before
    *  that reading does not outrank it. */
   sweepAt?: string | null;
+  /** The sweep run's id, so a hold on the crawl it measured is outranked. */
+  sweepRun?: string | null;
   /** The populations a count may be counted over (item 155). */
   pops: Populations | null;
   /** The part's renderer is site-scoped (security, content), so every count
@@ -5526,12 +5559,17 @@ function ChecksTable({ part, fixes, cost, pops, siteScope = false, sweepAt = nul
     // sweep that had measured each and raised nothing. The automatic checks
     // read the check after the analysis wrote its hold, so their reading is
     // the row's state; the hold stays visible as a card under Fixes.
-    const sweepOutranksHold = heldN > 0 && sweepOutranks(part, full, checkId, sweepAt, unmeasured);
+    const sweepOutranksHold = heldN > 0 && sweepOutranks(part, full, checkId, sweepAt, unmeasured, sweepRun);
     const state = counted.length
       ? (counted.every((f) => f.candidate)
           ? candidateWord(counted.every((f) => f.toConfirm))
           : counted.some((f) => f.regressed) ? entry("state-regressed").word : "open")
+      // And where the analysis also held it, the hold's reason too (screen
+      // audits round 3, Structured data AC-07): the hold line sends the
+      // reader to "the reason on its row in the checks table", and the row
+      // said only "resolved by the ... fix".
       : resolvedBy.length ? `resolved by the ${resolvedBy[0].check} fix`
+        + (heldN ? ` · held where not: ${heldSays(mine.find((f) => f.needs)?.needs ?? "")}` : "")
       : !mine.length ? "clean"
       : allNotes ? MEASURE_WORD["not-measured"]
       : mine.some(closedByAnalysis) && mine.every((f) => closedByAnalysis(f) || f.coverageNote)
@@ -5597,8 +5635,17 @@ function ChecksTable({ part, fixes, cost, pops, siteScope = false, sweepAt = nul
         // analysis check whose rows were all dropped returned rows, so "no
         // row" was false of it; and `img-lcp-lazy` with no largest paint
         // measured was judged on document order, not on the paint it names.
+        // A row dropped as "a pass, not a hold" is the analysis's pass
+        // (screen audits round 3, Structured data AC-03): it read "a pass"
+        // in the drops, "neither clean nor open" in the table and "not a
+        // pass" in page mode. A check whose every drop is that is clean.
+        const bare = (c: string) => c.split("/").pop() ?? c;
+        const passedIds = new Set((part.brief_dropped_rows ?? [])
+          .filter((d) => d.reason === PASS_NOT_HOLD).map((d) => bare(d.check)));
         const droppedIds = new Set((part.brief_dropped_rows ?? [])
-          .map((d) => d.check.split("/").pop() ?? d.check));
+          .filter((d) => d.reason !== PASS_NOT_HOLD).map((d) => bare(d.check)));
+        const spotlessPassed = section === "model"
+          ? spotlessAll.filter((r) => passedIds.has(r.checkId) && !droppedIds.has(r.checkId)) : [];
         const byOrder = (r: { checkId: string }) => part.key === "images"
           && part.images?.lcp_found === false && r.checkId === "img-lcp-lazy";
         const spotlessDropped = section === "model"
@@ -5749,6 +5796,14 @@ function ChecksTable({ part, fixes, cost, pops, siteScope = false, sweepAt = nul
                 {part.brief_run?.crawl_at ? ` on the crawl of ${stamp(part.brief_run.crawl_at)}` : ""}.
                 It reports faults, not passes, so this is not a
                 clean result: {spotless.map((r) => r.checkId).join(" · ")}
+              </p>
+            )}
+            {!away && spotlessPassed.length > 0 && (
+              <p className="cause-clean-line">
+                {spotlessPassed.length} check{spotlessPassed.length === 1 ? "" : "s"} the
+                analysis judged and found nothing wrong with
+                {onePage ? " on the pages it read" : ""}:{" "}
+                {spotlessPassed.map((r) => r.checkId).join(" · ")}
               </p>
             )}
             {!away && spotlessDropped.length > 0 && (
@@ -5953,6 +6008,8 @@ const PART_LEGEND_IF_DRAWN = ["sev-critical", "sev-high", "sev-medium", "sev-low
  *  row 9): its fix-order bars are three kinds of work, not three bands, and
  *  its legend says those (`PART_LEGEND_EXTRA`). */
 const BAND_PARTS = new Set(["title-desc", "speed"]);
+/** The reader's reason for a hold that reports a pass (`contract.clean_holds`). */
+const PASS_NOT_HOLD = "a pass, not a hold";
 /** The checks whose fix is taking a block out (screen audits round 3,
  *  Structured data US-01): another card closes one only if its change
  *  removes or merges a block. */
@@ -6175,7 +6232,7 @@ export function PartPage({ part, page, facts, states, sweep, lanes, pages, bound
                   <ChecksTable part={part} fixes={pageFixes} cost={cost} pops={narrowedPops}
                          onePage={Boolean(page)}
                          whole={!page && !scoped}
-                               siteScope={false} sweepAt={sweep?.at ?? null} />
+                               siteScope={false} sweepAt={sweep?.at ?? null} sweepRun={sweep?.run_id ?? null} />
                 )}
               </>
             : <p className="muted">The crawl recorded nothing about this page, so there is
@@ -6192,7 +6249,7 @@ export function PartPage({ part, page, facts, states, sweep, lanes, pages, bound
               <ChecksTable part={part} fixes={pageFixes} cost={cost} pops={narrowedPops}
                          onePage={Boolean(page)}
                          whole={!page && !scoped}
-                           siteScope sweepAt={sweep?.at ?? null} />
+                           siteScope sweepAt={sweep?.at ?? null} sweepRun={sweep?.run_id ?? null} />
             </>
         : <>
             {/* The part's site-wide picture, then the free-checks table, then
@@ -6217,7 +6274,7 @@ export function PartPage({ part, page, facts, states, sweep, lanes, pages, bound
             <ChecksTable part={part} fixes={pageFixes} cost={cost} pops={narrowedPops}
                          onePage={Boolean(page)}
                          whole={!page && !scoped}
-                         siteScope={Boolean(render.siteScope)} sweepAt={sweep?.at ?? null} />
+                         siteScope={Boolean(render.siteScope)} sweepAt={sweep?.at ?? null} sweepRun={sweep?.run_id ?? null} />
           </>}
       {/* The brief's own fixes, once each, above the per-row cards (brief v20,
           items 147 E2 and 148 G3). DATA-GATED rather than part-gated: only a

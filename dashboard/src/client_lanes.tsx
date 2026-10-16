@@ -303,6 +303,21 @@ function StateSentenceBody({ headline, run, nextStep = null, loading = false }: 
  *  and false on Twenty22's (17 and 17), so this reports the numbers in hand.
  *  `cur-filter-note` stays the class the rendered tests wait on for "a page is
  *  in scope". */
+/** The parts holding the most Critical and High cards, as a sentence: " Most
+ *  are in Security (12), Speed (9) and Headings (4)." Empty where none. */
+export function severeWhere(categories: { label: string; findings: { severity: string }[] }[]): string {
+  const by = categories
+    .map((c) => ({ label: c.label,
+                   n: c.findings.filter((f) => f.severity === "critical" || f.severity === "high").length }))
+    .filter((x) => x.n > 0)
+    .sort((a, b) => b.n - a.n || a.label.localeCompare(b.label))
+    .slice(0, 3)
+    .map((x) => `${x.label} (${x.n})`);
+  if (!by.length) return "";
+  const list = by.length === 1 ? by[0] : `${by.slice(0, -1).join(", ")} and ${by[by.length - 1]}`;
+  return ` Most are in ${list}.`;
+}
+
 export function ModeArith({ page, parts, standing, siteOnly = 0 }: {
   page: string; parts: number; standing: number;
   /** Findings the page filter set aside because they are about the site as one
@@ -461,7 +476,11 @@ export function ClientLanes({ siteId, page, current, categories, headline, lanes
     // a copy of, so the door carries no audit narrowing.
     waiting.push({ key: "severe", value: severe.count, tone: "warn",
                    label: "Critical or High open",
-                   detail: "The client report is held until these have been looked at.",
+                   // Screen audits round 3 (landing US-02): where they are.
+                   // "84" named no part and no check; the parts' own cards
+                   // say which, worst first.
+                   detail: "The client report is held until these have been looked at."
+                           + severeWhere(categories),
                    ...door(severe.count, heldRecordHref(siteId),
                            `${severe.count} Critical or High still open on the site — open them in the record`) });
   }
@@ -815,6 +834,7 @@ function PartLink({ siteId, c, pops, unread, open = false, note = true }: {
                   + (c.total.value > 0 && c.findings.length
                      ? `, worst ${worst(c.findings)}` : "")
                    + (isUnread ? `, ${NOT_READ}` : "")
+                   + ((c.to_confirm?.value ?? 0) > 0 ? `, ${c.to_confirm!.value} to confirm` : "")
                    + ((c.seen_once?.value ?? 0) > 0 ? `, ${c.seen_once!.value} seen once` : "")
                    + (open ? " — the part you are reading" : " — open the part")}>
       <span className="parts-name">{c.label}</span>
@@ -848,6 +868,18 @@ function PartLink({ siteId, c, pops, unread, open = false, note = true }: {
           part's whole story while a second row waited to be confirmed. */}
       {/* Item 270 (row 5): the switcher on a part page too, where page mode
           counts the page's own; `note` governs the unread line, not this. */}
+      {/* Screen audits round 3 (landing IP-04): the rows waiting on the
+          operator's answer, apart from those waiting on the next reading.
+          Eleven pills read "N seen once" over 76 rows the lane below counts
+          as "To confirm 77" - item 250's two states, said as one. */}
+      {(c.to_confirm?.value ?? 0) > 0 && (
+        <span className="muted parts-seen-once parts-to-confirm">
+          <span className="parts-seen-sep">{" "}· </span>
+          <span className="parts-seen-plus" aria-hidden="true">{" "}?</span>
+          <Counted count={c.to_confirm!} pops={pops} />
+          <span className="parts-seen-word"> to confirm</span>
+        </span>
+      )}
       {(c.seen_once?.value ?? 0) > 0 && (
         // In the part view's sticky switcher the clause reads "+N" (the
         // words stay for a screen reader): "· 10 seen once" on four pills

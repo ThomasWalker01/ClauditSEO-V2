@@ -61,8 +61,9 @@ CLAIMS = [
     # take the same route.
     ("clauditseo/reporting/checks.py", "Backticked check ids",
      "clauditseo/reporting/render.py", "check_id"),
-    ("clauditseo/reporting/render.py", "a fourth shape and is a named deferral",
-     "dashboard/src/components.tsx", "confidence)"),
+    # render.py's "a fourth shape" citation was reduced to the symbol name
+    # (`Insight`) when that function grew above its cited lines (screen
+    # audits round 3, Run views AC-03), so it carries no address to check.
     # The line address here was corrected three times in one round as
     # `page_facts` moved, so it was reduced to the symbol name at brief v15
     # step AR and the claim goes with it. What the comment says is still
@@ -190,8 +191,10 @@ def test_every_claim_names_a_file_that_exists_so_the_set_cannot_pass_by_vacuity(
     # `:306-310`), every one of them because a constant was added above it and
     # none of them because anything about the reasoning changed. The comment
     # cites `cwv_names` by name and there is no line left to check.
-    assert len(CLAIMS) == 3, (
-        "The swept set is 3 claims. Nine addresses were reduced to symbol names "
+    # Screen audits round 3 (Run views AC-03) retired render.py's pointer
+    # into components.tsx, which `Insight` outgrew.
+    assert len(CLAIMS) == 2, (
+        "The swept set is 2 claims. Nine addresses were reduced to symbol names "
         "earlier - five at brief v18 step AY, the expert-handler one at relay 136j, "
         "the ofp->prf one at brief v19 step BC - and nine more at items 178-183 "
         "(2026-09-18), when the button migration moved every cited line in "

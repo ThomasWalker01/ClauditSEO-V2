@@ -64,7 +64,11 @@ export function AuditPane({ siteId, data, anat, setTick, show = "all" }: {
    *  for the site, in order - and it is the right one for a question
    *  about the last two crawls. What it is no longer asked is which two
    *  runs may be COMPARED; that is the trend's partner, above. */
-  const readings = completedAudits(data?.runs);
+  // Readings of the SITE (screen audits round 3, Record AC-02): a one-page
+  // scan or a part-only re-check is not a crawl of the site, and one after
+  // any audit silenced the card with "the newest two differ in scope page".
+  const readings = completedAudits(data?.runs).filter((r) =>
+    r.site_reading !== false && !r.part_only && !["page", "nav"].includes(scopeOf(r) ?? ""));
   const priorReading = new Map<string, string>(
     (data?.trend ?? [])
       .filter((p) => p.run_id && p.partner_run_id)

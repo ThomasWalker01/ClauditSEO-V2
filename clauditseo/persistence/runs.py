@@ -3110,11 +3110,19 @@ def crawl_diff(conn: sqlite3.Connection, site_id: str) -> dict | None:
     # report every other page as removed — the sitemap-total bug's shape,
     # arriving as an alert about a site that had not changed at all.
     rows = conn.execute(
-        "SELECT crawl_evidence, started_at FROM audit_runs"
+        "SELECT id, started_at FROM audit_runs"
         f" WHERE site_id=? AND {status_in(SCORED_STATUSES)}"
         " AND crawl_evidence IS NOT NULL"
         " AND kind='audit'"
-        " ORDER BY started_at DESC, rowid DESC LIMIT 2", (site_id,)).fetchall()
+        # Nor a page or navigation scan (screen audits round 3, Record
+        # AC-02): the screen's pair and this one must be the same two.
+        " AND COALESCE(scan_scope, '') NOT IN ('page', 'nav')"
+        " ORDER BY started_at DESC, rowid DESC", (site_id,)).fetchall()
+    part_only = part_only_runs(conn, site_id)
+    # The evidence of the two kept only: each blob is megabytes.
+    rows = [{"started_at": r["started_at"], "crawl_evidence": conn.execute(
+                "SELECT crawl_evidence FROM audit_runs WHERE id=?", (r["id"],)).fetchone()[0]}
+            for r in [r for r in rows if r["id"] not in part_only][:2]]
     if len(rows) < 2:
         return None
     latest = {p["url"]: p for p in json.loads(rows[0]["crawl_evidence"]).get("pages", [])}
@@ -6493,6 +6501,9 @@ def anatomy_view(conn: sqlite3.Connection, site_id: str,
             "run_id": er["run_id"], "rows": len(c.get("rows") or []),
             "dropped": brief_dropped.get(part, 0) - dropped_before,
             "cost": er["cost"], "audits_since": _audits_since(conn, site_id, er["run_id"]),
+            # Per tool (screen audits round 3, Content AC-04): one part's
+            # analyses can be written under briefs of different ages.
+            "brief_changed": _brief_changed(er["tool_id"], er["brief_version"]),
             **_read_and_since(conn, site_id, er["run_id"], brief_checks.get(part) or [])})
         # The two verdicts that are not findings (brief v16 step AS):
         # eligibility per (page, rich result), and the site's own entity

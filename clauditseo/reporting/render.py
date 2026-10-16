@@ -459,7 +459,7 @@ def provenance_tag(source: str = "engine", confidence: str = "high") -> str:
 
     `tests/test_provenance_tag.py` holds it: no string literal under
     `clauditseo/` may put `source:` and `confidence:` together except this
-    one. The TypeScript surface at `dashboard/src/components.tsx:539-542` renders
+    one. The TypeScript surface at `Insight` in `dashboard/src/components.tsx` renders
     a fourth shape and is a named deferral, not an oversight — see the
     round-061 row in `audits/DISPOSITIONS.md`.
     """

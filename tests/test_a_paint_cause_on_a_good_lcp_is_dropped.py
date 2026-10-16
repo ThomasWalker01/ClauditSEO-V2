@@ -29,3 +29,12 @@ def test_a_slow_lcp_or_another_check_stands():
     assert contract._speed_guard(_row("PRF/lcp-cause", "LCP 3120 ms lab: hero image")) is None
     assert contract._speed_guard(_row("PRF/lcp-cause", "hero image 951 KB")) is None
     assert contract._speed_guard(_row("PRF/ttfb-slow", "LCP 1800 ms; TTFB 1240 ms")) is None
+
+
+def test_a_row_that_also_states_a_poor_lcp_stands():
+    # Channel 20261016-1302: the first figure alone dropped a row whose
+    # second stated LCP was poor.
+    assert contract._speed_guard(_row(
+        "PRF/lcp-cause", "LCP 2296 ms lab on /a/; LCP 3100 ms on /b/ template")) is None
+    why = contract._speed_guard(_row("PRF/lcp-cause", "LCP 1872 ms lab; LCP 2296 ms on /b/"))
+    assert why and "1872 to 2296 ms" in why

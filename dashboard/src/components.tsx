@@ -528,7 +528,21 @@ const GAP_SUFFIX = ["-UNVERIFIED", "-UNCONFIRMED", "-GAP", "-ABSENT",
 const isGap = (code: string) =>
   GAP_SUFFIX.some((suffix) => code.toUpperCase().endsWith(suffix));
 
-function Insight({ f }: { f: Finding }) {
+/** One observation per sentence, with every page it was made on (screen
+ *  audits round 3, Run views AC-03): "What it observed 5" listed one
+ *  NOINDEX-LINKED sentence four times, one per page, with no page named. */
+export function oneInsightPerSentence(findings: Finding[]): { f: Finding; urls: string[] }[] {
+  const by = new Map<string, { f: Finding; urls: string[] }>();
+  for (const f of findings) {
+    const key = `${f.check_id}|${f.summary}|${f.recommendation ?? ""}`;
+    const got = by.get(key);
+    if (got) got.urls = [...new Set([...got.urls, ...(f.affected_urls ?? [])])];
+    else by.set(key, { f, urls: [...(f.affected_urls ?? [])] });
+  }
+  return [...by.values()];
+}
+
+function Insight({ f, urls = [] }: { f: Finding; urls?: string[] }) {
   const cites = (f.evidence?.cites as string[] | undefined) ?? [];
   return (
     <li>
@@ -542,6 +556,12 @@ function Insight({ f }: { f: Finding }) {
         && ` (${f.confidence} confidence)`}
       : {f.summary}
       {f.recommendation && <div className="muted rec">{f.recommendation}</div>}
+      {urls.length > 0 && (
+        <div className="muted insight-pages">
+          on {urls.slice(0, 5).map((u) => pathOf(u)).join(", ")}
+          {urls.length > 5 ? ` and ${urls.length - 5} more` : ""}
+        </div>
+      )}
       {/* Only when there is something to cite. An empty "cites:" under a
           section promising that every insight cites its evidence is worse
           than making no claim. */}
@@ -560,8 +580,8 @@ export function AnalystBand({ findings }: { findings: Finding[] }) {
   // Two different kinds of statement were interleaved: things observed about
   // the site, and things the audit could not check. Roughly half of a
   // 54-item list was the second kind, which buried the first.
-  const observed = rest.filter((f) => !isGap(f.check_id));
-  const gaps = rest.filter((f) => isGap(f.check_id));
+  const observed = oneInsightPerSentence(rest.filter((f) => !isGap(f.check_id)));
+  const gaps = oneInsightPerSentence(rest.filter((f) => isGap(f.check_id)));
   const anyCited = rest.some((f) => ((f.evidence?.cites as string[]) ?? []).length);
 
   return (
@@ -582,7 +602,7 @@ export function AnalystBand({ findings }: { findings: Finding[] }) {
         What it observed <span className="insight-n">{observed.length}</span>
       </h4>
       {observed.length
-        ? <ul>{observed.map((f) => <Insight key={f.id} f={f} />)}</ul>
+        ? <ul>{observed.map(({ f, urls }) => <Insight key={f.id} f={f} urls={urls} />)}</ul>
         : <p className="muted">Nothing beyond the deterministic findings.</p>}
 
       {gaps.length > 0 && (
@@ -594,7 +614,7 @@ export function AnalystBand({ findings }: { findings: Finding[] }) {
             Not defects in the site — statements about the audit. Each is
             something to supply or configure before the next audit.
           </p>
-          <ul>{gaps.map((f) => <Insight key={f.id} f={f} />)}</ul>
+          <ul>{gaps.map(({ f, urls }) => <Insight key={f.id} f={f} urls={urls} />)}</ul>
         </>
       )}
     </section>

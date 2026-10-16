@@ -167,8 +167,13 @@ def test_a_newer_sweep_reading_outranks_an_older_hold_in_the_checks_table(tmp_pa
         contract["not_assessable"] = [held]
         conn.execute("UPDATE expert_reports SET contract=?, created_at='2026-09-23T11:26:00+00:00'"
                      " WHERE run_id=?", (json.dumps(contract), first))
+        # The analysis's crawl is not one the sweep measured ONP on, so the
+        # hold stands until a reading of the part arrives. Since screen
+        # audits round 3 (Indexability AC-01) the sweep's reading of the very
+        # crawl the analysis read outranks the hold at once.
         conn.execute("UPDATE audit_runs SET started_at='2026-09-18T07:39:00+00:00',"
-                     " finished_at='2026-09-18T07:50:00+00:00' WHERE id=?", (first,))
+                     " finished_at='2026-09-18T07:50:00+00:00', dimensions='[\"TEC\"]'"
+                     " WHERE id=?", (first,))
         conn.commit()
 
         def state_of_row(pg):

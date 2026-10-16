@@ -21,13 +21,13 @@ import { LOADING_WORD } from "./glossary";
 import { host, useSelection } from "./selection";
 import { entry, short } from "./glossary";
 
-type ScopeKey = "page" | "nav" | "site" | "full";
+export type ScopeKey = "page" | "nav" | "site" | "full";
 export type DepthKey = "quick" | "standard" | "deep";
 
 // Item 183 (channel ruling 20260918-0410): the words are the registry's, which
 // holds `scanscope`'s own strings. Two copies of one definition is how Quick
 // came to mean breadth on one screen and judgement on another.
-const SCOPES: { key: ScopeKey; label: string; what: string }[] =
+export const SCOPES: { key: ScopeKey; label: string; what: string }[] =
   (["page", "nav", "site", "full"] as ScopeKey[]).map((key) => ({
     key, label: entry(`scope-${key}`).word, what: short(entry(`scope-${key}`)),
   }));

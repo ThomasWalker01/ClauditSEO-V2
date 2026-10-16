@@ -10,7 +10,7 @@ import {
 import { goHandler as navHandler, goto as navigate, historyRunFromHash, withPart } from "./nav";
 import { stamp } from "./client_lanes";
 import { PrecheckPanel, pagesGone, usePrecheck } from "./precheck";
-import { ScanMatrix } from "./scanmatrix";
+import { DEPTHS, DepthKey, SCOPES, ScanMatrix, ScopeKey } from "./scanmatrix";
 import { DangerButton, SpendButton, SpendTarget } from "./spend";
 import { Legend, entry } from "./glossary";
 import { pathKey } from "./population";
@@ -2043,13 +2043,15 @@ export function ScanBanner({ run }: { run: ScanBannerRun }) {
 export function LauncherView({ siteId }: { siteId: string }) {
   const { data: meta, error, loading, retry } = useFetch<Meta>("/api/meta");
   const [dims, setDims] = useState<Set<string>>(new Set());
-  const [tier, setTier] = useState("auto");
-  const [analyst, setAnalyst] = useState(false);
-  /** Crawl the entry page and whatever its menu links to, and stop.
-   *  Built and tested in the crawler months ago and reachable over the API,
-   *  but never given a control here — so the only way to run it was curl. */
-  const [navOnly, setNavOnly] = useState(false);
-  const [model, setModel] = useState<string | null>(null);
+  /** The chooser's two decisions in its own words (channel ruling
+   *  20261016-1301, screen audits round 3, audit launch UX-01): a scope -
+   *  Page, Nav, Site, Full, or Adaptive, which picks its own breadth - and a
+   *  depth. They replace a tier radio, a navigation-only box and an analyst
+   *  checkbox with a model list, which reached the same run settings in
+   *  other words 400 px below the chooser. Off-grid combinations (an
+   *  arbitrary model, nav at the T3 budget) stay on the API. */
+  const [scope, setScope] = useState<"auto" | ScopeKey>("auto");
+  const [depth, setDepth] = useState<DepthKey>("quick");
   const [startUrl, setStartUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
@@ -2112,20 +2114,12 @@ export function LauncherView({ siteId }: { siteId: string }) {
     setLaunchError(null);
     try {
       const resp = await api.post<{ run_id: string }>(`/api/sites/${siteId}/audits`, {
-        dims: [...dims], tier,
-        // WF-102. `analyst` is tri-state on the server (`AuditIn`): `null`
-        // means "let the tier decide", and an explicit `false` DECLINES the
-        // layer. On `auto` this screen renders no analyst control at all —
-        // the checkbox is in the `tier !== "auto"` branch — so the `analyst`
-        // state below is whatever `useState(false)` left, and sending it
-        // answered a question the operator was never asked. Every default
-        // press therefore turned the paid layer off while the spend mark
-        // beside the button said it would run. `null` is the screen saying it
-        // has no answer, which is the truth of what it rendered.
-        analyst: tier === "auto" ? null : analyst,
-        model: analyst ? model ?? meta.models[0] : null,
+        dims: [...dims],
+        // A named scope decides the tier on the server (`tier_for_scope`),
+        // as the chooser's runs do; Adaptive is the tier `auto`, and its
+        // analysts are the escalation bands', so it names no depth.
+        ...(scope === "auto" ? { tier: "auto" } : { scope, depth }),
         start_url: startUrl.trim() || null,
-        nav_only: navOnly,
       });
       goto(`#/runs/${resp.run_id}`);
     } catch (e) {
@@ -2168,13 +2162,8 @@ export function LauncherView({ siteId }: { siteId: string }) {
             depth and a scope list in other words, so the reader held two
             models of one decision. It now says how the two map. */}
         <p className="muted">
-          The chooser's two decisions in their parts, and what it does not
-          offer. <strong>How much of the site</strong> is the chooser's scope
-          (Page, Site, Full), plus Adaptive, which picks its own breadth as it
-          goes. The chooser's <strong>depth</strong> is the analyst layer below:
-          off is {entry("depth-quick").word}; on is {entry("depth-standard").word} with
-          the first model or {entry("depth-deep").word} with the deeper one. Only
-          here: which dimensions run, navigation only, and a different entry URL.
+          The chooser&rsquo;s two decisions, scope and depth, in its own words, with
+          the dimensions to run and a different entry URL, which only this card sets.
         </p>
         {/* Grouped by where a fix lands, which is how the Current tab is
             organised and how anyone actually works a site. The engine's
@@ -2247,44 +2236,23 @@ export function LauncherView({ siteId }: { siteId: string }) {
             tier offered as a choice is a control that does not exist; the words
             here are the scope's, and the tier each posts is the receipt. */}
         <h3>How much of the site</h3>
-        <div className="dim-grid">
-          {meta.tiers.map((t) => (
-            <label key={t}>
-              <input type="radio" name="tier" checked={tier === t}
-                     onChange={() => setTier(t)} /> {SCOPE_WORD[t] ?? t}
-              {t === "auto" &&
-                " — decided as it goes: a pulse first; dimensions scoring ≥95 stop, "
-                + "80–94 get a full crawl, 60–79 add their analyst, <60 go deep "
-                + "with paid APIs where keyed"}
-              {t === "T1" && " — the home page, robots.txt and the sitemap head"}
-              {t === "T2" && " — a representative sample, up to 100 pages"}
-              {t === "T3" && " — every reachable page, up to 500, with paid APIs where keyed"}
+        <div className="dim-grid" role="radiogroup" aria-label="How much of the site">
+          <label>
+            <input type="radio" name="scope" checked={scope === "auto"}
+                   onChange={() => setScope("auto")} /> {SCOPE_WORD.auto}
+            {" — decided as it goes: a pulse first; dimensions scoring ≥95 stop, "
+             + "80–94 get a full crawl, 60–79 add their analyst, <60 go deep "
+             + "with paid APIs where keyed"}
+          </label>
+          {SCOPES.map((s) => (
+            <label key={s.key}>
+              <input type="radio" name="scope" checked={scope === s.key}
+                     onChange={() => setScope(s.key)} /> {s.label} — {s.what}
             </label>
           ))}
         </div>
-        {/* Sits with the tier because it overrides what the tier means:
-            the budget stops mattering once the frontier is the menu. */}
-        <label className="nav-only">
-          <input type="checkbox" checked={navOnly && tier !== "auto"}
-                 disabled={tier === "auto"}
-                 onChange={(e) => setNavOnly(e.target.checked)} />{" "}
-          Navigation only — the entry page and the pages its menu links to
-          {tier === "auto" && (
-            <span className="muted">
-              {" "}· needs a fixed tier: an adaptive run decides its own depth,
-              which is the opposite of naming the pages up front
-            </span>
-          )}
-          {navOnly && tier !== "auto" && (
-            <span className="muted">
-              {" "}· the pages a site considers important enough to link from
-              every page. On the site this was built against that is 20 pages
-              rather than the 271 in its sitemap.
-            </span>
-          )}
-        </label>
 
-        <h3>Analyst layer
+        <h3>How hard to look
           <span className="dep-pills">
             <Pill tone={meta.analyst_available ? "state-fixed" : "held"}
                   title={meta.analyst_available ? meta.providers["LLM analyst"].detail
@@ -2294,31 +2262,24 @@ export function LauncherView({ siteId }: { siteId: string }) {
             </Pill>
           </span>
         </h3>
-        {tier === "auto" ? (
+        {scope === "auto" ? (
           <p className="muted">
             Managed by the escalation bands: analysts run automatically for any
             dimension scoring below 80, within the token ceiling
             ({meta.analyst_budgets.T3} tokens).
           </p>
         ) : (
-          <label>
-            <input type="checkbox" checked={analyst} disabled={!meta.analyst_available || tier === "T1"}
-                   onChange={(e) => setAnalyst(e.target.checked)} />{" "}
-            {meta.analyst_available
-              ? `Enable LLM analyst (budget ${tier === "T3" ? meta.analyst_budgets.T3 : meta.analyst_budgets.T2} tokens; never runs on T1)`
-              : `Unavailable — set ${meta.providers["LLM analyst"].env} to enable`}
-          </label>
-        )}
-        {meta.analyst_available && (
-          <p>
-            <label>
-              Model:{" "}
-              <select value={model ?? meta.models[0]} disabled={!analyst}
-                      onChange={(e) => setModel(e.target.value)} aria-label="analyst model">
-                {meta.models.map((m) => <option key={m} value={m}>{m}</option>)}
-              </select>
-            </label>
-          </p>
+          <div className="dim-grid" role="radiogroup" aria-label="How hard to look">
+            {DEPTHS.map((d) => (
+              <label key={d.key}>
+                <input type="radio" name="depth" checked={depth === d.key}
+                       disabled={d.key !== "quick" && !meta.analyst_available}
+                       onChange={() => setDepth(d.key)} /> {d.label} — {d.what}
+                {d.key !== "quick" && !meta.analyst_available
+                  ? <span className="muted"> · needs {meta.providers["LLM analyst"].env}</span> : null}
+              </label>
+            ))}
+          </div>
         )}
         <h3>Start URL override <span className="muted">(optional, for staging/local)</span></h3>
         <input value={startUrl}
@@ -2387,12 +2348,13 @@ export function LauncherView({ siteId }: { siteId: string }) {
           {/* Item 178 (03-1): when the analyst layer runs this spends, so it
               is the spend control, priced in words and confirmed; without it the
               audit costs time only and starts on the press as before. */}
-          {meta.analyst_available && tier !== "T1" && (analyst || tier === "auto") ? (
+          {meta.analyst_available && (scope === "auto" || depth !== "quick") ? (
             <SpendButton price={null} busy={busy}
                          why={!dims.size ? "choose at least one dimension" : null}
                          confirm={{ title: "Run this audit?",
                                     body: <><SpendTarget page={startUrl.trim() || null} />
-                                      <p>Depth {tier === "auto" ? "chosen as it goes" : tier};
+                                      <p>{scope === "auto" ? "Adaptive: breadth and depth chosen as it goes"
+                                          : `${SCOPES.find((s) => s.key === scope)?.label} · ${DEPTHS.find((d) => d.key === depth)?.label}`};
                                         dimensions {[...dims].join(", ")}. The analyst layer runs,
                                         so it spends model tokens.</p></>,
                                     action: "Run the audit" }}
