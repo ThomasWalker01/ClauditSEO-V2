@@ -75,7 +75,7 @@ class ManagedKey:
 #: and have no business being writable from a browser.
 MANAGED: tuple[ManagedKey, ...] = (
     ManagedKey("ANTHROPIC_API_KEY", "LLM analyst",
-               "the analyst layer, expert analyses and chat",
+               "the analyst layer and expert analyses",
                "https://console.anthropic.com"),
     ManagedKey("CLAUDITSEO_PAGESPEED_KEY", "PageSpeed",
                "Core Web Vitals lab data",

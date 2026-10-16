@@ -895,9 +895,9 @@ def _speed_context(ev: dict, site: Any, *, conn=None, run_id=None,
             path = urlsplit(p_["url"]).path or "/"
             for entry in prf.third_party_ledger(tr, host):
                 rows.append([path, entry["host"],
-                             round((entry["bytes"] or 0) / 1024),
+                             (round(entry["bytes"] / 1024) if entry["bytes"] else "unread"),
                              entry["main_thread_ms"]])
-        rows.sort(key=lambda r: -(r[3] * 1000 + r[2]))
+        rows.sort(key=lambda r: -(r[3] * 1000 + (r[2] if isinstance(r[2], int) else 0)))
         page_set += ("\n\n#### Third parties per page (deep depth)\n" + (
             _table(["page", "host", "kb", "main_thread_ms"], rows[:120]) if rows
             # A deep run that found nothing to add says so, rather than reading

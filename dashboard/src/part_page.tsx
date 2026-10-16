@@ -312,6 +312,9 @@ type Fix = {
    *  to either has to find it. */
   images?: string[];
   alsoResolves?: string[];
+  /** The analysis wrote a replacement and the reader did not keep it, and
+   *  why (screen audits round 3, Title & description AC-05). */
+  copyNotKept?: string | null;
   /** The finding states this card stands for (item 237): what Confirm,
    *  Accept and Withdraw write to. */
   fingerprints?: string[];
@@ -721,6 +724,7 @@ export function fixesOf(part: Category, states: FindingState[], page: string): F
         seen.supersededOn = s.superseded_on ?? seen.supersededOn;
         seen.override = s.brief_status === "PASS-OVERRIDE";
         seen.unseenSince = s.unseen_since ?? seen.unseenSince;
+        seen.copyNotKept = s.copy_not_kept ?? seen.copyNotKept;
         seen.rollout = s.rollout ?? seen.rollout;
         seen.payload = s.payload ?? seen.payload;
       }
@@ -756,6 +760,7 @@ export function fixesOf(part: Category, states: FindingState[], page: string): F
       measuredTier: word === "sweep" ? s.measured_tier ?? null : null,
       analysedAt: word === "brief" ? s.analysed_at ?? s.measured_at ?? null : null,
       unseenSince: s.unseen_since ?? null,
+      copyNotKept: word === "brief" ? s.copy_not_kept ?? null : null,
       kind: s.kind ?? null, group: s.group ?? null, template: s.template ?? null,
       baseline: part.page_outlines?.[url] ?? null,
       suggestions: s.suggestions ?? [],
@@ -1008,7 +1013,10 @@ export function WriteBrief({ runId, page, price = null }:
 function Actions({ part, page, sweep, brief, pages, estSeconds, estCost,
                    onRecheck, onRerun, busy, briefNote,
                    recheckConfirm = null, cardDates = [], tool = null, others = [],
-                   estRuns = null, rereads = null, lastCost = null }: {
+                   estRuns = null, rereads = null, lastCost = null, othersHref = null }: {
+  /** Where the other analyses are run (screen audits round 3, Content
+   *  UX-01): "run from the Analyses list" was plain text naming a screen. */
+  othersHref?: string | null;
   /** The last recorded cost here, where it is the price shown (item 276,
    *  row 11): above the median, so the median is not what is quoted. */
   lastCost?: number | null;
@@ -1157,7 +1165,10 @@ function Actions({ part, page, sweep, brief, pages, estSeconds, estCost,
         )}
         {others.length > 0 && (
           <span className="muted">
-            {" "}Also writing here: {others.join(", ")} - run from the Analyses list.
+            {" "}Also writing here: {others.join(", ")} - run from{" "}
+            {othersHref
+              ? <a href={othersHref} onClick={goHandler(othersHref)}>the Analyses list</a>
+              : "the Analyses list"}.
           </span>
         )}
         <span className="muted act-busy" role="status" aria-live="polite">
@@ -2377,6 +2388,25 @@ function SchemaNow({ facts, part, page, fixes, glow, onFix }: {
  *  pretending otherwise would show an operator a diff they cannot apply.
  *  A `content-first` row shows no code at all, because there is nothing to
  *  paste until the content exists. */
+/** The analysis a part's Re-run runs (screen audits round 3, Content UX-01).
+ *
+ *  It was the first lane whose part matched, which on Content was
+ *  content-benchmark: 0 rows for USD 0.12, while content-substance's 18 kept
+ *  rows filled the page and its brief had changed since. Now: the analysis
+ *  whose rows the page draws - the most rows kept, the newer on a tie - and
+ *  the catalogue's order only where none has run. Exported so the screen's
+ *  run handler and the button's label and price name the same tool. */
+export function partAnalysis(part: Category,
+                             lanes: { ready?: Analysis[]; available?: Analysis[] } | null | undefined,
+                             ): Analysis | undefined {
+  const offered = [...(lanes?.ready ?? []), ...(lanes?.available ?? [])]
+    .filter((a) => a.part === part.key);
+  const ran = [...(part.brief_runs ?? [])]
+    .filter((r) => offered.some((a) => a.tool === r.tool))
+    .sort((a, b) => (b.rows - a.rows) || b.at.localeCompare(a.at));
+  return (ran.length ? offered.find((a) => a.tool === ran[0].tool) : undefined) ?? offered[0];
+}
+
 /** A one-line replacement over 80 characters, laid out (item 270, row 17):
  *  a JSON-LD block the model wrote on one line read as a 400-character
  *  scroll beside a laid-out Now. Anything that is not JSON stays as written. */
@@ -3737,8 +3767,12 @@ export const PART_RENDERERS: Record<string, Renderer> = {
   // gauges, sub-parts, filmstrip and waterfall (or says it was not traced),
   // and the checks table at page scope. `noPageBlock` suits Mobile and
   // International, whose pictures describe the site; it never suited Speed.
+  // Screen audits round 3 (Speed UX-02): gated as URLs and Indexability
+  // are, and not over advice that points elsewhere - "same TTFB fix as
+  // above" (no row above), "verify LiteSpeed cache-hit".
   speed: { now: SpeedPageNow, siteNow: SpeedSiteNow, body: SiteBriefFixBody,
-           copyLabel: "copy change", pageChecks: true },
+           copyLabel: "copy change", pageChecks: true,
+           copyWhen: (f) => isChange(f) && !isPointerAdvice(f.replacement) },
   // Crawl & sitemaps and Indexability & canonicals are deliberately NOT here:
   // they are across-the-site parts whose "now" carries controls — the depth
   // histogram narrows the finding list, a canonical chain's check narrows the
@@ -4322,6 +4356,15 @@ export function isChange(fix: { kind?: string | null; replacement?: string | nul
   return !/^\s*(keep\b|class:\s*convention)/i.test(fix.replacement ?? "");
 }
 
+/** A change that is an instruction to go and look, or a reference to
+ *  another row, rather than text to paste (screen audits round 3, Speed
+ *  UX-02). */
+export function isPointerAdvice(rep: string | null | undefined): boolean {
+  const r = (rep ?? "").trim();
+  return /^(same\b|see\b|verify\b|investigate\b|check\b|confirm\b|as (above|below)\b)/i.test(r)
+    || /\b(as above|as below|as the [\w/*-]+ template)\b/i.test(r);
+}
+
 function SiteBriefFixBody({ fix }: { fix: Fix; facts: Facts | null }) {
   return (
     <>
@@ -4613,6 +4656,12 @@ function FixCard({ fix, facts, render, onCopy, copied, n, fixHeld = false,
           </p>
         </>
       ) : <render.body fix={fix} facts={facts} />}
+      {fix.copyNotKept && !fix.replacement && !fix.needs && (
+        <p className="muted fix-copy-not-kept">
+          The analysis wrote a replacement and it was not kept ({fix.copyNotKept}),
+          so this one is written by hand.
+        </p>
+      )}
       {rivals.length > 0 && !fix.needs && !fix.override && (
         <p className="muted fix-rivals" role="note">
           {/* Screen audits round 3, Headings AC-04: /web-design1/ carried a
@@ -6019,8 +6068,7 @@ export function PartPage({ part, page, facts, states, sweep, lanes, pages, bound
     : cardFixes;
   const chip = picked && part.key === "images"
     ? <PickedImage dot={picked} onClear={() => setPicked(null)} onPage={onPage} /> : null;
-  const mine: Analysis | undefined = [...(lanes?.ready ?? []), ...(lanes?.available ?? [])]
-    .find((a) => a.part === part.key);
+  const mine: Analysis | undefined = partAnalysis(part, lanes);
   // Items 276 (row 11), 268 (row 10), 270 (row 17), 275 (row 15): the last
   // recorded cost of this analysis on this site is the estimate's floor. A
   // median over every site quoted USD 0.21 for a re-run whose last run here
@@ -6073,6 +6121,7 @@ export function PartPage({ part, page, facts, states, sweep, lanes, pages, bound
                  } : null}
                  others={[...new Set([...(lanes?.ready ?? []), ...(lanes?.available ?? [])]
                    .filter((a) => a.part === part.key && a.tool !== mine?.tool).map((a) => a.tool))]}
+                 othersHref={siteId ? `#/sites/${siteId}?tab=analyses` : null}
                  onRecheck={onRecheck} onRerun={onRerun} busy={busy} briefNote={briefNote}
                  recheckConfirm={recheckConfirm} />
       )}

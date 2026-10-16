@@ -644,7 +644,9 @@ def test_expert_findings_are_stored_without_touching_score_or_states(tmp_path, s
          "affected_urls": []}])
 
     stored = expert_findings(conn, run_id)
-    assert [f["severity"] for f in stored] == ["high", "low"]   # severity ordered
+    # Severity ordered; and `sitemap-coverage` is registered at medium, so
+    # the model's "high" is held to it (screen audits round 3, Local AC-01).
+    assert [f["severity"] for f in stored] == ["medium", "low"]
     assert stored[0]["affected_urls"] == ["https://x.test/a"]
     assert all(f["source"] == "model-judgement" for f in stored)
     assert all(f["dimension"] == "EXP:crawl" for f in stored)

@@ -466,6 +466,9 @@ export type FindingState = {
   /** Since when the automatic checks have read this row's pages without
    *  raising its check (item 249); null where they raised it or cannot. */
   unseen_since?: string | null;
+  /** Why the analysis's replacement for this row was not kept, where it
+   *  wrote one (screen audits round 3, Title & description AC-05). */
+  copy_not_kept?: string | null;
   /** A duplicate row's shared string, from either source (brief v11 step
    *  AH): the record's group line counts the groups. */
   group?: string | null;

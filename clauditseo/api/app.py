@@ -3773,8 +3773,15 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         """Crawled URLs, homepage first, for choosing what a page-scoped brief
         should read. Kept separate from the run detail because that response is
         already large and this is wanted on its own."""
-        check_run(conn, operator, run_id)
+        run = check_run(conn, operator, run_id)
         start, pages = _offered_pages(runs.get_evidence(conn, run_id))
+        # Each page's open findings in the record (screen audits round 3,
+        # Pages US-01), so the Pages pane can say where the problems are.
+        by_page = runs.open_by_page(conn, run["site_id"])
+        for p in pages:
+            got = by_page.get(urlsplit(p["url"] or "").path or "/") or {}
+            p["open"] = got.get("open", 0)
+            p["worst"] = got.get("worst")
         return {"start_url": start, "pages": pages}
 
     @app.delete("/api/runs/{run_id}")

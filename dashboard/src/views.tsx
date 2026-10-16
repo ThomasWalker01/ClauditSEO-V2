@@ -1063,9 +1063,13 @@ export function SiteDetailView({ siteId }: { siteId: string }) {
       {tab === "notes" && (<>
       <Card>
         <h3>Notes</h3>
+        {/* Screen audits round 3 (Notes AC-02): nothing reads a note. */}
         <p className="muted">
-          The context a crawl cannot supply — “client says leave the pricing
-          page alone” decides what a finding means.
+          The context a crawl cannot supply, kept for you and whoever works
+          on this site next — “client says leave the pricing page alone”.
+          A note is for people: the automatic checks, the analyses and the
+          client report do not read it, so a page to leave alone is still
+          judged; set its finding’s state on the Record to answer it.
         </p>
         <form className="inline-form" onSubmit={async (e) => {
           e.preventDefault();
@@ -1135,15 +1139,24 @@ function PrecheckBadge({ a }: { a: ReturnType<typeof useAnatomy> }) {
   );
 }
 
+/** A crawled page as the Pages pane lists it: what the crawl read, and the
+ *  record's open findings naming it (screen audits round 3, Pages US-01). */
+type FoundPage = { url: string; title?: string | null; words?: number | null;
+                   depth?: number | null; open?: number; worst?: Severity | null };
+
+/** Rows the pages table shows before "show all". */
+const PAGE_ROWS = 15;
+
 /** Jump to any crawled page's dossier — the page-first door. */
 function PageFinder({ siteId, latestRunId }:
     { siteId: string; latestRunId?: string }) {
-  const [pages, setPages] = useState<{ url: string; title?: string }[]>([]);
+  const [pages, setPages] = useState<FoundPage[]>([]);
   const [fUrl, setFUrl] = useState("");
+  const [allRows, setAllRows] = useState(false);
   useEffect(() => {
     if (!latestRunId) return;
     let live = true;
-    api.get<{ pages: { url: string; title?: string }[] }>(
+    api.get<{ pages: FoundPage[] }>(
       `/api/runs/${latestRunId}/pages`)
       .then((d) => { if (live) setPages(d.pages ?? []); })
       .catch(() => { if (live) setPages([]); });
@@ -1230,6 +1243,50 @@ function PageFinder({ siteId, latestRunId }:
           </option>
         ))}
       </select>
+      {/* Screen audits round 3 (Pages US-01): which pages carry the
+          problems. The endpoint returned title, words and depth and nothing
+          drew them, and no count per page existed, so the question took 45
+          dossiers to answer. Most open first; the filter above narrows it. */}
+      {(() => {
+        const ranked = [...shown].sort((a, b) => (b.open ?? 0) - (a.open ?? 0)
+                                                 || a.url.localeCompare(b.url));
+        const rows = allRows ? ranked : ranked.slice(0, PAGE_ROWS);
+        return (
+          <>
+            <h4 className="pages-table-head">Pages by open findings</h4>
+            <p className="muted">
+              Open and regressed findings in the record that name each page, at
+              their worst severity; a finding about several pages counts on each.
+            </p>
+            <div className="table-scroll">
+              <table className="findings pages-table">
+                <thead><tr><th>Page</th><th>Title</th><th className="num">Words</th>
+                  <th className="num">Depth</th><th className="num">Open</th><th>Worst</th></tr></thead>
+                <tbody>
+                  {rows.map((p) => {
+                    const href = `#/sites/${siteId}/dossier/${encodeURIComponent(p.url)}`;
+                    return (
+                      <tr key={p.url}>
+                        <td><a href={href} onClick={navHandler(href)}><code>{pathKey(p.url)}</code></a></td>
+                        <td>{p.title || <span className="muted">no title</span>}</td>
+                        <td className="num pages-n">{p.words ?? "—"}</td>
+                        <td className="num pages-n">{p.depth ?? "—"}</td>
+                        <td className="num pages-n">{p.open ?? 0}</td>
+                        <td>{p.worst ? <SeverityTag severity={p.worst} /> : <span className="muted">none open</span>}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {ranked.length > PAGE_ROWS && (
+              <p><SecondaryButton onClick={() => setAllRows((v) => !v)}>
+                {allRows ? `show the first ${PAGE_ROWS}` : `show all ${ranked.length}`}
+              </SecondaryButton></p>
+            )}
+          </>
+        );
+      })()}
     </Card>
   );
 }
@@ -2106,10 +2163,18 @@ export function LauncherView({ siteId }: { siteId: string }) {
 
       <Card>
         <h3>Or set it up by hand</h3>
+        {/* Screen audits round 3 (audit launch UX-01): this said "every
+            control the chooser sets", over a form with no control named
+            depth and a scope list in other words, so the reader held two
+            models of one decision. It now says how the two map. */}
         <p className="muted">
-          Every control the chooser sets, and the ones it does not: which
-          dimensions run, an adaptive tier that picks its own breadth, and a
-          different entry URL.
+          The chooser's two decisions in their parts, and what it does not
+          offer. <strong>How much of the site</strong> is the chooser's scope
+          (Page, Site, Full), plus Adaptive, which picks its own breadth as it
+          goes. The chooser's <strong>depth</strong> is the analyst layer below:
+          off is {entry("depth-quick").word}; on is {entry("depth-standard").word} with
+          the first model or {entry("depth-deep").word} with the deeper one. Only
+          here: which dimensions run, navigation only, and a different entry URL.
         </p>
         {/* Grouped by where a fix lands, which is how the Current tab is
             organised and how anyone actually works a site. The engine's

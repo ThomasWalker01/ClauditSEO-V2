@@ -169,7 +169,10 @@ _READ_TRACE_JS = r"""
     url: r.name,
     type: r.initiatorType,
     bytes: r.decodedBodySize || 0,
-    transfer: r.transferSize || 0,
+    // Null, not 0, where the browser did not say (screen audits round 3,
+    // Speed IP-01): a cross-origin response without Timing-Allow-Origin, or
+    // one served from cache, reports 0, and a 0 read as a measured weight.
+    transfer: r.transferSize > 0 ? r.transferSize : null,
     encoded: r.encodedBodySize || 0,
     start: r.startTime,
     duration: r.duration,
@@ -466,7 +469,7 @@ def _trace_one(page, cdp, url: str, first_party_host: str, coverage: bool,
         resources.append({
             "url": u, "type": rtype,
             "bytes": r.get("bytes") or 0,
-            "transfer": r.get("transfer") or 0,
+            "transfer": r.get("transfer") or None,
             "start_ms": round(r.get("start") or 0, 1),
             "duration_ms": round(r.get("duration") or 0, 1),
             "blocking": blocking,

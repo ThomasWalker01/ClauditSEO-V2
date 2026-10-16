@@ -384,6 +384,34 @@ def _headings_guard(row: "Row", rules: "Rules") -> tuple[str, str] | None:
     return None
 
 
+#: What a row's note says where its replacement was written and not kept
+#: (screen audits round 3, Title & description AC-03, AC-05); the record's
+#: view reads the reason after it onto the card.
+COPY_NOT_KEPT = "the replacement written was not kept: "
+
+#: The Speed checks that name the cause of a slow paint (screen audits round
+#: 3, Speed AC-04).
+PAINT_CAUSE_CHECKS = ("PRF/lcp-cause", "PRF/critical-path")
+_LCP_SAID = re.compile(r"\bLCP\s*(?:of\s*)?(\d{3,5})\s*ms", re.I)
+
+
+def _speed_guard(row: "Row") -> str | None:
+    """A paint-cause row on a page whose LCP is inside the Good band, by the
+    row's own figure: there is no slow paint for it to explain. On twenty22
+    all three kept Speed rows were these ("LCP 2296 ms passes the 2500 ms
+    budget"), Medium with Confirm, and a slow server response is the
+    automatic `ttfb-slow` check's. Returns the drop reason, or None."""
+    if row.check not in PAINT_CAUSE_CHECKS:
+        return None
+    from clauditseo.modules.prf import LCP_GOOD_MS
+    said = _LCP_SAID.search(row.evidence or "")
+    if not said or int(said.group(1)) > LCP_GOOD_MS:
+        return None
+    return (f"the page's LCP, {said.group(1)} ms by the row's own evidence, is inside the "
+            f"{LCP_GOOD_MS} ms Good band, so there is no slow paint to explain; a slow "
+            "server response is the automatic ttfb-slow check's")
+
+
 #: Item 221. Parts whose brief may not raise or hold one of its FREE checks
 #: on its own account. Every free URL check is a string function of a URL the
 #: sweep already read, so a model row the sweep did not raise is a false
@@ -688,6 +716,10 @@ def enforce(parsed: "Parsed", rules: Rules) -> "Parsed":
             not_assessable(row, re.sub(r"^\s*not_assessable\s*[:\-]?\s*", "", rep, flags=re.I)
                            or "the analysis gave no reason")
             continue
+        painted = _speed_guard(row)
+        if painted:
+            _drop(parsed, row.as_dict(), painted)
+            continue
         guard = _headings_guard(row, rules)
         if guard:
             if guard[0] == "hold":
@@ -763,6 +795,21 @@ def enforce(parsed: "Parsed", rules: Rules) -> "Parsed":
                     continue
                 past = None if soft else _past_the_cut(row.check_id, rep)
                 if past:
+                    # Screen audits round 3 (Title & description AC-03,
+                    # AC-05): the finding stands and only its copy goes. Five
+                    # near-duplicate titles the sweep's exact-match test
+                    # cannot see were dropped whole because their
+                    # replacements ran past 410 px, and the table read
+                    # `title-duplicate` clean while the analysis's own prose
+                    # named them. A fault with no fitting copy is still a
+                    # fault, and the card says copy was written and why it
+                    # is not offered.
+                    if (row.status or "").upper() in ("FAIL", "WARN"):
+                        row.note = "; ".join(filter(None, [
+                            row.note, f"{COPY_NOT_KEPT}{past}"]))
+                        row.replacement = None
+                        kept.append(row)
+                        continue
                     _drop(parsed, row.as_dict(), past)
                     continue
             if _is_title(row.check_id) and strategy == "triple" and "|" in rep:

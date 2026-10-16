@@ -122,10 +122,16 @@ def test_a_replacement_outside_the_bounds_is_dropped_with_the_measurement():
     from clauditseo.textmetrics import measure
     from clauditseo.modules.onp import DESC_FONT, DESC_PX
     assert reasons == [f"replacement outside bounds ({len(DESC_SHORT)} < 120)",
-                       f"replacement {measure(DESC_LONG, DESC_FONT)['px']} px, cut at {DESC_PX} px on desktop",
                        "replacement outside bounds (19 < 30)"], reasons
-    assert [d["row"]["page"] for d in got.dropped] == [BASE + "/team", BASE + "/", BASE + "/about"]
-    assert [r.page for r in got.rows] == [BASE + "/", BASE + "/about"]     # `keep` is exempt
+    assert [d["row"]["page"] for d in got.dropped] == [BASE + "/team", BASE + "/about"]
+    # Screen audits round 3 (Title & description AC-03): past the cut, the
+    # finding stands without its copy, and says why. `keep` is exempt.
+    assert [r.page for r in got.rows] == [BASE + "/", BASE + "/", BASE + "/about"]
+    wide = next(r for r in got.rows if r.check == "ONP/meta-desc-length")
+    assert wide.replacement is None
+    assert wide.note.endswith(
+        f"the replacement written was not kept: replacement "
+        f"{measure(DESC_LONG, DESC_FONT)['px']} px, cut at {DESC_PX} px on desktop"), wide.note
 
 
 def test_under_neighbourhood_the_ceiling_is_soft_on_location_and_service_pages():
@@ -135,11 +141,13 @@ def test_under_neighbourhood_the_ceiling_is_soft_on_location_and_service_pages()
         ["Hawthorn", "Kew", "Abbotsford", "Collingwood", "Fitzroy", "Carlton"]) + " events"  # ~110 chars
     got = _parse([_row("ONP/title-entity-alignment", "/richmond", long_title, page_type="service"),
                   _row("ONP/title-entity-alignment", "/about", long_title, page_type="other")], rules)
-    assert [r.page for r in got.rows] == [BASE + "/richmond"]
-    # Item 273: off the soft pages the ceiling is the mobile cut, in pixels.
+    # Item 273: off the soft pages the ceiling is the mobile cut, in pixels;
+    # the finding stands without the copy (screen audits round 3, AC-03).
     from clauditseo.textmetrics import measure
     from clauditseo.modules.onp import TITLE_FONT, TITLE_PX_MOBILE
-    assert got.dropped[0]["reason"] == (
+    assert [(r.page, bool(r.replacement)) for r in got.rows] == [
+        (BASE + "/richmond", True), (BASE + "/about", False)]
+    assert got.rows[1].note.endswith(
         f"replacement {measure(long_title, TITLE_FONT)['px']} px, cut at {TITLE_PX_MOBILE} px on mobile")
 
 
@@ -156,8 +164,9 @@ def test_a_title_inside_sixty_characters_and_past_the_cut_is_dropped():
     rules = contract_rules(Site(domain="birch.fixture", gbp_primary_category="Events Company"))
     got = _parse([_row("ONP/title-entity-alignment", "/", wide, page_type="other"),
                   _row("ONP/title-entity-alignment", "/about", narrow, page_type="other")], rules)
-    assert [r.page for r in got.rows] == [BASE + "/about"]
-    assert got.dropped[0]["reason"].endswith(f"cut at {TITLE_PX_MOBILE} px on mobile"), got.dropped
+    assert [(r.page, r.replacement) for r in got.rows] == [(BASE + "/", None), (BASE + "/about", narrow)]
+    assert got.rows[0].note.endswith(f"cut at {TITLE_PX_MOBILE} px on mobile"), got.rows[0].note
+    assert not got.dropped
 
 
 def test_under_triple_a_title_with_a_pipe_is_dropped():

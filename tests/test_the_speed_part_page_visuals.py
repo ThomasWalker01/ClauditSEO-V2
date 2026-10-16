@@ -256,7 +256,9 @@ def test_a_host_that_shipped_nothing_is_not_reported_as_a_kilobyte(tmp_path):
     now = _payload(tmp_path, [(f"{FIRST_PARTY}/a", _trace())])
     beacon = next(r for r in now["templates"][0]["third_parties"]
                   if r["host"] == "beacon.third.test")
-    assert beacon["bytes"] == 0, beacon
+    # And since screen audits round 3 (Speed IP-01), a size the browser did
+    # not report is None with the count unread, not a measured 0.
+    assert beacon["bytes"] is None and beacon["unread"] == 1, beacon
 
 
 # --- the strip, the bands and the two honesty clauses -----------------------
@@ -320,7 +322,10 @@ def test_the_field_bar_is_greyed_with_what_to_connect_and_never_zeros(tmp_path):
     assert field["connected"] is False
     assert field["good"] is None and field["poor"] is None
     assert field["needs_improvement"] is None
-    assert "CrUX" in field["note"] and "Search Console" in field["note"]
+    # The CrUX key, where it is set (screen audits round 3, Speed US-02):
+    # "Search Console on Admin › Sites" named a control that does not exist.
+    assert "CrUX" in field["note"] and "Provider keys" in field["note"]
+    assert field["action"]["href"] == "#/admin?tab=keys"
     assert "lab" in field["note"]
 
 
@@ -494,8 +499,9 @@ def test_all_six_visuals_render_for_a_traced_template(tmp_path, served, browser)
     assert len(got["costs"]) >= 2, got["costs"]
     # (6) the ledger, with a bar per host.
     assert got["tp"] >= 2 and got["tpBars"] == got["tp"], got
-    # The strip is per template, largest first, and the profile is stated.
-    assert got["picks"][0] == "/blog/<slug>", got["picks"]
+    # The strip is per template, worst LCP first since screen audits round 3
+    # (Speed UX-01) - here `/`, the slower paint - and the profile is stated.
+    assert got["picks"][0] == "/", got["picks"]
     assert "applied throttling" in got["profile"], got["profile"]
     # Item 155 on this block too: every count it draws carries a population,
     # and all of them are over the crawl.

@@ -29,6 +29,7 @@ import { SecondaryButton } from "./buttons";
 import { useState } from "react";
 
 import { Card, pathOf } from "./components";
+import { goHandler } from "./nav";
 import { entry } from "./glossary";
 import { Pill } from "./pill";
 import { useObjectUrl } from "./api";
@@ -81,7 +82,7 @@ export type SpeedTemplate = {
   };
   frames: Frame[] | string;
   resources: SpeedResource[]; resources_total: number;
-  third_parties: { host: string; bytes: number; main_thread_ms: number; pages: number }[];
+  third_parties: { host: string; bytes: number | null; unread?: number; main_thread_ms: number; pages: number }[];
   head_rendered: string | null;
   /** The head the server sent, distinct from the rendered one since
    *  brief 160 step 2: `head_html` was the rendered head under a name
@@ -101,6 +102,8 @@ export type SpeedNow = {
     connected: boolean; source: string | null;
     good: number | null; needs_improvement: number | null; poor: number | null;
     note: string;
+    /** Where the note's next step is done (screen audits round 3, Speed US-02). */
+    action?: { label: string; href: string } | null;
   };
   templates: SpeedTemplate[];
   run_id: string | null;
@@ -168,7 +171,11 @@ function ms(n: number, unit: string): string {
   return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)} s` : `${Math.round(n)} ms`;
 }
 
-function kb(bytes: number | null): string {
+/** Why a size is a dash (screen audits round 3, Speed IP-01). */
+const UNREAD_SIZE = "Not read: the browser reports no size for a cross-origin response "
+  + "without Timing-Allow-Origin, or for one served from cache.";
+
+function kb(bytes: number | null | undefined): string {
   // Zero is a dash, not `1 KB`. The floor at one exists so a 300-byte script
   // does not read as nothing, and applied to a host that shipped no bytes at
   // all it invented a kilobyte - `frog.wix.com` and `panorama.wixapps.net`
@@ -269,7 +276,13 @@ function FieldBar({ field }: { field: SpeedNow["field_data"] }) {
           <span className="muted">{field.source ? field.source : "not connected"}</span>
         </div>
         <div className="sp-f-bar sp-f-empty" aria-hidden="true" />
-        <p className="muted sp-f-note">{field.note}</p>
+        <p className="muted sp-f-note">
+          {field.note}
+          {field.action && (
+            <>{" "}<a href={field.action.href} onClick={goHandler(field.action.href)}>
+              {field.action.label}</a></>
+          )}
+        </p>
       </div>
     );
   }
@@ -438,7 +451,10 @@ function Waterfall({ t, pops, onPart }: {
                 {r.type === "script" && r.defer && <span className="muted"> · defer</span>}
                 {r.type === "script" && r.async && <span className="muted"> · async</span>}
               </td>
-              <td className="num">{kb(r.transfer ?? r.bytes)}</td>
+              {/* The transfer size alone (screen audits round 3, Speed
+                  IP-01): the decoded size is not what was sent, and a
+                  dash is a size the browser did not report. */}
+              <td className="num" title={r.transfer ? undefined : UNREAD_SIZE}>{kb(r.transfer)}</td>
               <td>
                 <span className={`sp-cost tone-${COST[r.cost].tone}`}>
                   {COST[r.cost].word}
@@ -527,7 +543,9 @@ function ThirdParties({ t, pops }: { t: SpeedTemplate; pops: Populations | null 
           {t.third_parties.map((r) => (
             <tr key={r.host}>
               <td><code>{r.host}</code></td>
-              <td className="num">{kb(r.bytes)}</td>
+              <td className="num" title={r.bytes ? undefined : UNREAD_SIZE}>
+                {kb(r.bytes)}{r.bytes && r.unread ? <span className="muted"> + {r.unread} unread</span> : null}
+              </td>
               <td className="num sp-tp-ms">
                 <span className="sp-tp-bar"
                       style={{ width: `${(r.main_thread_ms / max) * 100}%` }}
@@ -557,6 +575,22 @@ function ThirdParties({ t, pops }: { t: SpeedTemplate; pops: Populations | null 
  *  slow" are two readings of one block rather than two screens. The part opens
  *  on the largest template, which the server sorts first: the one most of the
  *  site is built from is the one worth reading. */
+const lcpOf = (x: SpeedTemplate) => x.vitals.find((v) => v.key === "lcp") ?? null;
+const BAND_RANK: Record<string, number> = { poor: 0, "needs improvement": 1, good: 2 };
+
+/** The templates worst first: by LCP band, then the slower paint; a
+ *  template whose LCP was not read last. */
+export function worstFirst(templates: SpeedTemplate[]): SpeedTemplate[] {
+  const key = (x: SpeedTemplate) => {
+    const g = lcpOf(x);
+    return [g?.band ? BAND_RANK[g.band] ?? 3 : 3, -(g?.value ?? -1)];
+  };
+  return [...templates].sort((a, b) => {
+    const [ra, va] = key(a), [rb, vb] = key(b);
+    return ra - rb || va - vb;
+  });
+}
+
 export function SpeedNowBlock({ part, pops = null, onPart, picked, onTemplate, page = "" }: {
   part: { speed_now?: SpeedNow | null };
   pops?: Populations | null;
@@ -614,7 +648,12 @@ export function SpeedNowBlock({ part, pops = null, onPart, picked, onTemplate, p
       </Card>
     );
   }
-  const t = onPage ?? now.templates.find((x) => x.pattern === pick) ?? now.templates[0];
+  // Worst first, by LCP band then value (screen audits round 3, Speed
+  // UX-01): twelve chips each read "1 of 12 pages traced" with no vital, so
+  // finding the worst template took twelve clicks, and the part opened on
+  // `/`. The part now opens on the worst, and each chip says its LCP.
+  const ordered = worstFirst(now.templates);
+  const t = onPage ?? ordered.find((x) => x.pattern === pick) ?? ordered[0];
   // A gauge's `over` count is "how many of THIS TEMPLATE's traced pages gave
   // a figure", so the scope it renders against is the template and not the
   // site (item 155's rule, applied where the reader is looking - the same
@@ -645,7 +684,7 @@ export function SpeedNowBlock({ part, pops = null, onPart, picked, onTemplate, p
 
       {!onPage && (now.templates.length > 1 || onTemplate) && (
         <div className="sp-picker" role="group" aria-label="template">
-          {now.templates.map((x) => (
+          {ordered.map((x) => (
             <button key={x.pattern} type="button"
                     className={`sp-pick${x.pattern === t.pattern ? " on" : ""}`}
                     // Item 181 (06-13): the pressed state is the template drawn,
@@ -653,6 +692,14 @@ export function SpeedNowBlock({ part, pops = null, onPart, picked, onTemplate, p
                     aria-pressed={x.pattern === t.pattern}
                     onClick={() => setPick(x.pattern)}>
               <code>{x.pattern}</code>
+              {(() => {
+                const g = lcpOf(x);
+                return g?.value != null ? (
+                  <span className={`sp-pick-lcp tone-${g.band ? TONE[g.band] : "mute"}`}>
+                    LCP {ms(g.value, g.unit)}
+                  </span>
+                ) : <span className="muted sp-pick-lcp">LCP not read</span>;
+              })()}
               <span className="muted">
                 {" "}<Counted count={x.pages} pops={pops} unit="pages" />
               </span>

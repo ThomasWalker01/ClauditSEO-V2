@@ -214,24 +214,32 @@ def third_party_ledger(trace: dict, first_party_host: str) -> list[dict]:
     not charged here.
     """
     mine = _bare(first_party_host)
-    bytes_by: dict[str, int] = {}
+    bytes_by: dict[str, int | None] = {}
+    unread_by: dict[str, int] = {}
     ms_by: dict[str, float] = {}
     for r in (trace.get("resources") or []):
         host = urlsplit(r.get("url") or "").netloc.lower()
         if host and _bare(host) != mine:
-            bytes_by[host] = bytes_by.get(host, 0) + (r.get("transfer") or 0)
+            # An unread size is not a zero (screen audits round 3, Speed
+            # IP-01): a host whose every response went unread has no weight,
+            # and one with some unread says how many.
+            if r.get("transfer"):
+                bytes_by[host] = (bytes_by.get(host) or 0) + r["transfer"]
+            else:
+                bytes_by.setdefault(host, None)
+                unread_by[host] = unread_by.get(host, 0) + 1
     for task in (trace.get("long_tasks") or []):
         for src in (task.get("scripts") or []):
             h = urlsplit(src.get("url") or "").netloc.lower()
             if h and _bare(h) != mine:
                 ms_by[h] = ms_by.get(h, 0) + (src.get("ms") or 0)
     return sorted(
-        ({"host": h, "bytes": bytes_by.get(h, 0),
+        ({"host": h, "bytes": bytes_by.get(h), "unread": unread_by.get(h, 0),
           "main_thread_ms": round(ms_by.get(h, 0), 1)}
          for h in (set(bytes_by) | set(ms_by))),
         # Main thread first, weighted: a 40 KB script holding the thread for
         # 300 ms costs the client more than a 400 KB image that costs nothing.
-        key=lambda r: -(r["bytes"] + r["main_thread_ms"] * 1000))
+        key=lambda r: -((r["bytes"] or 0) + r["main_thread_ms"] * 1000))
 
 
 CWV_ADVICE = {
@@ -408,10 +416,12 @@ class PerformanceModule:
                 recommendation = "Retry once CrUX answers; see providers_failing."
             else:
                 reason = "CrUX holds no record for this URL"
+                # Screen audits round 3 (Speed US-02): no screen connects a
+                # field source, and the key is already set on this branch.
                 recommendation = ("A missing CrUX record is a traffic-threshold fact, "
-                                  "not a configuration gap. Treat the lab vitals as "
-                                  "directional until a field source is connected on "
-                                  "Admin > Sites (no provider here reads one yet).")
+                                  "not a configuration gap: Google publishes field data "
+                                  "only for pages with enough visits. Treat the lab "
+                                  "vitals as directional.")
             summary = f"Core Web Vitals field data not assessed: {reason}. {lab_run}"
             evidence["needs"] = ["real-user field data (a CrUX record for this URL)"]
             evidence["lab_source"] = next(
@@ -603,17 +613,24 @@ class PerformanceModule:
         ledger = third_party_ledger(tr, start_host)
         # Heavy on either axis: 50 KB shipped, or 50 ms of main thread.
         rows = [r for r in ledger
-                if r["bytes"] > 50 * 1024 or r["main_thread_ms"] > 50]
+                if (r["bytes"] or 0) > 50 * 1024 or r["main_thread_ms"] > 50]
         if rows:
             heavy = [r["host"] for r in rows]
             total_ms = round(sum(r["main_thread_ms"] for r in rows), 1)
+            # Read sizes only, and "size not read" where none was
+            # (screen audits round 3, Speed IP-01).
+            shipped = sum(r["bytes"] or 0 for r in rows)
+            unread = sum(r.get("unread", 0) for r in rows)
+            top = rows[0]
             out.append(Finding(
                 dimension=self.code, check_id="third-party-weight", severity=Severity.MEDIUM,
                 summary=f"{path}: {len(heavy)} third-party host(s) ship "
-                        f"{sum(r['bytes'] for r in rows) // 1024} KB and "
-                        f"{total_ms:g} ms of main-thread work; heaviest "
-                        f"{rows[0]['host']} ({rows[0]['bytes'] // 1024} KB, "
-                        f"{rows[0]['main_thread_ms']:g} ms).",
+                        f"{'at least ' if unread and shipped else ''}"
+                        + (f"{shipped // 1024} KB" if shipped else "an unread size")
+                        + f" and {total_ms:g} ms of main-thread work; heaviest "
+                        f"{top['host']} ("
+                        + (f"{top['bytes'] // 1024} KB" if top["bytes"] else "size not read")
+                        + f", {top['main_thread_ms']:g} ms).",
                 subject=path, affected_urls=[url], confidence=Confidence.LOW,
                 evidence={"hosts": rows[:10], "measured": "lab"},
                 recommendation="Delay, gate or drop third parties by paint impact; see "
@@ -637,14 +654,19 @@ class PerformanceModule:
                                "first paint needs."))
 
         transfer = sum((r.get("transfer") or 0) for r in resources)
+        # Screen audits round 3 (Speed IP-01): the read sizes only, and how
+        # many went unread, so an over-budget page is said as "at least".
+        unread = sum(1 for r in resources if not r.get("transfer"))
         if transfer > budgets["page_weight_budget"] * 1024:
             out.append(Finding(
                 dimension=self.code, check_id="page-weight", severity=Severity.MEDIUM,
-                summary=f"{path}: {transfer // 1024} KB transferred "
-                        f"(over {budgets['page_weight_budget']} KB); image share is on the "
-                        "Images part, not recounted here.",
+                summary=f"{path}: {'at least ' if unread else ''}{transfer // 1024} KB transferred "
+                        f"(over {budgets['page_weight_budget']} KB"
+                        + (f"; {unread} resource{'s' if unread != 1 else ''} not read"
+                           if unread else "")
+                        + "); image share is on the Images part, not recounted here.",
                 subject=path, affected_urls=[url], confidence=Confidence.LOW,
-                evidence={"transfer_bytes": transfer,
+                evidence={"transfer_bytes": transfer, "unread": unread,
                           "budget_kb": budgets["page_weight_budget"], "measured": "lab"},
                 recommendation="Cut the heaviest resources by paint impact; images are the "
                                "Images part's."))

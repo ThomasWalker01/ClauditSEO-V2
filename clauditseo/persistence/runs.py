@@ -1935,8 +1935,11 @@ def record_expert_findings(conn: sqlite3.Connection, run_id: str, tool_id: str,
         # page's verdict: the merge happens later and a re-judge at that point
         # would have only the newest call's `declared` to judge against, so
         # two pages ago would silently be re-decided by today's list.
+        from clauditseo.checks import capped_severity
         pages[page] = [
-            {"code": f["code"], "severity": f["severity"],
+            # Never above the registry's severity for the same check (screen
+            # audits round 3, Local AC-01; `checks.capped_severity`).
+            {"code": f["code"], "severity": capped_severity(f["code"], f["severity"]),
              "summary": f.get("summary") or "",
              "affected_urls": list(f.get("affected_urls") or []),
              "figure_unverified": _declares_a_figure(
@@ -5222,6 +5225,15 @@ def site_states(conn: sqlite3.Connection, site_id: str) -> list[dict]:
             if when.get(finding_run):
                 d["unseen_since"] = unseen(d["dimension"], d["check_id"],
                                            d["affected_urls"], when[finding_run])
+        # Screen audits round 3 (Title & description AC-05): a replacement
+        # the reader did not keep, and why, so the card says copy was
+        # written rather than reading as though none was offered.
+        d["copy_not_kept"] = None
+        if d["source"] == "model-judgement":
+            from clauditseo.analysts.contract import COPY_NOT_KEPT
+            note = str(_evidence_key(d.get("evidence"), "note") or "")
+            if COPY_NOT_KEPT in note:
+                d["copy_not_kept"] = note.split(COPY_NOT_KEPT, 1)[1].strip() or None
         # The specialist that judges this check, or None (FEATURES.md F-02).
         # Same decision as `_finding_dict` makes for the run-scoped shape:
         # the server decides, so a row cannot offer a control the server
@@ -8602,13 +8614,17 @@ def speed_now_payload(conn: sqlite3.Connection, run_id: str | None) -> dict | No
         for one in members_all:
             for entry in prf.third_party_ledger(one, first_party):
                 got = ledger.setdefault(
-                    entry["host"], {"host": entry["host"], "bytes": 0,
+                    entry["host"], {"host": entry["host"], "bytes": None, "unread": 0,
                                     "main_thread_ms": 0.0, "pages": 0})
-                got["bytes"] += entry["bytes"]
+                # Unread sizes stay unread (screen audits round 3, Speed
+                # IP-01): None until some response of the host was read.
+                if entry["bytes"]:
+                    got["bytes"] = (got["bytes"] or 0) + entry["bytes"]
+                got["unread"] += entry.get("unread", 0)
                 got["main_thread_ms"] += entry["main_thread_ms"]
                 got["pages"] += 1
         third = sorted(ledger.values(),
-                       key=lambda r: -(r["bytes"] + r["main_thread_ms"] * 1000))
+                       key=lambda r: -((r["bytes"] or 0) + r["main_thread_ms"] * 1000))
         for entry in third:
             entry["main_thread_ms"] = round(entry["main_thread_ms"], 1)
 
@@ -8690,10 +8706,17 @@ def _speed_field_data(conn: sqlite3.Connection, site_id: str) -> dict:
     if not source:
         return {"connected": False, "source": None,
                 "good": None, "needs_improvement": None, "poor": None,
-                "note": "not connected — connect CrUX or Search Console on "
-                        "Admin › Sites to show the share of real visits that "
-                        "were good, needs improvement or poor. Until then "
-                        "every figure above is lab."}
+                # Screen audits round 3 (Speed US-02): what can be done, and
+                # where. It sent the reader to "connect CrUX or Search Console
+                # on Admin > Sites", which has no such control, and no
+                # provider here reads the distribution.
+                "note": "not read: the share of real visits that were good, needs "
+                        "improvement or poor is CrUX's distribution, which this "
+                        "build does not read yet. A CrUX key on Admin › Provider "
+                        "keys gives the vitals above their real-user p75 where "
+                        "Google holds a record for the page; until then every "
+                        "figure above is lab.",
+                "action": {"label": "Provider keys", "href": "#/admin?tab=keys"}}
     # No provider serves this yet; the column existing is the hook, and the
     # block says so rather than inventing a distribution for a configured key
     # nothing reads.
@@ -9119,6 +9142,33 @@ def standing_by_state(conn: sqlite3.Connection, site_id: str) -> dict:
         f" WHERE fs.site_id=? AND fs.state IN ('open','regressed') AND {coverage_note_sql()}",
         (site_id,)).fetchone()[0]
     out["_notes"] = {"n": notes, "oldest": None}
+    return out
+
+
+def open_by_page(conn: sqlite3.Connection, site_id: str) -> dict[str, dict]:
+    """Per page path, the site's open and regressed findings that name it and
+    the worst severity among them (screen audits round 3, Pages US-01: "which
+    pages carry the problems" could not be answered without opening 45
+    dossiers). The standing's population - `standing_by_state`'s join, coverage
+    notes excluded - counted per page each finding names."""
+    from urllib.parse import urlsplit
+    order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+    out: dict[str, dict] = {}
+    for r in conn.execute(
+            "SELECT f.affected_urls, f.severity FROM finding_states fs"
+            f" JOIN findings f ON f.rowid = ({_latest_finding()})"
+            f" WHERE fs.site_id=? AND fs.state IN ('open','regressed')"
+            f" AND NOT {coverage_note_sql()}", (site_id,)):
+        try:
+            urls = json.loads(r["affected_urls"] or "[]")
+        except (TypeError, ValueError):
+            continue
+        sev = str(r["severity"] or "").lower()
+        for path in {urlsplit(str(u)).path or "/" for u in urls if u}:
+            got = out.setdefault(path, {"open": 0, "worst": None})
+            got["open"] += 1
+            if got["worst"] is None or order.get(sev, 9) < order.get(got["worst"], 9):
+                got["worst"] = sev
     return out
 
 
@@ -10235,16 +10285,26 @@ def signal_coverage_payload(conn: sqlite3.Connection, site_id: str) -> dict | No
     the score reads: no open row means every signal was measured.
     """
     from clauditseo.modules.ofp import SIGNALS
-    row = conn.execute(
-        f"""SELECT f.evidence FROM finding_states fs
-            JOIN findings f ON f.rowid = ({_latest_finding()})
-            WHERE fs.site_id = ? AND fs.state IN ('open', 'regressed')
-              AND f.check_id = 'backlinks-not-assessed'
-            ORDER BY f.created_at DESC LIMIT 1""", (site_id,)).fetchone()
-    try:
-        ev = json.loads(row["evidence"] or "{}") if row else {}
-    except (TypeError, ValueError):
-        ev = {}
+    # Not a reading that asked no one (screen audits round 3, Backlinks
+    # IP-02): a free Quick pulse makes no external call, files the row with
+    # every signal dark, and the header read "0 of 2 measured" over the Moz
+    # reading on the row below it. Rows from before the `unasked` flag are
+    # known by their own sentence.
+    ev: dict = {}
+    for row in conn.execute(
+            f"""SELECT f.evidence, f.summary FROM finding_states fs
+                JOIN findings f ON f.rowid = ({_latest_finding()})
+                WHERE fs.site_id = ? AND fs.state IN ('open', 'regressed')
+                  AND f.check_id = 'backlinks-not-assessed'
+                ORDER BY f.created_at DESC""", (site_id,)):
+        try:
+            got = json.loads(row["evidence"] or "{}")
+        except (TypeError, ValueError):
+            continue
+        if got.get("unasked") or "Not requested at this depth" in (row["summary"] or ""):
+            continue
+        ev = got
+        break
     dark = [s for s in (ev.get("unmeasured") or []) if s in SIGNALS]
     return {"total": len(SIGNALS), "measured": [s for s in SIGNALS if s not in dark],
             "unmeasured": dark, "providers": ev.get("providers_answering") or [],

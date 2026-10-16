@@ -3725,6 +3725,8 @@ tr.marked .f-sum { text-decoration: line-through; text-decoration-thickness: 1px
 .sp-pick:hover { background: var(--surface-sunken); }
 .sp-pick.on { border-color: var(--accent); background: var(--surface-sunken); }
 .sp-pick code { font-size: .72rem; }
+/* Each template chip says its LCP (screen audits round 3, Speed UX-01). */
+.sp-pick-lcp { font-size: .72rem; font-variant-numeric: tabular-nums; }
 
 /* Visual 1 — the gauges. Four across where there is room, two on a narrow
    pane, never one: the four vitals are read against each other. */
@@ -4192,6 +4194,10 @@ button.seccard[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--focus, var(--a
 .links-hub { overflow-wrap: anywhere; }
 /* The hub map's source and date (screen audits round 3, Links AC-02). */
 .links-hubs-source { font-size: .8rem; margin: 0 0 .5rem; }
+/* The Pages pane's table of pages by open findings (screen audits round 3, Pages US-01). */
+.pages-table-head { margin: 1rem 0 .25rem; }
+.pages-n { overflow-wrap: anywhere; }
+.pages-table td:nth-child(2) { max-width: 22rem; overflow-wrap: anywhere; }
 .ai-register summary h3 { display: inline; margin: 0; }
 .ai-absent code { font-size: .8rem; }
 .ai-candidates { margin: .5rem 0; padding-left: 1.1rem; }
@@ -4356,6 +4362,8 @@ button.seccard[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--focus, var(--a
 .fix-override { color: var(--text-soft); }
 /* Another card on the page proposes a different whole outline (screen audits round 3, Headings AC-04). */
 .fix-rivals { font-size: .8rem; margin: .4rem 0 0; }
+/* A replacement the analysis wrote and the reader did not keep (screen audits round 3, Title & description AC-05). */
+.fix-copy-not-kept { font-size: .8rem; margin: .4rem 0 0; }
 /* A structured-data card with no markup to paste says the change (screen audits round 3, Structured data US-01). */
 .schema-advice { white-space: normal; margin: .25rem 0 0; }
 /* Item 181: the landing's headline is the page's h1, drawn exactly as the

@@ -48,7 +48,7 @@ import { DEPTH_TIER, depthFor, DrawerFinding, ReauditDrawer } from "./reaudit";
 import { DepthKey } from "./scanmatrix";
 import { ReportView } from "./markdown";
 import { Contract, ContractAccount } from "./expert";
-import { PART_RENDERERS, PartPage, SweepRun, belongsTo } from "./part_page";
+import { PART_RENDERERS, PartPage, SweepRun, belongsTo, partAnalysis } from "./part_page";
 import { ClientLanes, IntegrityLine, ModeArith, PartSwitcher, PrimaryAction, stamp,
          StateSentence } from "./client_lanes";
 import { Count, Counted, CoverageLine, Headline, Populations,
@@ -3984,9 +3984,9 @@ export function AnatomyView({ siteId, a, states, selected, onSelect, rerunAsk = 
   };
   /** Which brief writes to this part, from the lanes payload rather than
    *  a list here (brief v11 step AI). */
-  const briefOf = (c: Category): string | null =>
-    [...(lanes?.ready ?? []), ...(lanes?.available ?? [])]
-      .find((a) => a.part === c.key)?.tool ?? null;
+  // The part page's own rule, so the button's label and price and the run
+  // it starts name one tool (screen audits round 3, Content UX-01).
+  const briefOf = (c: Category): string | null => partAnalysis(c, lanes)?.tool ?? null;
   /** The free half of the actions row, and it now branches into two
    *  different KINDS of act rather than two spellings of one (item 189).
    *

@@ -101,6 +101,35 @@ def default_severity(check: str, status: str = "FAIL") -> str | None:
     return sev
 
 
+_RANK = ("critical", "high", "medium", "low", "info")
+
+
+def registered_ceiling(code: str) -> str | None:
+    """The registered FAIL severity of a bare check id, where exactly one
+    registered check carries it; None otherwise.
+
+    A legacy brief answers the findings index with a bare code and the
+    model's own severity (screen audits round 3, Local AC-01): twenty22's
+    `localbusiness-schema-missing` stood open at Critical, ranking the part 4
+    of 81, where the registry's default for the check is Medium. A bare code
+    two registries both carry names no one check, and is left alone."""
+    found = [sev for full, sev in default_severities().items()
+             if full.split("/", 1)[-1] == code]
+    if len(found) != 1:
+        return None
+    sev = found[0]
+    return (sev.get("FAIL") if isinstance(sev, dict) else sev) or None
+
+
+def capped_severity(code: str, severity: str) -> str:
+    """`severity`, lowered to the check's registered ceiling where it is above."""
+    ceiling = registered_ceiling(code)
+    sev = str(severity or "").lower()
+    if not ceiling or sev not in _RANK or ceiling not in _RANK:
+        return severity
+    return ceiling if _RANK.index(sev) < _RANK.index(ceiling) else severity
+
+
 def brief_only_checks() -> set[str]:
     return {f"{code}/{c}" for code, _sev, only in _registries() for c in only}
 

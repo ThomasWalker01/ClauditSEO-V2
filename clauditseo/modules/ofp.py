@@ -131,7 +131,11 @@ class OffPageModule:
                 subject="backlinks", affected_urls=[],
                 evidence={"unmeasured": dark, "needs": needs,
                           "providers_answering": (snap.sources if snap else []),
-                          "providers_failing": list(mine.values())},
+                          "providers_failing": list(mine.values()),
+                          # Nobody was asked (screen audits round 3, Backlinks
+                          # IP-02): a reading of what this depth requests, not
+                          # of what the providers hold.
+                          "unasked": unasked},
                 confidence=Confidence.LOW,
                 recommendation=(
                     "Check the credentials for the provider above — it is "
