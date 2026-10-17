@@ -82,12 +82,11 @@ export function LegendStrip({ pane, a, catalogueOpen = false, onCatalogue,
       <span className="key"><i className="anat-n n-info">n</i> what the precheck itself can say</span>
     </>);
   } else if (pane === "history") {
+    // Screen audits round 4 (audit launch IP-01): no open count is drawn on
+    // the Audit pane, so none is keyed.
     body = (<>
-      <b>Counts</b>
-      <span>open findings per part, on the landing and in the shop</span>
-      <span className="key"><i className="anat-n n-high">n</i> open</span>
-      <span className="key"><i className="anat-n n-info">n</i> info</span>
-      <span className="key"><i className="anat-n n-zero">0</i> nothing open</span>
+      <b>Scans</b>
+      <span>what each scope and depth reads, its page budget and its measured pace</span>
     </>);
   } else if (pane === "findings") {
     body = (<>

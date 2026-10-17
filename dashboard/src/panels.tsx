@@ -42,11 +42,14 @@ export const LOOK_TITLE: Record<LookState, string> = {
 
 /** The dot. Carries a screen-reader word as well as a colour, so the state is
  *  never conveyed by hue alone (WCAG 1.4.1). */
-export function LookDot({ state, label }: { state: LookState; label?: string }) {
+export function LookDot({ state, label, word: said }: { state: LookState; label?: string;
+                                                          word?: string }) {
   // `NOT_READ`, not "not analysed" (audit F14): this dot's screen-reader
-  // word was a fourth spelling of the state item 180 unified.
-  const word = { read: "analysed", live: "analysis running",
-                 none: NOT_READ, blocked: "blocked" }[state];
+  // word was a fourth spelling of the state item 180 unified. `word` where
+  // the row says more (screen audits round 4, shop IP-01: "not read / read
+  // 2026-10-03, 4 audits ago" on a row read on an earlier audit).
+  const word = said ?? { read: "analysed", live: "analysis running",
+                         none: NOT_READ, blocked: "blocked" }[state];
   return (
     <span className={`cat-dot cat-${state}`} title={label ?? LOOK_TITLE[state]}>
       <span className="sr-only">{word}</span>

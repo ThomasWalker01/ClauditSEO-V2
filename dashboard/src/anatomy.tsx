@@ -3741,7 +3741,10 @@ export function AnatomyView({ siteId, a, states, selected, onSelect, rerunAsk = 
                  sources: Record<string, number>;
                  /** Brief-only rows the sweep has not corroborated (brief v12
                   *  step AM): counted in `count` and `brief`, and tagged. */
-                 candidates: number };
+                 candidates: number;
+                 /** Of `candidates`, those waiting on the operator (screen
+                  *  audits round 4, Local UX-02). */
+                 toConfirm?: number };
   const [openCauses, setOpenCauses] = useState<ReadonlySet<string>>(new Set());
   /** Narrow the record to one check: open its cause group and scroll to it
    *  (brief v16g). Opening without scrolling would move a row the reader
@@ -3844,6 +3847,7 @@ export function AnatomyView({ siteId, a, states, selected, onSelect, rerunAsk = 
       const counted = mine.length ? mine.map((st) => wordOf(st.source)) : g.rows.map((f) => wordOf(f.source));
       g.sources = counted.reduce<Record<string, number>>((m, w) => ({ ...m, [w]: (m[w] ?? 0) + 1 }), {});
       g.candidates = mine.filter((st) => st.state === "candidate").length;
+      g.toConfirm = mine.filter((st) => st.state === "candidate" && st.to_confirm).length;
       // A cause built from the brief's check list has no sentence of its
       // own; its stored rows do (screen audits round 4, Local UX-01: three
       // "to confirm" rows on Local read as bare check ids over sentences
@@ -4700,9 +4704,17 @@ export function AnatomyView({ siteId, a, states, selected, onSelect, rerunAsk = 
                               {sourceWord(w)} {cause.sources[w]}
                             </Pill>
                           ))}
-                          {cause.candidates > 0 && (
+                          {/* Each state its own word (screen audits round 4,
+                              Local UX-02): "to confirm or seen once" named
+                              one state two ways beside the header's word. */}
+                          {(cause.toConfirm ?? 0) > 0 && (
                             <Pill tone="state-candidate" title={CANDIDATE_NOTE}>
-                              to confirm or seen once {cause.candidates}
+                              {candidateWord(true)} {cause.toConfirm}
+                            </Pill>
+                          )}
+                          {cause.candidates - (cause.toConfirm ?? 0) > 0 && (
+                            <Pill tone="state-candidate" title={CANDIDATE_NOTE}>
+                              {candidateWord(false)} {cause.candidates - (cause.toConfirm ?? 0)}
                             </Pill>
                           )}
                           {cause.count === 0 && (
@@ -4747,9 +4759,15 @@ export function AnatomyView({ siteId, a, states, selected, onSelect, rerunAsk = 
                           {/* `worst N here` only where the payload holds some
                               of them: a candidate-only cause (brief v12 step
                               AM) has its count and nothing beneath. */}
-                          {cause.shown > 0 && cause.shown < cause.count
-                            ? `${cause.count} finding${cause.count === 1 ? "" : "s"} · worst ${cause.shown} here`
-                            : `${cause.count} finding${cause.count === 1 ? "" : "s"}`}
+                          {/* An Info row is a reference note, not a finding
+                              (screen audits round 4, Backlinks IP-01): three
+                              "1 finding" cells stood under "0 open". */}
+                          {(() => {
+                            const noun = cause.severity === "info" ? "note" : "finding";
+                            const n = `${cause.count} ${noun}${cause.count === 1 ? "" : "s"}`;
+                            return cause.shown > 0 && cause.shown < cause.count
+                              ? `${n} · worst ${cause.shown} here` : n;
+                          })()}
                         </td>
                       </tr>
                       {/* Brief v3 step M (UX-15): a cause with two or more
@@ -5081,7 +5099,12 @@ export function AnatomyView({ siteId, a, states, selected, onSelect, rerunAsk = 
                               + "separate to start"}>
                     {it.tool}{" "}
                     {it.action === "planned" ? "not built yet"
-                      : it.action === "needs_key" ? "needs a key"
+                      : it.action === "needs_key" ? (
+                        // Its door (screen audits round 4, Backlinks AC-03):
+                        // the key was unnamed and there was no way to Admin.
+                        <>needs a key · <a href="#/admin?tab=keys"
+                                           onClick={goHandler("#/admin?tab=keys")}>Provider keys</a></>
+                      )
                       : "runs in every audit"}
                   </span>
                 ) : (

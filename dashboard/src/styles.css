@@ -4507,3 +4507,7 @@ summary { min-height: 24px; padding-block: 3px; box-sizing: border-box; }
 
 /* Screen audits round 4 (Home UX-02): the regressed count opens its rows. */
 .home-card-regressed { font-weight: 600; text-decoration: underline; }
+
+/* Screen audits round 4 (Glossary UX-02): the group index. */
+.glossary-index { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; margin: 0.5rem 0 1rem; }
+.glossary-index-go { font-size: 0.85rem; background: none; border: 0; padding: 0.2rem 0; min-height: 24px; min-width: 24px; color: var(--accent); text-decoration: underline; cursor: pointer; }

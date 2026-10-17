@@ -18,4 +18,6 @@ def test_priced_and_readable():
     brief = src.split("export function WriteBrief", 1)[1].split("\n}\n", 1)[0]
     assert "price={price}" in brief and "price={null}" not in brief
     assert "<Report title=" in brief and "read the brief" in brief
-    assert '.find((a) => a.tool === "content-brief")?.est_cost' in src
+    assert '.find((a) => a.tool === "content-brief");' in src
+    # The default model's figure first (screen audits round 4, Content UX-02).
+    assert "b?.est_cost_default ?? b?.est_cost" in src

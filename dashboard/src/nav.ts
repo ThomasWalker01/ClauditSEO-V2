@@ -159,7 +159,7 @@ export function withPart(hash: string, key: string): string {
 /** Navigate to `hash`, and make it observable even when nothing changed.
  *  `keepScope: false` is for the one caller that means to change the scope:
  *  the mode switch returning to the whole site. */
-export function goto(hash: string, { keepScope = true } = {}): void {
+export function goto(hash: string, { keepScope = true, replace = false } = {}): void {
   const raw = hash.startsWith("#") ? hash : `#${hash}`;
   const next = keepScope ? keepPageScope(raw) : raw;
   if (window.location.hash === next) {
@@ -173,7 +173,11 @@ export function goto(hash: string, { keepScope = true } = {}): void {
     }));
     return;
   }
-  window.location.hash = next;
+  // `replace` for a redirect (screen audits round 4, Workbench UX-01): a
+  // pushed entry put the retired address back under Back, which redirected
+  // again, so Back could not leave the site.
+  if (replace) window.location.replace(next);
+  else window.location.hash = next;
 }
 
 /** An `onClick` for an anchor that should also work when it points at here.

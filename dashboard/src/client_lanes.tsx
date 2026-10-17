@@ -24,7 +24,7 @@ import type { Lanes } from "./analyses";
 import { hasScore, scopeOf, scoreExtent, type RunStatus } from "./api";
 import { money } from "./components";
 import { LOADING_WORD, NOT_READ, entry } from "./glossary";
-import { goHandler, goto } from "./nav";
+import { goHandler, goto, withPageScope } from "./nav";
 import { worst } from "./severity";
 import { ageDays, ageTone, ageWords } from "./age";
 import { Pill } from "./pill";
@@ -426,8 +426,12 @@ export function ClientLanes({ siteId, page, current, categories, headline, lanes
                last: { finished_at?: string | null; started_at: string } | null } | null;
 }) {
   const recordAt = (state: string) => `#/sites/${siteId}?tab=all&state=${state}`;
+  // In page mode too (screen audits round 4, Landing UX-01): the Record reads
+  // the page scope from the address and narrows its rows to the page, so a
+  // state's figure opens exactly what it counted there.
   const link = (n: number, state: string, what: string) =>
-    !page && n > 0 ? { href: recordAt(state), name: `${n} ${what} — open the record` } : {};
+    n > 0 ? { href: page ? withPageScope(recordAt(state), page) : recordAt(state),
+              name: `${n} ${what} — open the record` } : {};
   /** Item 207: a figure's door to anywhere, under F-11's rule - it opens
    *  exactly what it counted, which is why each caller's `href` carries the
    *  narrowing that makes that true. No door onto nothing, and none in page

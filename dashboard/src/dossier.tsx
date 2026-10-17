@@ -264,6 +264,13 @@ export function PageDossierView({ siteId, url }:
                     <span className="muted dossier-measured">
                       {" · "}cleared {day(f.state_at)}; the summary is the last reading that raised it
                     </span>
+                  ) : f.state === "regressed" && f.state_at ? (
+                    // Screen audits round 4 (Run views AC-03): "regressed ·
+                    // measured 12 Oct" on rows that came back on 25 Sept.
+                    <span className="muted dossier-measured">
+                      {" · "}back since {day(f.state_at)}
+                      {f.measured_at ? `; last measured ${day(f.measured_at)}` : ""}
+                    </span>
                   ) : (f.analysed_at || f.measured_at) && (
                     <span className="muted dossier-measured">
                       {" · "}{f.analysed_at ? `analysed ${day(f.analysed_at)}`

@@ -170,8 +170,20 @@ export function GlossaryView({ term: asked }: { term?: string }) {
         what it means. The sentence shown beside a mark on a screen is the first
         sentence here.
       </p>
+      {/* Screen audits round 4 (Glossary UX-02): 122 entries in 25 groups
+          had no index; each group is a step away. Buttons, not hash links,
+          because the address is the router's. */}
+      <nav className="glossary-index" aria-label="Glossary groups">
+        {[...groups].map(([vocab]) => (
+          <button key={vocab} type="button" className="glossary-index-go"
+                  onClick={() => document.getElementById(`group-${vocab.replace(/\W+/g, "-")}`)
+                    ?.scrollIntoView({ block: "center" })}>
+            {vocab[0].toUpperCase() + vocab.slice(1)}
+          </button>
+        ))}
+      </nav>
       {[...groups].map(([vocab, es]) => (
-        <section key={vocab} className="glossary-group">
+        <section key={vocab} className="glossary-group" id={`group-${vocab.replace(/\W+/g, "-")}`}>
           <h3>{vocab[0].toUpperCase() + vocab.slice(1)}</h3>
           <dl>
             {es.map((e) => (

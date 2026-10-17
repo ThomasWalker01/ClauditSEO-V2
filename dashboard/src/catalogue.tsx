@@ -623,7 +623,13 @@ export function CatalogueList({ siteId, a, onClose, ask = null, onRerun }: {
                     </td>
                     <td className="muted crow-est">{estCell(x)}</td>
                     <td>
-                      <LookDot state={state} />{" "}
+                      <LookDot state={state}
+                               {...(x.state !== "ready" && (a.data?.categories ?? []).some((c) =>
+                                    (c.analysed ?? []).some((r) => r.tool === x.tool
+                                                                   && (r.audits_since ?? 0) > 0))
+                                 ? { word: "read on an earlier audit",
+                                     label: "Read on an earlier audit, not on this one" }
+                                 : {})} />{" "}
                       {x.state === "ready"
                         ? `read ${day(x.ran_at)}`
                         : x.state === "running" || a.queued.includes(x.tool) ? "running now"

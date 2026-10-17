@@ -199,12 +199,14 @@ function foot(rows: { label: string; pages: PageCount }[],
   })();
   const capped = rows.filter((r) => r.pages?.from === "budget");
   if (!capped.length) {
-    return "Page counts are this site's own, from the precheck." + same + times;
+    return "Page counts are this site's own: the site's size from its latest audit's "
+      + "crawl, the rest from the precheck." + same + times;
   }
   const named = capped.map((r) => `${r.label} (${r.pages!.n})`);
   const list = named.length === 1 ? named[0]
     : named.slice(0, -1).join(", ") + " and " + named[named.length - 1];
-  return `Page counts are this site's own, from the precheck — except `
+  return `Page counts are this site's own (the site's size from its latest audit's `
+    + `crawl, the rest from the precheck) — except `
     + `${list}, ${capped.length === 1 ? "which is a" : "which are"} page `
     + `budget${capped.length === 1 ? "" : "s"} this product sets, not `
     + `something measured here.` + same + times;

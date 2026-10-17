@@ -2827,8 +2827,15 @@ function ContentTabs({ facts, part, bounds, fixes, page }: {
           count. Outside the tablist, which holds only tabs. */}
       {page && fixes.length > 0 && (
         <SecondaryButton className="ctab-jump"
-                         onClick={() => document.getElementById("part-fixes")
-                           ?.scrollIntoView({ block: "center" })}>
+                         onClick={() => {
+                           // Focus goes with the scroll (screen audits round 4,
+                           // Content UX-03, WCAG 2.4.3): it stayed on the button.
+                           const el = document.getElementById("part-fixes");
+                           if (!el) return;
+                           el.scrollIntoView({ block: "center" });
+                           if (!el.hasAttribute("tabindex")) el.setAttribute("tabindex", "-1");
+                           el.focus({ preventScroll: true });
+                         }}>
           Fixes ({fixes.length})
         </SecondaryButton>
       )}
@@ -6298,8 +6305,13 @@ export function PartPage({ part, page, facts, states, sweep, lanes, pages, bound
       {part.key === "content" && (
         <p className="part-acts part-generate">
           <WriteBrief runId={runId} page={page}
-                      price={[...(lanes?.ready ?? []), ...(lanes?.available ?? [])]
-                        .find((a) => a.tool === "content-brief")?.est_cost ?? null} />
+                      // Priced as the Re-run beside it is (screen audits round
+                      // 4, Content UX-02): the default model's figure first.
+                      price={(() => {
+                        const b = [...(lanes?.ready ?? []), ...(lanes?.available ?? [])]
+                          .find((a) => a.tool === "content-brief");
+                        return b?.est_cost_default ?? b?.est_cost ?? null;
+                      })()} />
         </p>
       )}
       {error && <ErrorNote error={error} />}

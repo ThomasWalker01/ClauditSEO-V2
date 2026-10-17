@@ -114,7 +114,9 @@ def test_a_finished_runs_address_lands_on_the_history_view_with_its_banner(serve
         finally:
             b.close()
     assert got["hash"] == f"#/sites/{ids['site']}?tab=all&view=audits&run={ids['run']}", got["hash"]
-    assert got["banner"].startswith("Viewing as of audit"), got["banner"]
+    # The current audit says so (screen audits round 4, Run views IP-02);
+    # an older one reads "Viewing as of audit".
+    assert got["banner"].startswith(("Viewing as of audit", "This is the current audit")), got["banner"]
     assert got["back"] == f"#/sites/{ids['site']}?tab=all&view=audits", got["back"]
 
 

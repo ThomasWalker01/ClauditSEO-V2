@@ -962,6 +962,12 @@ def _refutes_itself(row: "Row", rep: str) -> str | None:
         return "the row's own evidence shows dateModified present"
     if row.check_id == "schema-author-missing" and "author" not in evidence.lower():
         return "the row's evidence does not mention author"
+    # Screen audits round 4 (Content AC-03): two `CNT/stale` verdicts closed
+    # the finding with the sentence that asserts it - "dateModified
+    # 2024-11-29 ..., older than the 730-day service threshold".
+    if (row.check_id == "stale" and (row.status or "").upper().startswith("PASS")
+            and re.search(r"\bolder than\b", evidence, re.I)):
+        return "the verdict's own evidence says the page is older than the threshold"
     if row.check_id.startswith("schema-") and _NAMES_NOTHING.match(evidence):
         return f"the row's evidence names no property or value of the check ({evidence!r})"
     pairs = [(int(f), int(w)) for f, w in _SRCSET_PAIR.findall(rep or "")]

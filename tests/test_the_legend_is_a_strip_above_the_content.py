@@ -104,7 +104,9 @@ def test_each_pane_has_its_own_strip_and_the_sidebar_none(browser, served):
     assert seen["findings"]["catalogueElsewhere"] == 0, seen["findings"]
     assert all(got["dots"] == 0 for got in seen.values()), seen
     assert all(got["catalogue"] == 0 for tab, got in seen.items() if tab != "findings"), seen
-    assert seen["history"]["text"].startswith("Counts"), seen["history"]["text"]
+    # The Audit pane keys its scans, not open counts it does not draw (screen
+    # audits round 4, audit launch IP-01).
+    assert seen["history"]["text"].startswith("Scans"), seen["history"]["text"]
     assert seen["all"]["text"].startswith("Filter"), seen["all"]["text"]
 
 

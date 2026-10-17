@@ -9,7 +9,7 @@ import {
 } from "./api";
 import { goHandler as navHandler, goto as navigate, historyRunFromHash, withPart } from "./nav";
 import { stamp } from "./client_lanes";
-import { PrecheckPanel, pagesGone, usePrecheck } from "./precheck";
+import { PrecheckPanel, pagesGone, usePrecheck, usePrecheckCompare } from "./precheck";
 import { DEPTHS, DepthKey, SCOPES, ScanMatrix, ScopeKey } from "./scanmatrix";
 import { DangerButton, SpendButton, SpendTarget } from "./spend";
 import { Legend, entry } from "./glossary";
@@ -1343,7 +1343,7 @@ function RecordAudits(props: Parameters<typeof AuditPane>[0]) {
   const run = asOf ? props.data.runs.find((r) => r.id === asOf) : undefined;
   // Item 166: the audit list's chips - severity and the delete that cannot
   // be undone - defined once above it, as on the Record's other view.
-  return run ? <HistoryView siteId={props.siteId} run={run} />
+  return run ? <HistoryView siteId={props.siteId} run={run} current={props.anat?.run === run.id} />
              : <>
                  {/* Screen audits round 4 (Record IP-04): no row on this
                      view carries a severity, so none is keyed. */}
@@ -1356,14 +1356,19 @@ function RecordAudits(props: Parameters<typeof AuditPane>[0]) {
  *  own record - its score, what it read, the findings it raised - under a
  *  banner naming it, with the way back to the current view. Nothing here is
  *  the Latest View, and nothing outside this tab reads the run. */
-function HistoryView({ siteId, run }: {
+function HistoryView({ siteId, run, current = false }: {
   siteId: string; run: { id: string; tier?: string | null; started_at: string | null };
+  current?: boolean;
 }) {
   const back = `#/sites/${siteId}?tab=all&view=audits`;
+  const named = [run.tier, stamp(run.started_at)].filter(Boolean).join(" · ");
   return (
     <>
       <p className="history-banner" role="status">
-        Viewing as of audit {[run.tier, stamp(run.started_at)].filter(Boolean).join(" · ")}
+        {/* Screen audits round 4 (Run views IP-02): "Viewing as of audit"
+            on the audit the bar calls current read as a past one. */}
+        {current ? <>This is the current audit, {named}, as it ran</>
+                 : <>Viewing as of audit {named}</>}
         {" · "}<a href={back} onClick={navHandler(back)}>back to current</a>
       </p>
       <RunDetailView runId={run.id} embedded />
@@ -2119,6 +2124,9 @@ export function LauncherView({ siteId }: { siteId: string }) {
    *  is run so every cell stops saying "run it" in the same breath. */
   const [preTick, setPreTick] = useState(0);
   const { data: precheck, loading: precheckLoading } = usePrecheck(siteId, preTick);
+  // Screen audits round 4 (audit launch UX-01): the pane said "older than the
+  // last audit · re-run" of the check the launcher drew in the nav tone.
+  const { data: precheckCompare } = usePrecheckCompare(siteId, preTick);
 
   useEffect(() => {
     if (meta && !dims.size) setDims(new Set(meta.dimensions.map((d) => d.code)));
@@ -2198,7 +2206,7 @@ export function LauncherView({ siteId }: { siteId: string }) {
           saying which. */}
       <Card>
         <h3>Choose a scan</h3>
-        <PrecheckPanel siteId={siteId} data={precheck ?? null}
+        <PrecheckPanel siteId={siteId} data={precheck ?? null} compare={precheckCompare ?? null}
                        onRan={() => setPreTick((t) => t + 1)} />
         <ScanMatrix siteId={siteId} precheck={precheck ?? null}
                     precheckLoading={precheckLoading}
@@ -2336,7 +2344,8 @@ export function LauncherView({ siteId }: { siteId: string }) {
         <h3>Start URL override <span className="muted">(optional, for staging/local)</span></h3>
         <input value={startUrl}
                onChange={(e) => { setStartUrl(e.target.value); setUrlVerdict(null); }}
-               placeholder="https://staging.example.com/" style={{ width: "100%" }} />
+               placeholder="https://staging.example.com/" style={{ width: "100%" }}
+               aria-label="Start URL override (optional, for staging or local)" />
         {/* WF-82. Pressing Run audit is how an operator used to find out
             whether a URL was acceptable, and a yes started a crawl and left
             a permanent run (`OPERATOR_ACTIONS.md:139`). This asks the same

@@ -91,7 +91,7 @@ export function screenName(hash: string): { screen: string; site: boolean; ownHe
  *  the sentence rather than nothing - a blank screen with a title is what a
  *  broken route looks like, and this one is not broken. */
 function Redirect({ to }: { to: string }) {
-  useEffect(() => { goto(to); }, [to]);
+  useEffect(() => { goto(to, { replace: true }); }, [to]);
   return <p className="muted">Taking you to where this moved…</p>;
 }
 

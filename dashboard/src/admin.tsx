@@ -167,10 +167,17 @@ function Money() {
   const savePrice = async () => {
     if (!model.trim()) return;
     setNote(null);
+    // Screen audits round 4 (Admin UX-05): "Number(x) || 0" saved a typo as
+    // a free model, which the Spend card and the cap then trusted.
+    const price = (s: string) => (s.trim() === "" ? 0 : Number(s));
+    const [inP, outP] = [price(inUsd), price(outUsd)];
+    if (![inP, outP].every((n) => Number.isFinite(n) && n >= 0)) {
+      setNote("Not saved — each price is a number of US dollars per million tokens, 0 or more.");
+      return;
+    }
     try {
       await api.put("/api/rates/model-price", {
-        model: model.trim(), input_usd: Number(inUsd) || 0,
-        output_usd: Number(outUsd) || 0 });
+        model: model.trim(), input_usd: inP, output_usd: outP });
     } catch (err) {
       // The fields keep what was typed. Clearing them on a failed save threw
       // away the operator's work and left nothing on screen to explain why.

@@ -124,8 +124,10 @@ export function AuditPane({ siteId, data, anat, setTick, show = "all" }: {
               names which figures the precheck produced and which are page
               budgets, and this sentence used to claim all of them for the
               precheck one line below it (UX-100). Its job is the link. */}
-          Measured counts come from the precheck above — re-check it there
-          if the site has changed. The by-hand setup —
+          {/* Screen audits round 4 (audit launch AC-02): the site's size
+              is read from the latest audit's crawl, not the precheck. */}
+          Measured counts come from the precheck above and the latest
+          audit&rsquo;s crawl — re-check the precheck if the site has changed. The by-hand setup —
           dimensions, tier, entry URL — is on
           the <a href={`#/sites/${siteId}/launch`}>launcher</a>.
         </p>
