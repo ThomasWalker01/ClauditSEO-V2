@@ -1,0 +1,15 @@
+-- What `measured_share` was computed against.
+--
+-- The figure means two different things depending on what the crawl knew.
+-- With no declared site total it is dimension coverage alone; with one it is
+-- that figure scaled by crawl breadth. Both went into one metric key at
+-- confidence 'high', so five rows for one site read as a series — 0.2879 and
+-- 0.9362 both at T2, describing different quantities, with no column that
+-- could say so.
+--
+-- Same shape as 0012 and for the same reason: the run knew the fact and the
+-- snapshot did not record it, so the trend could not tell. Existing rows keep
+-- NULL, which reads as "unknown" rather than being back-filled with a guess —
+-- nothing in the database records which basis a row written before this
+-- column used.
+ALTER TABLE metric_snapshots ADD COLUMN scope TEXT;

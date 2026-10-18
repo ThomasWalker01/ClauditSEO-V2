@@ -1,0 +1,87 @@
+[
+  {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    "name": "Acme",
+    "legalName": "Acme Lending Pty Ltd",
+    "url": "https://www.acme.test",
+    "logo": "https://www.acme.test/assets/acme-logo.svg",
+    "description": "A made-up lender for this fixture, offering business loans from $10,000 to $1,000,000.",
+    "telephone": "+61 3 9000 0000",
+    "email": "hello@acme.test",
+    "address": {
+      "@type": "PostalAddress",
+      "streetAddress": "[1 Example St]",
+      "addressLocality": "Exampleton",
+      "addressRegion": "VIC",
+      "postalCode": "[0000]",
+      "addressCountry": "AU"
+    },
+    "areaServed": "AU",
+    "foundingDate": "2015",
+    "sameAs": [
+      "https://www.facebook.com/acmelending",
+      "https://www.linkedin.com/company/acme",
+      "https://www.instagram.com/acme_/",
+      "https://x.com/AcmeLending"
+    ]
+  },
+  {
+    "@context": "https://schema.org",
+    "@type": "FinancialProduct",
+    "name": "Acme Business Loans",
+    "description": "Business loans from $10,000 to $1,000,000, decided within two business days. Products include term loans, equipment finance and a line of credit.",
+    "url": "https://www.acme.test",
+    "provider": {
+      "@type": "Organization",
+      "name": "Acme",
+      "url": "https://www.acme.test"
+    }
+  },
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "What loans does Acme offer?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Acme offers term loans, equipment finance and a line of credit, from $10,000 to $1,000,000."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "How long does Acme take to decide?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Most applications are decided within two business days of the documents arriving."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What do I need to apply to Acme?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "A registered business, a year of trading and your last six months of bank statements."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Does Acme check my credit?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes, once you choose to proceed with an offer."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "How much can I borrow from Acme?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "From $10,000 to $1,000,000, depending on the business's revenue and trading history."
+        }
+      }
+    ]
+  }
+]

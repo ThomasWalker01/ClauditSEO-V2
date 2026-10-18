@@ -1,0 +1,14 @@
+-- Keep the model's raw answer beside what the reader made of it (item 148;
+-- question channel 2026-09-13, answered).
+--
+-- The stored `report` is `parsed.body` and `contract` is the parse: the fenced
+-- block they came from is gone by the time either is written. So when the
+-- first real International run on Acme met a reader with three defects
+-- (`suppressed` stringified, `locales` dropped, wrong fix field names), the
+-- only way to a correct contract was a second paid run. With the raw text kept,
+-- the next reader defect is a re-parse.
+--
+-- NULL means never captured: every row written before this column, the same
+-- convention `figures_withheld` uses. Read by nothing in the product; it
+-- exists for re-parsing under a corrected reader and for nothing else.
+ALTER TABLE expert_reports ADD COLUMN raw TEXT;

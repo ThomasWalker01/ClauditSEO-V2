@@ -1,0 +1,16 @@
+-- How many derived figures the cap dropped, alongside the ones it kept.
+--
+-- `expert_reports.figures` holds the capped list. The cap is wanted -- the
+-- panel is a list a person reads, not a log -- but it was silent: forty
+-- figures on screen could mean forty were found or that fifty-five were and
+-- fifteen are unlisted, and the panel tells the operator to spot-check these
+-- before quoting them to a client. Those are different instructions.
+--
+-- NULL is not zero here, and the distinction is the point. Rows written
+-- before this column existed keep NULL, meaning "never recorded" -- their
+-- briefs were capped or not and nothing on disk can now say which. Deriving a
+-- zero for them would be inventing the reassuring answer, which is the move
+-- migration 0016 refused for the token split and for the same reason. A row
+-- written after this stores a real count, so 0 there means "nothing was
+-- withheld, and that is measured".
+ALTER TABLE expert_reports ADD COLUMN figures_withheld INTEGER;

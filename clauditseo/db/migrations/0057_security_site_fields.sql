@@ -1,0 +1,11 @@
+-- Item 143 (brief v20 step BD): the Security brief's `stack` - origin, edge
+-- and CMS as the operator states them, so a fix can name the layer it is set
+-- at. NULL means the brief infers the stack from headers and labels it as
+-- inferred. `cdn_or_waf` and `third_party_map` already exist (0050s) and are
+-- now editable on Admin > Sites beside it.
+--
+-- `active_probing_authorised`, `reputation_source` and
+-- `plugin_directory_feed` are deliberately NOT added: nothing in this build
+-- acts on them, and a stored authorisation that performs nothing would read
+-- as a probe that ran.
+ALTER TABLE sites ADD COLUMN stack TEXT;

@@ -1,0 +1,16 @@
+-- The floor under the bytes-per-pixel rule, as a stated parameter
+-- (operator, 2026-09-06).
+--
+-- It was a constant in `onp.py` with a comment: below 20 KB a badly
+-- encoded image is a badly encoded thumbnail, and re-encoding it saves
+-- bytes nobody can measure on a connection. True, and a rule the
+-- product applies and tells nobody about is a rule an operator cannot
+-- argue with. `images.md` now describes it and this is where a site
+-- says its own number.
+--
+-- Its own migration rather than appended to 0042, because 0042 exists
+-- on disk already and a migration file that grows after it has run is
+-- a change no database applies.
+--
+-- NULL means the engine's default.
+ALTER TABLE sites ADD COLUMN budget_image_floor_kb TEXT;

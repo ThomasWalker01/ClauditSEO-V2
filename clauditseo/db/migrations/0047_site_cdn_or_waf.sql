@@ -1,0 +1,13 @@
+-- Item 137 (brief v18 step AZ, task 4): the CDN or WAF in front of the origin.
+--
+-- The UA matrix can see that a crawler's user-agent gets a 403/429/999, but not
+-- WHERE the rule lives — an origin config, a Cloudflare firewall rule, an
+-- Akamai bot manager. Without that the fix ("allowlist these agents at the
+-- edge") has no address, so `ua-server-refusal` is HELD until this field names
+-- the edge. NULL means not stated, and the crawl brief marks the check
+-- not_assessable rather than guessing where the refusal comes from.
+--
+-- Prose, not a fixed vocabulary: the answer differs per host ("Cloudflare",
+-- "Akamai Bot Manager", "AWS WAF", "origin nginx") and a fixed set would be
+-- wrong on most of them.
+ALTER TABLE sites ADD COLUMN cdn_or_waf TEXT;

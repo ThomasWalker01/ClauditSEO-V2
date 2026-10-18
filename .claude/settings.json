@@ -1,0 +1,17 @@
+{
+  "_comment": "loop-kit: hooks that hold the loop's rules mechanically where prose did not. PreToolUse/Bash -> scripts/hooks/deny_background_bash.py denies run_in_background for every loop worker (DISCIPLINE rule 15; 2026-08-23 07:00 and 11:50). Project settings are shared by every session in this repo, interactive ones included - an interactive session that wants a background command in this tree will be told no, which is the right answer while the loop runs here.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -f \"$CLAUDE_PROJECT_DIR/scripts/hooks/deny_background_bash.py\" ]; then python \"$CLAUDE_PROJECT_DIR/scripts/hooks/deny_background_bash.py\"; fi",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

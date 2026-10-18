@@ -1,0 +1,149 @@
+/* The Headings part page's two blocks (brief v16d): the page's outline as a
+   ladder, and which skip sits on which template across the site.
+
+   A sheet of its own for the reason `crawl_depth.css` and `images_budget.css`
+   give: this is one part's layout, and folding a ladder's rungs and a
+   template table into `styles.css` puts them in front of every other screen.
+   `main.tsx` imports it, which is how `test_dashboard_a11y._stylesheets`
+   finds it.
+
+   Every colour is a token `styles.css` already declares. The mockup names
+   `--ink`, `--warn`, `--bad`, `--mute` and `--edge`; this repository's names
+   for those meanings are `--text`, `--warn-strong`, `--danger`,
+   `--text-muted` and `--border-strong`, and inventing a second set is the
+   thing item 140 exists to remove. */
+
+/* --- block 1, the outline of this page ----------------------------- */
+
+/* The card holding the site block, in the part page's "now" position, and
+   the card the page's ladder opens. Both are `.now-card` first; these carry
+   nothing but the hook the guards select on. */
+.ho-blocks, .ho-now { display: block; }
+
+.ho-figure { margin: 0 0 4px; }
+.ho-cap { color: var(--text-muted); font-size: 13px; margin-bottom: 8px; }
+.ho-cap b { color: var(--text); }
+
+/* Capped at the width it drew beside the sidebar (brief v24 step BO widened
+   the column by ~300px): the viewBox is 560 wide, and scaled past ~1.6x its
+   type outgrows the page and a rung's centre falls on empty ground. */
+.ho-ladder { display: block; width: 100%; max-width: 900px; height: auto; overflow: visible; }
+
+/* The H1…H5 column labels. Quiet, because they are the ruler and not the
+   reading; `--text-muted` and not a faded `--text-faint`, which measures
+   under 4.5:1 on a card. */
+.ho-col { fill: var(--text-muted); font-size: 10.5px; }
+
+.ho-text { fill: var(--text-muted); font-size: 12.5px; }
+.ho-mark { stroke: var(--text); stroke-width: 2.5; stroke-linecap: round; }
+/* The connector down the parent column: a hairline, so it joins the rungs
+   without competing with them - but `--edge` and not `--border-strong`,
+   which measures 1.58:1 on a card in both themes and owes 3:1 as a graphic
+   that carries meaning. `--edge` is the product's own quiet-but-legible
+   grey and `images_budget.css` reached for it for the same reason. */
+.ho-link { stroke: var(--edge); }
+
+/* An H1 is the page's subject, so its rung is the heaviest mark on the
+   ladder and its text is the only one at full strength. */
+.ho-heading.ho-ink .ho-text { fill: var(--text-muted); }
+.ho-heading .ho-mark { stroke: var(--text); }
+.ho-rung.ho-heading:first-of-type .ho-mark { stroke-width: 4; }
+
+/* A skipped level: the rung that should be there, drawn as the gap it is. */
+.ho-gap .ho-mark { stroke: var(--warn-strong); stroke-width: 2;
+                   stroke-dasharray: 6 5; }
+.ho-gap .ho-text { fill: var(--warn-strong); font-size: 12px; }
+
+/* No H1 at all, at the H1 position and before everything. */
+.ho-no-h1 .ho-mark { stroke: var(--danger); stroke-width: 3;
+                     stroke-dasharray: 6 5; }
+.ho-no-h1 .ho-text { fill: var(--danger); font-size: 12.5px; }
+
+/* A heading a check named - the one that skipped, the second H1. The mark
+   takes the warn token; the text stays legible, because the finding is the
+   heading's own words and colour is not the only thing saying so (the rung's
+   accessible name carries the word "flagged"). */
+.ho-heading.ho-warn .ho-mark { stroke: var(--warn-strong); }
+.ho-heading.ho-warn .ho-text { fill: var(--warn-strong); }
+
+/* A heading outside the main region, which the list this replaced dimmed the
+   same way. A fact about the document, not a verdict on it. */
+.ho-outside .ho-text { fill: var(--text-faint); font-style: italic; }
+
+.ho-live { cursor: pointer; }
+.ho-live:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ho-live:hover .ho-text { fill: var(--accent); }
+
+.ho-more { margin: 8px 0 0; font-size: 12.5px; }
+
+.ho-legend { display: flex; flex-wrap: wrap; gap: 18px; margin: 10px 0 0;
+             font-size: 12.5px; color: var(--text-muted); }
+.ho-legend i { display: inline-block; width: 14px; height: 3px; margin-right: 6px;
+               vertical-align: 3px; }
+.ho-key-ink { background: var(--text); }
+/* The legend's own swatch for a skipped level is the dashed rule it names,
+   not a solid block: a solid warn block would be the one thing on the screen
+   that is warn and not dashed. */
+.ho-key-warn { background: none; height: 0;
+               border-top: 2px dashed var(--warn-strong); }
+.ho-key-bad { background: var(--danger); }
+
+.ho-none { margin: 0; }
+
+/* --- block 2, which skip on which template -------------------------- */
+
+.ho-site { margin: 0 0 18px; }
+.ho-site .ho-head { margin: 0 0 4px; }
+.ho-lede { margin: 0 0 10px; }
+.ho-absent, .ho-clean { margin: 0; }
+
+.ho-grid { width: 100%; border-collapse: collapse; margin-top: 4px;
+           font-size: 13px; }
+.ho-grid th { color: var(--text-muted); font-weight: 500; text-align: left;
+              padding: 6px 10px; border-bottom: 1px solid var(--border);
+              font-size: 12px; }
+.ho-grid td { padding: 7px 10px; border-bottom: 1px solid var(--border);
+              vertical-align: middle; }
+.ho-barcol { width: 44%; }
+/* The bar and its count in one cell, because they are one fact: the bar
+   takes the room left over and the number sits at the end of it, so the
+   figures still line up down the column. */
+.ho-pages { display: flex; align-items: center; gap: 10px; min-width: 0; }
+/* The bar may shrink, and is capped at the cell (item 136m). Its width is
+   set from the page count, so on Acme's `/blog/*` row - 146 pages, the
+   largest template on the site - it ran 22px past a 440px cell at every
+   column width. `flex: 0 0 auto` had told it never to give any of that back,
+   so the table pushed its own column wider instead. */
+.ho-pages .ho-bar { flex: 0 1 auto; max-width: 100%; }
+.ho-n { margin-left: auto; font-weight: 500;
+        font-variant-numeric: tabular-nums; }
+
+.ho-shape { font-size: 12.5px; }
+.ho-shape-warn { color: var(--warn-strong); }
+.ho-shape-bad { color: var(--danger); }
+.ho-tpl code { color: var(--text); }
+
+.ho-bar { display: inline-block; vertical-align: middle; height: 10px;
+          border-radius: 2px; min-width: 2px; }
+.ho-bar-warn { background: var(--warn-strong); }
+.ho-bar-bad { background: var(--danger); }
+
+/* The collapsed one-page rows carry no bar: a bar for a count of one is a
+   sliver that reads as a rounding error, and the row is a tally rather than
+   a template. */
+.ho-ones td { color: var(--text-muted); }
+
+.ho-closing { margin: 10px 0 0; font-size: 12.5px; }
+
+/* --- the list beneath the ladder ------------------------------------ */
+
+/* The same outline read line by line, which is what the card drew before
+   v16d and still draws: it carries the brief's per-heading judgements, the
+   crawl's own cap and the marked position FEATURES.md F-07 requires be
+   taken from the finding rather than recomputed. Its own small heading, so
+   the two are one card saying two things rather than one thing twice. */
+.out-detail { margin: 18px 0 6px; font-size: 13px; color: var(--text-muted);
+              font-weight: 500; }
+/* The whole rung is the control, not only its stroke and its words: the gap
+   between them was dead ground, and a press there did nothing. */
+.ho-rung.ho-live { pointer-events: bounding-box; }

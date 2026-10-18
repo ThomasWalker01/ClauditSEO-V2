@@ -1,0 +1,28 @@
+-- The frame a truncated `affected_urls` list was cut from.
+--
+-- UX-93 / `QUESTIONS.md` Q-26, answered by the operator on 2026-08-29:
+-- *store the frame*. Four emitters cap `affected_urls` before it is stored
+-- (`tec.sitemap-coverage`, `loc.nap-inconsistent`, `prf.caching-headers`,
+-- `prf.third-party-scripts`) and `runs.anatomy_view` caps what they stored a
+-- second time at ten. Neither cut left any record of its size, so the section
+-- screen stated the second cap against the first as though the first were the
+-- total that exists: `www.acme.com.au` read *"51 of 272 sitemap URL(s) were
+-- not reachable"*, `PAGES 20`, and *"Showing 10 of 20 - the rest are stored"*.
+-- Thirty-one of those fifty-one were never stored anywhere.
+--
+-- **NULL is tolerated and it means unknown, not zero and not "whole".** Every
+-- row written before this migration carries no frame, and there is nothing to
+-- backfill it from: the URLs the emitter dropped were dropped, so the count
+-- cannot be recovered from the row, from the crawl evidence, or from the
+-- summary in the general case. Defaulting to `length(affected_urls)` was the
+-- obvious backfill and is exactly the false claim this work removes - it would
+-- assert "the list is whole" over the rows least able to support it. So
+-- `anatomy_view` sends `total: null` for those and the screen says nothing
+-- about a total it does not have, which is the behaviour the provenance
+-- invariant asks for when the frame is absent.
+--
+-- Rows written from here on always carry a number: `complete_run` and
+-- `record_expert_findings` both write `len(affected_urls)` when the emitter
+-- declared no cap, so "no frame stored" stays a statement about age rather
+-- than becoming a second thing it could mean.
+ALTER TABLE findings ADD COLUMN affected_total INTEGER;

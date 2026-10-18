@@ -1,0 +1,17 @@
+-- Which renderer produced a stored deliverable.
+--
+-- The document is the artefact that leaves the building, and it is the one
+-- thing the app could not say anything about once written. Analyses already
+-- carry "N audits since"; client reports carried nothing, so a file showing
+-- a defect the code no longer produces sat in the list looking current.
+--
+-- That is not hypothetical. Six stored deliverables read "Title duplicate on
+-- 2 pages" above a list of thirteen URLs, and named a third-party 403 in
+-- client-facing prose. Both are fixed in the renderer. Neither is fixed in
+-- the files, and nothing on the screen distinguished them.
+--
+-- NULL is the honest value for every existing row: they were written before
+-- this was recorded, so the app does not know which renderer made them and
+-- must not claim otherwise. "Unknown" and "current" are different states,
+-- and only one of them is safe to send to a client.
+ALTER TABLE reports ADD COLUMN renderer_version TEXT;

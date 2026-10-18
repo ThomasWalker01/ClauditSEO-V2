@@ -1,0 +1,114 @@
+/* How deep the crawl had to go — the Crawl & sitemaps depth block (brief
+   v16b).
+
+   Its own sheet, for the reason `schema_graph.css` gives: one block's worth
+   of chart geometry folded into the shared file would put it in front of
+   every other screen. Every selector is namespaced `.cd-`, and
+   `test_the_crawl_depth_block_is_drawn.py` refuses one that is not.
+
+   THE GEOMETRY, which is the only thing in this file worth explaining.
+
+   A bar's height arrives as `--cd-f`, a fraction of the tallest bar, and
+   this file turns it into a length. That split is deliberate: the component
+   knows the counts and this file knows how tall the plot is and how much
+   room the count above and the label below take, so neither can place the
+   baseline where the other did not. Every vertical measure below is
+   therefore written once, as `--cd-plot`, `--cd-foot` and `--cd-cap`.
+
+   TONE. Two existing semantic tokens and no new colour (item 140's rule,
+   applied before item 140 lands): `--good` for a depth a crawler and a
+   person can both reach, `--warn-strong` past three. Fill is a count here,
+   which is the side of the fill/outline rule counts sit on; the selected
+   bar is an outline, because "you are reading this one" is a state. */
+
+.cd-root {
+  /* The plot, the strip the axis labels sit in, and the strip the count
+     above the tallest bar needs. A bar is `--cd-plot` tall in total. */
+  --cd-plot: 12rem;
+  --cd-foot: 1.6rem;
+  --cd-cap: 1.5rem;
+  /* The air between bars, in one place: the dashed rule is drawn half a gap
+     to the left of the bar it precedes, so the two cannot part company. */
+  --cd-gap: 1.2rem;
+  margin: .6rem 0 1rem;
+}
+.cd-head { font-size: .95rem; margin: 0 0 .15rem; }
+/* The narrow-run qualifier reads as an aside on the heading rather than as
+   part of the claim, the same way the score column's caption does. */
+.cd-narrow { font-weight: 400; color: var(--text-muted); }
+.cd-note { margin: 0 0 .8rem; font-size: .85rem; max-width: 60rem; }
+.cd-absent { margin: 0; font-size: .85rem; }
+
+/* No gridlines: one baseline, drawn on the chart rather than on the bars,
+   so it is continuous across a bar whose count is zero. */
+.cd-chart {
+  position: relative; display: flex; align-items: flex-end; gap: var(--cd-gap);
+  padding: 0 .1rem;
+}
+.cd-chart::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: var(--cd-foot);
+  border-top: 1px solid var(--border-strong);
+}
+
+/* A bar is a control, so it is a button. `styles.css` paints a bare
+   `button` as this app's solid accent control — white on accent — which is
+   the defect brief v16a step AT-b found by contrast measurement rather than
+   by reading, so the reset here is not decoration. */
+.cd-bar {
+  position: relative; flex: 1 1 0; min-width: 0;
+  height: var(--cd-plot); padding: 0; margin: 0;
+  background: none; border: 0; border-radius: 0; box-shadow: none;
+  color: var(--text); font: inherit; cursor: pointer;
+}
+.cd-bar:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.cd-fill {
+  position: absolute; left: 0; right: 0; bottom: var(--cd-foot);
+  height: calc((100% - var(--cd-foot) - var(--cd-cap)) * var(--cd-f));
+  background: var(--good); border-radius: 3px 3px 0 0;
+}
+.cd-deep .cd-fill { background: var(--warn-strong); }
+
+/* The count, above its own bar rather than on a y axis. Placed from the
+   same fraction the fill is, so it rides the top of the bar exactly. */
+.cd-n {
+  position: absolute; left: 0; right: 0; text-align: center;
+  bottom: calc(var(--cd-foot) + .15rem
+               + (100% - var(--cd-foot) - var(--cd-cap)) * var(--cd-f));
+  font-size: .8rem; font-weight: 600; color: var(--text);
+}
+.cd-label {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  font-size: .74rem; line-height: 1.2; color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+.cd-on .cd-label { color: var(--text); font-weight: 600; }
+
+/* Selected: an outline, because it is a state. `outline` rather than a
+   border so the bar does not change size when it is picked. */
+.cd-on .cd-fill { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* The dashed rule, drawn on the first bar past three rather than as an
+   element of its own, so it cannot drift from the bar it divides. A crawl
+   no deeper than three has no such bar and therefore no rule, which is the
+   degradation the block wants and not a second code path. */
+.cd-rule::before {
+  content: ""; position: absolute; left: calc(var(--cd-gap) / -2);
+  top: 0; bottom: var(--cd-foot);
+  border-left: 1px dashed var(--warn-strong);
+}
+.cd-ruleword {
+  position: absolute; left: .1rem; top: 0; white-space: nowrap;
+  font-size: .7rem; color: var(--warn-strong);
+}
+
+.cd-picked { margin: .5rem 0 0; font-size: .85rem; color: var(--text-strong); }
+/* The way out of the narrowing, as a link and not as this app's accent
+   button: it undoes a filter, and nothing on this block is the thing to
+   press. */
+.cd-clear {
+  padding: 0; margin: 0; border: 0; background: none; box-shadow: none;
+  font: inherit; color: var(--accent); text-decoration: underline;
+  cursor: pointer;
+}
+

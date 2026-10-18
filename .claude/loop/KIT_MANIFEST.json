@@ -1,0 +1,17 @@
+{
+  ".claude/agents/auditor.md": "4eec9a5846b03171895a84ae3ae55d90541067a5728f61d346f8474500c3b81f",
+  ".claude/DISCIPLINE.md": "f93e1b025d9994549dca5851554563a03ac78208d9dda6568a519d1808dc0f19",
+  ".claude/settings.json": "8a6e617a2ad73f7a9854834cb014fa311ef61b17a871ec09a1f1e33069dcc4e2",
+  ".claude/skills/audit-fix/SKILL.md": "12603daa4e99ee60d95a9dcb7dd85790e162864104553c9f8fdae3f2967cdafc",
+  ".claude/skills/backlog/SKILL.md": "e4a8bd224c2e86710b114aa9687cdd3e42bd0fba08eed8db96d16697d0eca6e6",
+  ".claude/skills/backlog-plan/SKILL.md": "65aa797609b4ed1d4ea5d2832f5159193539fd93c0959a9b8d2fe6d5e63554e0",
+  ".claude/skills/feature/SKILL.md": "714cc8f1ed88b12ab5854c3b6079052e129ec4e4d85c8966905c9a9cce76d49f",
+  ".claude/skills/relay/SKILL.md": "8dc7faf82ca39f8eee1b8b5dca0dbea4915d0777f233b6ca7842c9f160c5db86",
+  "scripts/check_anchors.py": "cd1a234cff84c775db1588cbbdb81b4cfb56337e2efaa41b1df20bfd7d497551",
+  "scripts/hooks/deny_background_bash.py": "ea85f0110b281ab471c5b24439b87ef4187ddd5db7ec30aae47b5081dfd9ed47",
+  "scripts/prove_fail.py": "16a74a4a77a70ac68a0a01ca9967b42b4b989c42bbc1f5755a65665ebd4f5227",
+  "scripts/reconcile_findings.py": "9c8b27f87c6e05c6b307233609713ed0acb3808ffcf77c4cf8701af5f33d18bf",
+  "scripts/round-marker.ps1": "5aef8755ffa64ebfbe0f5bc0cbb5ccfe232cd9860ef6adb6cc44d9daeeeeb3f1",
+  "scripts/timings-append.ps1": "ef9dbeeab972416db905b7df059249465e16c490b30360c96f102044df3311bd",
+  "tests/test_loop_instructions.py": "56f8b574b2d405d3dc1eb6b2377768089f850c33290e6cb1c389880d8547acfd"
+}

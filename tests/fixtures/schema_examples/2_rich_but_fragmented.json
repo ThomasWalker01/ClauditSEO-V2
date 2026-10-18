@@ -1,0 +1,636 @@
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": [
+        "RoofingContractor",
+        "LocalBusiness"
+      ],
+      "@id": "https://summit-roofing-fixture.com.au/#localbusiness",
+      "name": "Summit Roofing",
+      "legalName": "Summit Roofing (VIC) Pty Ltd",
+      "url": "https://summit-roofing-fixture.com.au/",
+      "logo": "https://summit-roofing-fixture.com.au/wp-content/uploads/2025/01/logo.svg",
+      "image": "https://summit-roofing-fixture.com.au/wp-content/uploads/2025/01/logo.svg",
+      "description": "A made-up roofing business for this fixture. Tiling, metal roofing in COLORBONDÂ® steel, repairs and gutters.",
+      "telephone": "+61-3-5550-0142",
+      "email": "quotes@summit-roofing-fixture.com.au",
+      "address": {
+        "@type": "PostalAddress",
+        "streetAddress": "1 Fixture Lane",
+        "addressLocality": "Melbourne",
+        "addressRegion": "VIC",
+        "postalCode": "3000",
+        "addressCountry": "AU"
+      },
+      "geo": {
+        "@type": "GeoCoordinates",
+        "latitude": -37.81,
+        "longitude": 144.96
+      },
+      "hasMap": "https://www.google.com/maps?cid=1000000000000000001",
+      "openingHoursSpecification": [
+        {
+          "@type": "OpeningHoursSpecification",
+          "dayOfWeek": [
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday"
+          ],
+          "opens": "08:00",
+          "closes": "16:00"
+        }
+      ],
+      "areaServed": [
+        {
+          "@type": "City",
+          "name": "Fixture Suburb 1"
+        },
+        {
+          "@type": "City",
+          "name": "Fixture Suburb 2"
+        },
+        {
+          "@type": "City",
+          "name": "Fixture Suburb 3"
+        },
+        {
+          "@type": "City",
+          "name": "Fixture Suburb 4"
+        },
+        {
+          "@type": "City",
+          "name": "Fixture Suburb 5"
+        },
+        {
+          "@type": "City",
+          "name": "Fixture Suburb 6"
+        },
+        {
+          "@type": "City",
+          "name": "Fixture Suburb 7"
+        },
+        {
+          "@type": "City",
+          "name": "Fixture Suburb 8"
+        },
+        {
+          "@type": "City",
+          "name": "Fixture Suburb 9"
+        },
+        {
+          "@type": "City",
+          "name": "Fixture Suburb 10"
+        },
+        {
+          "@type": "City",
+          "name": "Fixture Suburb 11"
+        },
+        {
+          "@type": "City",
+          "name": "Fixture Suburb 12"
+        },
+        {
+          "@type": "City",
+          "name": "Fixture Suburb 13"
+        },
+        {
+          "@type": "City",
+          "name": "Fixture Suburb 14"
+        },
+        {
+          "@type": "City",
+          "name": "Fixture Suburb 15"
+        },
+        {
+          "@type": "City",
+          "name": "Fixture Suburb 16"
+        },
+        {
+          "@type": "City",
+          "name": "Fixture Suburb 17"
+        },
+        {
+          "@type": "City",
+          "name": "Fixture Suburb 18"
+        },
+        {
+          "@type": "City",
+          "name": "Fixture Suburb 19"
+        },
+        {
+          "@type": "City",
+          "name": "Fixture Suburb 20"
+        },
+        {
+          "@type": "City",
+          "name": "Fixture Suburb 21"
+        },
+        {
+          "@type": "City",
+          "name": "Fixture Suburb 22"
+        },
+        {
+          "@type": "City",
+          "name": "Fixture Suburb 23"
+        },
+        {
+          "@type": "City",
+          "name": "Fixture Suburb 24"
+        },
+        {
+          "@type": "City",
+          "name": "Fixture Suburb 25"
+        },
+        {
+          "@type": "City",
+          "name": "Fixture Suburb 26"
+        },
+        {
+          "@type": "City",
+          "name": "Fixture Suburb 27"
+        },
+        {
+          "@type": "City",
+          "name": "Fixture Suburb 28"
+        },
+        {
+          "@type": "City",
+          "name": "Fixture Suburb 29"
+        }
+      ],
+      "serviceArea": {
+        "@type": "GeoCircle",
+        "geoMidpoint": {
+          "@type": "GeoCoordinates",
+          "latitude": -37.81,
+          "longitude": 144.96
+        },
+        "geoRadius": "60000"
+      },
+      "sameAs": [
+        "https://www.facebook.com/summit-roofing-fixture/",
+        "https://www.instagram.com/summit-roofing-fixture/",
+        "https://www.linkedin.com/company/summit-roofing-fixture/",
+        "https://www.tiktok.com/@summit_roofing_fixture",
+        "https://www.google.com/maps?cid=1000000000000000001"
+      ],
+      "parentOrganization": {
+        "@id": "https://summit-roofing-fixture.com.au/#organization"
+      },
+      "founder": {
+        "@id": "https://summit-roofing-fixture.com.au/#person-sam-fixture"
+      },
+      "foundingDate": "2012",
+      "aggregateRating": {
+        "@type": "AggregateRating",
+        "ratingValue": "4.8",
+        "reviewCount": 77,
+        "bestRating": "5",
+        "worstRating": "1"
+      },
+      "hasOfferCatalog": {
+        "@type": "OfferCatalog",
+        "name": "Roofing Services",
+        "itemListElement": [
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Roof service 1",
+              "provider": {
+                "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+              }
+            }
+          },
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Roof service 2",
+              "provider": {
+                "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+              }
+            }
+          },
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Roof service 3",
+              "provider": {
+                "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+              }
+            }
+          },
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Roof service 4",
+              "provider": {
+                "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+              }
+            }
+          },
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Roof service 5",
+              "provider": {
+                "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+              }
+            }
+          },
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Roof service 6",
+              "provider": {
+                "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+              }
+            }
+          },
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Roof service 7",
+              "provider": {
+                "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+              }
+            }
+          },
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Roof service 8",
+              "provider": {
+                "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+              }
+            }
+          },
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Roof service 9",
+              "provider": {
+                "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+              }
+            }
+          },
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Roof service 10",
+              "provider": {
+                "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+              }
+            }
+          },
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Roof service 11",
+              "provider": {
+                "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+              }
+            }
+          },
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Roof service 12",
+              "provider": {
+                "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+              }
+            }
+          },
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Roof service 13",
+              "provider": {
+                "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+              }
+            }
+          },
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Roof service 14",
+              "provider": {
+                "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+              }
+            }
+          },
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Roof service 15",
+              "provider": {
+                "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+              }
+            }
+          }
+        ]
+      },
+      "knowsAbout": [
+        "Roof Tiling",
+        "Metal Roofing",
+        "COLORBONDÂ® steel",
+        "ZINCALUMEÂ® steel",
+        "Roof Restoration",
+        "Roof Repairs",
+        "Gutter Services",
+        "Leak Detection",
+        "Heritage roof restoration",
+        "Emergency Roof Repairs"
+      ],
+      "slogan": "Roofs done properly",
+      "review": [
+        {
+          "@type": "Review",
+          "reviewRating": {
+            "@type": "Rating",
+            "ratingValue": "5",
+            "bestRating": "5"
+          },
+          "author": {
+            "@type": "Person",
+            "name": "Verified Google review"
+          },
+          "datePublished": "2026-01-15",
+          "reviewBody": "Good work, on time and tidy.",
+          "itemReviewed": {
+            "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+          }
+        },
+        {
+          "@type": "Review",
+          "reviewRating": {
+            "@type": "Rating",
+            "ratingValue": "5",
+            "bestRating": "5"
+          },
+          "author": {
+            "@type": "Person",
+            "name": "Verified Google review"
+          },
+          "datePublished": "2026-02-22",
+          "reviewBody": "Summit Roofing replaced our COLORBONDÂ® roof. Clear quote and a clean site.",
+          "itemReviewed": {
+            "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+          }
+        },
+        {
+          "@type": "Review",
+          "reviewRating": {
+            "@type": "Rating",
+            "ratingValue": "5",
+            "bestRating": "5"
+          },
+          "author": {
+            "@type": "Person",
+            "name": "Verified Google review"
+          },
+          "datePublished": "2026-03-08",
+          "reviewBody": "Fixed storm damage quickly and matched the old tiles.",
+          "itemReviewed": {
+            "@id": "https://summit-roofing-fixture.com.au/#localbusiness"
+          }
+        }
+      ],
+      "potentialAction": [
+        {
+          "@type": "ReserveAction",
+          "name": "Request a Free Quote",
+          "target": {
+            "@type": "EntryPoint",
+            "urlTemplate": "https://summit-roofing-fixture.com.au/contact-us/",
+            "inLanguage": "en-AU",
+            "actionPlatform": [
+              "http://schema.org/DesktopWebPlatform",
+              "http://schema.org/MobileWebPlatform"
+            ]
+          }
+        }
+      ],
+      "speakable": {
+        "@id": "https://summit-roofing-fixture.com.au/#speakable"
+      }
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://summit-roofing-fixture.com.au/#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Can you help with emergency roof repairs?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes, after hours by arrangement."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What kind of roof materials do you use?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Metal and tile, chosen for the house."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How often should my roof be inspected?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Every one to two years for most homes."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What areas do you service?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The suburbs listed on this page."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I request a custom roofing solution?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes, each job is quoted on its own."
+          }
+        }
+      ]
+    },
+    {
+      "@type": "ItemList",
+      "@id": "https://summit-roofing-fixture.com.au/#services-carousel",
+      "itemListOrder": "https://schema.org/ItemListOrderAscending",
+      "name": "Summit Roofing - Service Catalogue",
+      "numberOfItems": 22,
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Catalogue item 1",
+          "url": "https://summit-roofing-fixture.com.au/catalogue-item-1/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Catalogue item 2",
+          "url": "https://summit-roofing-fixture.com.au/catalogue-item-2/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Catalogue item 3",
+          "url": "https://summit-roofing-fixture.com.au/catalogue-item-3/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 4,
+          "name": "Catalogue item 4",
+          "url": "https://summit-roofing-fixture.com.au/catalogue-item-4/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 5,
+          "name": "Catalogue item 5",
+          "url": "https://summit-roofing-fixture.com.au/catalogue-item-5/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 6,
+          "name": "Catalogue item 6",
+          "url": "https://summit-roofing-fixture.com.au/catalogue-item-6/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 7,
+          "name": "Catalogue item 7",
+          "url": "https://summit-roofing-fixture.com.au/catalogue-item-7/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 8,
+          "name": "Catalogue item 8",
+          "url": "https://summit-roofing-fixture.com.au/catalogue-item-8/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 9,
+          "name": "Catalogue item 9",
+          "url": "https://summit-roofing-fixture.com.au/catalogue-item-9/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 10,
+          "name": "Catalogue item 10",
+          "url": "https://summit-roofing-fixture.com.au/catalogue-item-10/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 11,
+          "name": "Catalogue item 11",
+          "url": "https://summit-roofing-fixture.com.au/catalogue-item-11/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 12,
+          "name": "Catalogue item 12",
+          "url": "https://summit-roofing-fixture.com.au/catalogue-item-12/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 13,
+          "name": "Catalogue item 13",
+          "url": "https://summit-roofing-fixture.com.au/catalogue-item-13/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 14,
+          "name": "Catalogue item 14",
+          "url": "https://summit-roofing-fixture.com.au/catalogue-item-14/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 15,
+          "name": "Catalogue item 15",
+          "url": "https://summit-roofing-fixture.com.au/catalogue-item-15/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 16,
+          "name": "Catalogue item 16",
+          "url": "https://summit-roofing-fixture.com.au/catalogue-item-16/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 17,
+          "name": "Catalogue item 17",
+          "url": "https://summit-roofing-fixture.com.au/catalogue-item-17/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 18,
+          "name": "Catalogue item 18",
+          "url": "https://summit-roofing-fixture.com.au/catalogue-item-18/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 19,
+          "name": "Catalogue item 19",
+          "url": "https://summit-roofing-fixture.com.au/catalogue-item-19/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 20,
+          "name": "Catalogue item 20",
+          "url": "https://summit-roofing-fixture.com.au/catalogue-item-20/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 21,
+          "name": "Catalogue item 21",
+          "url": "https://summit-roofing-fixture.com.au/catalogue-item-21/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 22,
+          "name": "Catalogue item 22",
+          "url": "https://summit-roofing-fixture.com.au/catalogue-item-22/"
+        }
+      ]
+    },
+    {
+      "@type": "SpeakableSpecification",
+      "@id": "https://summit-roofing-fixture.com.au/#speakable",
+      "cssSelector": [
+        ".entry-title",
+        ".entry-content > p:first-of-type",
+        ".googlereviewrating_div"
+      ],
+      "xpath": [
+        "/html/head/title",
+        "/html/head/meta[@name=\"description\"]/@content"
+      ]
+    }
+  ]
+}
