@@ -4505,6 +4505,16 @@ function SiteBriefFixBody({ fix }: { fix: Fix; facts: Facts | null }) {
       {(!fix.replacement || !isChange(fix)) && fix.recommendation && (
         <p className="fix-new"><span className="fix-lbl">Do this: </span>{fix.recommendation}</p>
       )}
+      {/* The part that owns an image fix (screen audits round 4, Speed
+          UX-02): the High lcp-poor card said "compress images, preload the
+          hero asset" with no way to the Images part. */}
+      {/^lcp-/.test(fix.checkId) && /\bimage/i.test(`${fix.recommendation ?? ""} ${fix.current ?? ""}`) && (
+        <p className="muted fix-meta">
+          <a href={withPart(window.location.hash, "images")}
+             onClick={goHandler(withPart(window.location.hash, "images"))}>→ Images</a>
+          {" "}weighs each image and says what is recoverable.
+        </p>
+      )}
       {fix.checkId === "http-status-error" && (fix.targets?.length ?? 0) > 0 && (
         // Item 275 (row 10): where the link to it is, to update.
         <p className="muted fix-meta">
@@ -4711,7 +4721,10 @@ function FixCard({ fix, facts, render, onCopy, copied, n, fixHeld = false,
         {/* Item 249: a model row on a check the automatic checks can raise,
             which they have not raised on this page since. It is not retired
             for the operator; it says so, and Withdraw is offered below. */}
-        {fix.unseenSince && !fix.sources.includes("sweep") && (
+        {/* Not where the automatic checks raised the same target (screen
+            audits round 4, Links AC-04): "raised the same target" stood two
+            lines above "not seen by the automatic checks since". */}
+        {fix.unseenSince && !fix.sources.includes("sweep") && !fix.corroboratedBy?.length && (
           <span className="fix-unseen">· not seen by the automatic checks since {day(fix.unseenSince)}</span>
         )}
         {/* Only where there is a page. A site-scoped finding legitimately
@@ -4826,7 +4839,8 @@ function FixCard({ fix, facts, render, onCopy, copied, n, fixHeld = false,
                          subject={`${plainName(fix.checkId)}, ${pathOf(fix.page)}`}
                          onStateChanged={onStateChanged} />
       )}
-      {!awaiting && siteId && fix.unseenSince && !fix.sources.includes("sweep") && (
+      {!awaiting && siteId && fix.unseenSince && !fix.sources.includes("sweep")
+       && !fix.corroboratedBy?.length && (
         <ConfirmControls fingerprints={fix.fingerprints ?? []} siteId={siteId} explain={false}
                          subject={`${plainName(fix.checkId)}, ${pathOf(fix.page)}`}
                          onStateChanged={onStateChanged} withdrawOnly />

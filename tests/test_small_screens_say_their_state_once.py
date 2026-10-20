@@ -37,3 +37,17 @@ def test_the_current_audit_and_a_regressed_row_are_dated_as_they_are():
 
 def test_a_row_read_earlier_is_not_called_not_read():
     assert 'word: "read on an earlier audit"' in read("catalogue.tsx")
+
+
+def test_a_corroborated_card_is_not_unseen_and_lcp_cards_reach_images():
+    """Links AC-04, Speed UX-02."""
+    p = read("part_page.tsx")
+    assert '!fix.sources.includes("sweep") && !fix.corroboratedBy?.length && (' in p
+    assert r'/^lcp-/.test(fix.checkId) && /\bimage/i.test(' in p
+    assert "\x08" not in p
+
+
+def test_a_blocked_audit_is_said_blocked_and_quick_asks_no_provider():
+    """Home IP-03, Backlinks AC-06."""
+    assert '? <span className="home-not-audited">audit blocked</span>' in read("home.tsx")
+    assert "and at Quick it asks no provider either" in read("reaudit.tsx")

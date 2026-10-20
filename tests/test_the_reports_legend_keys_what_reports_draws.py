@@ -25,3 +25,19 @@ def test_the_deliverables_say_empty_and_failed_and_the_success_line_names_them()
     assert "Nothing has been delivered for this site yet." in r
     assert "The deliverables did not load: ${loadError}" in r
     assert '}}>Client deliverables</a> below.</>' in r
+
+
+def test_the_plan_spend_is_priced_and_open_is_defined_as_the_record_holds_it():
+    """Reports UX-04, Record IP-06."""
+    r = (ROOT / "dashboard" / "src" / "reports.tsx").read_text(encoding="utf-8")
+    assert 'r.tool === "plan" && r.cost != null' in r
+    g = (ROOT / "clauditseo" / "glossary.json").read_text(encoding="utf-8")
+    assert "A page the latest crawl did not read keeps its open faults" in g
+
+
+def test_a_score_basis_is_dated_and_admin_ceilings_say_their_scope():
+    """Record IP-08, Admin AC-02."""
+    v = (ROOT / "dashboard" / "src" / "views.tsx").read_text(encoding="utf-8")
+    assert "pages the site declared when this audit ran" in v
+    a = (ROOT / "dashboard" / "src" / "admin.tsx").read_text(encoding="utf-8")
+    assert "a Site-scope audit (T2):" in a

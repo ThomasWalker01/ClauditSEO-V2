@@ -266,6 +266,10 @@ function SiteCard({ row: s, businessTypes, onChanged }: {
         <div className="home-card-score">
           {narrowOnly ? <ScoreBadge score={s.narrow_score ?? null} narrow={s.narrow_scope ?? "narrow"} />
             : !audited ? <span className="home-not-audited">not audited</span>
+            // Screen audits round 4 (Home IP-03): a newest audit the site
+            // refused drew as audited with a dash for its score.
+            : s.score == null && s.last_run_status === "blocked"
+              ? <span className="home-not-audited">audit blocked</span>
             : s.score == null && s.narrow_score != null
               ? <ScoreBadge score={s.narrow_score} narrow={s.narrow_scope ?? "narrow"} />
             : <ScoreBadge score={s.score} />}
@@ -331,7 +335,9 @@ function SiteCard({ row: s, businessTypes, onChanged }: {
       )}
       <div className="home-card-foot">
         <span className={`home-tag${audited ? "" : " home-tag-warn"}`}>
-          {audited ? `audited ${ago(s.recheck_label ? s.score_at ?? null : s.last_run_at)}`
+          {audited && s.score == null && s.last_run_status === "blocked"
+            ? `blocked ${ago(s.last_run_at)}`
+            : audited ? `audited ${ago(s.recheck_label ? s.score_at ?? null : s.last_run_at)}`
             : narrowOnly ? `${s.narrow_scope} scan only` : "never audited"}
         </span>
         {s.last_run_status && !hasScore(s.last_run_status) && <RunStatusChip status={s.last_run_status} />}

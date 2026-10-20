@@ -704,8 +704,12 @@ function MeasuredShare({ share }: { share?: Run["measured_share"] }) {
     ? "this audit recorded no crawl page count"
     : "this site declared no page total";
   const frame = share.basis === "coverage+breadth"
-    ? `dimension coverage scaled by the ${share.pages_fetched} of `
-      + `${share.discovered} declared pages this crawl reached`
+    // The score's own basis, dated (screen audits round 4, Record IP-08):
+    // "45 of 49 declared pages" beside the header's "45 of the 74 pages on
+    // the site" read as one coverage at 92% and 61%. The 49 is what the site
+    // declared when this audit ran; the header counts the site as it stands.
+    ? `dimension coverage scaled by the ${share.pages_fetched} of the `
+      + `${share.discovered} pages the site declared when this audit ran`
     : share.basis === "coverage"
       ? `dimension coverage — ${unscaled}, so crawl breadth is not in the figure`
       : "the frame this figure was computed under was not recorded";

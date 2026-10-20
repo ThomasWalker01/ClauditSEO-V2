@@ -207,7 +207,13 @@ export function ReauditDrawer({ label, refresh, page, precheck, finding,
         // Item 278 (row 7): said where it is read, not in the closed details.
         <p className="muted reaudit-domain">
           {label} is not measured page by page: {refresh.dimension} reads the domain
-          rather than any page of it, so this re-check asks the provider and fetches no page.
+          rather than any page of it, so this re-check fetches no page
+          {/* At Quick the module asks no provider (screen audits round 4,
+              Backlinks AC-06: "Not requested at this depth"). */}
+          {shown === "quick"
+            ? <>, and at Quick it asks no provider either: choose Standard or Deep to read
+                the backlink figures.</>
+            : <> and asks the provider.</>}
         </p>
       ) : (
         <>

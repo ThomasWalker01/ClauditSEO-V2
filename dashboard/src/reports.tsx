@@ -303,7 +303,12 @@ function GenerateCard({ siteId, runs, reports, onMade }: {
         {needsPlan && !clientHeld ? (
           // Item 178: the run report writes the plan with a model first, so
           // Generate is a spend here - priced in words and confirmed.
-          <SpendButton price={null} busy={busy} why={!target ? "pick an audit first" : null}
+          // Priced from the last plan written for this site (screen audits
+          // round 4, Reports UX-04): the confirmation read unpriced while the
+          // table below printed the last plan at USD 0.08.
+          <SpendButton price={[...reports].filter((r) => r.tool === "plan" && r.cost != null)
+                         .sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""))[0]?.cost ?? null}
+                       busy={busy} why={!target ? "pick an audit first" : null}
                        confirm={{ title: "Generate the run report?",
                                   body: <><SpendTarget runId={target} />
                                     <p>It writes the client plan with a model first, at the model

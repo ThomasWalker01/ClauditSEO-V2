@@ -2015,8 +2015,10 @@ export function AdminView() {
         </p>
         <TierModels />
         <p className="muted">
-          Token ceilings per audit — T2: {data.budgets.T2.toLocaleString()},
-          T3: {data.budgets.T3.toLocaleString()},
+          {/* In the launcher's scope words, the tier after (screen audits
+              round 4, Admin AC-02). */}
+          Token ceilings per audit — a Site-scope audit (T2): {data.budgets.T2.toLocaleString()},
+          a Full-scope audit (T3): {data.budgets.T3.toLocaleString()},
           per page analysis: {data.budgets.page.toLocaleString()}.
         </p>
       </Card>
