@@ -24,7 +24,7 @@ from clauditseo.engine.types import Tier
 
 from .fetch import Fetcher
 from .robots import RobotsPolicy, robots_url_for
-from .types import (TIER_BUDGETS, USER_AGENT, CrawlResult, Page, SitemapRecord,
+from .types import (TIER_BUDGETS, USER_AGENT, CrawlResult, Page, SitemapRecord, served_html,
                     TierBudget, eligible)
 
 SITEMAP_HEAD_ENTRIES = 50      # T1 reads only the head of a sitemap
@@ -607,7 +607,10 @@ def crawl(
             llms_page = fetcher.fetch(llms_url)
             result.llms_txt_status = llms_page.status or None
             if llms_page.status == 200:
-                result.llms_txt = llms_page.content
+                if served_html(llms_page.content_type, llms_page.content):
+                    result.llms_txt_served_html = True
+                else:
+                    result.llms_txt = llms_page.content
 
         limit = SITEMAP_HEAD_ENTRIES if tier is Tier.T1 else SITEMAP_FULL_ENTRIES
         # Declared: robots pointed at these. Probed: nothing did, and the crawler

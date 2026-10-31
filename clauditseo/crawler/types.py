@@ -167,6 +167,17 @@ class SitemapRecord:
     declared: bool = False
 
 
+def served_html(content_type: str | None, body: str | None) -> bool:
+    """A response that is an HTML page, by its header or, when the header
+    says nothing useful, by its first bytes. A CMS answers an unknown path
+    such as `/llms.txt` with its own page and a 200 (a WordPress site,
+    27 Oct): that body is not the text file the path names."""
+    if (content_type or "").lower().startswith("text/html"):
+        return True
+    head = (body or "").lstrip()[:15].lower()
+    return head.startswith(("<!doctype html", "<html"))
+
+
 @dataclass
 class CrawlResult:
     start_url: str
@@ -176,6 +187,9 @@ class CrawlResult:
     robots_status: int | None = None
     llms_txt: str | None = None
     llms_txt_status: int | None = None
+    # /llms.txt answered 200 with an HTML page (a CMS soft 404), so there is
+    # no llms.txt to read; `llms_txt` stays None.
+    llms_txt_served_html: bool = False
     robots_blocked: list[str] = field(default_factory=list)  # URLs we declined to fetch
     sitemap_urls: list[str] = field(default_factory=list)    # sitemap locations declared
     sitemap_entries: list[str] = field(default_factory=list) # URLs listed in sitemaps we read

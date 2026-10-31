@@ -255,7 +255,17 @@ class AiSurfaceModule:
         # file the crawl did not request (robots, or no answer), not a file
         # that is absent - "/llms.txt: not requested on this audit" stood
         # over "No llms.txt file found." on the same audit.
-        if crawl.llms_txt_status is not None and crawl.llms_txt_status != 200:
+        if crawl.llms_txt_served_html:
+            findings.append(Finding(
+                dimension=self.code, check_id="llms-txt-missing", severity=Severity.INFO,
+                summary=("No llms.txt file found: /llms.txt answers HTTP 200 with an "
+                         "HTML page, not a text file."),
+                subject="llms-txt", affected_urls=[],
+                evidence={"status": crawl.llms_txt_status, "served": "html"},
+                recommendation="Publish a plain-text llms.txt summarising the site's key "
+                               "pages for AI assistants, or have /llms.txt answer 404.",
+            ))
+        elif crawl.llms_txt_status is not None and crawl.llms_txt_status != 200:
             findings.append(Finding(
                 dimension=self.code, check_id="llms-txt-missing", severity=Severity.INFO,
                 summary="No llms.txt file found.",
@@ -461,7 +471,14 @@ class AiSurfaceModule:
             by_requested.setdefault(_norm(p.url), p)
         stale = []
         for url in llms_txt_urls(crawl.llms_txt):
-            if urlsplit(url).netloc.lower().removeprefix("www.") != host:
+            # An unbalanced bracket makes urlsplit raise "Invalid IPv6 URL";
+            # a string it cannot parse is no URL a reader could follow, and it
+            # must not fail the audit (a WordPress site, 27 Oct).
+            try:
+                netloc = urlsplit(url).netloc
+            except ValueError:
+                continue
+            if netloc.lower().removeprefix("www.") != host:
                 continue
             page = by_requested.get(_norm(url))
             if page is None:

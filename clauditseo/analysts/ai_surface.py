@@ -23,6 +23,8 @@ import re
 from typing import Any
 from urllib.parse import urlsplit
 
+from clauditseo.crawler.types import served_html
+
 ABSENT = "[NOT SUPPLIED]"
 
 #: What `{{SECTION_CAP}}` and `{{LLMS_TXT_BUILD}}` default to, per the prompt.
@@ -423,6 +425,9 @@ def url_inventory(ev: dict, site: Any) -> str:
 def llms_txt_text(ev: dict) -> str:
     status = ev.get("llms_txt_status")
     body = ev.get("llms_txt")
+    if status == 200 and (ev.get("llms_txt_served_html") or served_html(None, body)):
+        return ("absent — /llms.txt answers HTTP 200 with an HTML page (the site's "
+                "own soft 404), not a text file")
     if status == 200 and body:
         return "Served at /llms.txt (HTTP 200):\n```markdown\n" + body[:LLMS_TXT_CAP] + "\n```"
     if status == 200:

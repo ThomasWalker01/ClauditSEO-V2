@@ -501,6 +501,7 @@ def snapshot(crawl: CrawlResult, image_measurements: dict | None = None,
         "robots_txt": crawl.robots_txt,
         "robots_status": crawl.robots_status,
         "llms_txt_status": crawl.llms_txt_status,
+        "llms_txt_served_html": crawl.llms_txt_served_html,
         # The body itself (item 145 BH): the AI surface brief assesses and
         # rewrites the file, and `llms-txt-stale` reads its URLs. Capped.
         "llms_txt": (crawl.llms_txt or "")[:50_000] or None,
