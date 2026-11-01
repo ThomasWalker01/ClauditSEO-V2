@@ -193,6 +193,32 @@ def challenge_vendor(title: str | None, headers: dict | None = None) -> str | No
     return next((v for k, v in CHALLENGE_HEADERS.items() if lowered.get(k)), None)
 
 
+class BrowserChallenged(Exception):
+    """A CDN's bot protection answered the headless browser, so what it would
+    measure is the firewall's page and every later page would meet the same."""
+
+    def __init__(self, vendor: str, url: str):
+        super().__init__(f"{vendor} bot protection answered the browser at {url}")
+        self.vendor, self.url = vendor, url
+
+
+def refuse_challenge(page, url: str, response=None) -> None:
+    """Raise `BrowserChallenged` where a loaded browser page is the firewall's.
+
+    The crawl's plain requests can pass while a checkpoint refuses the browser:
+    on 1 Nov one read 100 real pages and filed the checkpoint's own contrast and
+    paint timings as the site's."""
+    headers = getattr(response, "headers", None)
+    try:
+        title = page.title()
+    except Exception:                       # noqa: BLE001 - the headers still answer
+        title = None
+    vendor = challenge_vendor(title if isinstance(title, str) else None,
+                              headers if isinstance(headers, dict) else None)
+    if vendor:
+        raise BrowserChallenged(vendor, url)
+
+
 def edge_challenge(page: "Page", at: str) -> dict | None:
     """The firewall's answer standing where the site's should be, or None.
 

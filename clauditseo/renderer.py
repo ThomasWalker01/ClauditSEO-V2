@@ -17,6 +17,8 @@ itself.
 from __future__ import annotations
 
 from clauditseo import BOT_NAME
+from clauditseo.crawler import access
+from clauditseo.crawler.types import refuse_challenge
 
 RENDER_TIMEOUT_MS = 25_000
 SETTLE_MS = 1_500        # after load: hydration frameworks paint late
@@ -44,12 +46,14 @@ class Renderer:
             try:
                 page = browser.new_page(
                     user_agent=f"{BOT_NAME}/1.0 (+headless render for audit)")
+                access.install(page)
                 errors: list[str] = []
                 page.on("console", lambda m: errors.append(m.text)
                         if m.type == "error" else None)
                 response = page.goto(url, timeout=RENDER_TIMEOUT_MS,
                                      wait_until="load")
                 page.wait_for_timeout(SETTLE_MS)
+                refuse_challenge(page, url, response)
                 return {
                     "html": page.content(),
                     "status": response.status if response else None,

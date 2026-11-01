@@ -279,11 +279,15 @@ def run_page(url: str, timeout_ms: int = 30_000,
     """
     from playwright.sync_api import sync_playwright
 
+    from clauditseo.crawler import access
+    from clauditseo.crawler.types import refuse_challenge
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         try:
             ctx = browser.new_context(
                 user_agent=f"{BOT_NAME}/1.0 (+accessibility audit)")
+            access.install(ctx)
             # Item 247: listening from before the page's first script, and
             # closed before axe's is added.
             ctx.add_init_script(_CSP_LISTENER)
@@ -292,8 +296,9 @@ def run_page(url: str, timeout_ms: int = 30_000,
             pg.on("pageerror", errors.on_pageerror)
             pg.on("requestfailed", errors.on_requestfailed)
             pg.on("response", errors.on_response)
-            pg.goto(url, timeout=timeout_ms, wait_until="load")
+            response = pg.goto(url, timeout=timeout_ms, wait_until="load")
             pg.wait_for_timeout(1_200)     # hydration frameworks paint late
+            refuse_challenge(pg, url, response)
             try:
                 settled = _settle(pg)
             except Exception as exc:                        # noqa: BLE001

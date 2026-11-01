@@ -24,6 +24,7 @@ import time
 import uuid
 from urllib.parse import urljoin
 
+from . import access
 from .types import USER_AGENT
 
 #: What is fetched, and why. Fixed by the brief; nothing is added without one.
@@ -76,7 +77,8 @@ def sweep(start_url: str, client=None) -> dict:
     own = client is None
     if own:
         client = httpx.Client(headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT,
-                              follow_redirects=True, verify=True)
+                              follow_redirects=True, verify=True,
+                              event_hooks=access.event_hooks())
     try:
         def get(path: str, purpose: str) -> dict:
             url = urljoin(start_url, path)

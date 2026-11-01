@@ -72,7 +72,8 @@ export type ImageBudgetPayload = {
                               placed: number }>;
   recorded: boolean;
   /** Whether the audit measured images in a browser (item 205). */
-  measured: boolean | "unavailable";
+  measured: boolean | "unavailable" | "refused";
+  refused_by?: string | null;
   /** Whether any image was seen as a page's largest paint (item 272). */
   lcp_found?: boolean;
   tier?: string | null; started_at?: string | null;
@@ -199,6 +200,9 @@ export function BytesForPixels({ payload, page, picked = null, onPick }: {
       : payload.measured === "unavailable"
         ? "No renderer was installed when this audit ran, so no image on it was "
           + "weighed or measured on the page."
+      : payload.measured === "refused"
+        ? `${payload.refused_by ?? "The site's firewall"} refused the audit's browser, `
+          + "so no image on it was weighed or measured on the page."
       : payload.measured === false
         ? "This audit did not measure images in a browser, so nothing here has a "
           + "weight or a rendered size."

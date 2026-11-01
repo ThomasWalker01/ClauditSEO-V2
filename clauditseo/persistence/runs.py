@@ -1017,7 +1017,8 @@ class Reading:
                    frozenset(getattr(result, "errored_paths", None) or ()),
                    frozenset(getattr(result, "instruments", None) or ()),
                    frozenset(getattr(result, "probe_failed", None) or ()),
-                   _rendered_paths([f.evidence for f in getattr(result, "findings", None) or []
+                   _rendered_paths([(f.check_id, f.evidence)
+                                    for f in getattr(result, "findings", None) or []
                                     if getattr(f, "dimension", "") == "A11Y"]))
 
     @classmethod
@@ -1056,21 +1057,26 @@ class Reading:
                    *(frozenset(x) for x in instruments_of(
                        ev.get("dns"), ev.get("well_known"), ev.get("ua_matrix"),
                        ev.get("transport"), ev.get("llms_txt_status", "unknown"))),
-                   _rendered_paths([_finding_evidence(r["evidence"]) for r in conn.execute(
-                       "SELECT evidence FROM findings WHERE run_id=? AND dimension='A11Y'",
-                       (run_id,))]))
+                   _rendered_paths([(r["check_id"], _finding_evidence(r["evidence"]))
+                                    for r in conn.execute(
+                       "SELECT check_id, evidence FROM findings WHERE run_id=?"
+                       " AND dimension='A11Y'", (run_id,))]))
 
 
-def _rendered_paths(evidences) -> frozenset[str] | None:
-    """The paths a run's rendered pass read, from the A11Y row that carries
-    its text blocks (`_text_blocks_for_run` reads the same row). None where
-    no row carries them: unknown, so the render rule is not asked."""
+def _rendered_paths(rows) -> frozenset[str] | None:
+    """The paths a run's rendered pass read, from `(check_id, evidence)` of its
+    A11Y rows: the row that carries the text blocks (`_text_blocks_for_run`
+    reads the same one), or none at all where the run says it rendered nothing
+    (a firewall refused the browser, or there was no renderer). None where no
+    row says either: unknown, so the render rule is not asked."""
     from urllib.parse import urlsplit
-    for ev in evidences:
+    nothing = False
+    for check_id, ev in rows:
         blocks = ev.get("text_blocks") if isinstance(ev, dict) else None
         if isinstance(blocks, dict):
             return frozenset(urlsplit(u).path or "/" for u in blocks)
-    return None
+        nothing = nothing or check_id == "contrast-not-assessed"
+    return frozenset() if nothing else None
 
 
 #: The checks only the rendered pass can measure (screen audits round 4): a
@@ -1184,6 +1190,12 @@ def measured(reading: Reading, dimension: str, check_id: str, affected_urls: lis
     if (_render_derived(dimension, check_id) and reading.rendered is not None
             and pages and not pages & reading.rendered):
         return "unmeasured", "the run did not render a page the finding names"
+    # 1 Nov: a firewall refused the browser, and that run's silence marked five
+    # contrast rows and the pass's own two notes fixed.
+    if (reading.rendered is not None and not reading.rendered
+            and (_render_derived(dimension, check_id)
+                 or (dimension, check_id) in {("A11Y", "axe-sampled"), ("A11Y", "axe-coverage")})):
+        return "unmeasured", "the run rendered no page"
     # Channel ruling 20261011-0745: a page-level check on pages that now
     # answer an error no longer applies to them. Asked before the page-read
     # rule, which would call the finding unmeasured forever.
@@ -8763,6 +8775,9 @@ def speed_now_payload(conn: sqlite3.Connection, run_id: str | None) -> dict | No
               and (p.get("perf") or {}).get("device_profile")]
     base = {
         "recorded": bool(traced),
+        # Which firewall stopped the trace: a different sentence from an audit
+        # that did not ask for one.
+        "refused_by": evidence.get("browser_refused"),
         # Stated on every run, per the brief - and it states the throttling
         # METHOD too, because our applied throttle reads lower than a client's
         # own PageSpeed run and the report must not look like a disagreement.
@@ -10434,11 +10449,13 @@ def image_budget_payload(conn: sqlite3.Connection, run_id: str | None) -> dict |
         # the block prints a different one for each.
         "recorded": bool(total),
         # Item 205: whether the audit MEASURED, not whether anything came out
-        # of it - True, False, or "unavailable" (no renderer). Evidence stored
+        # of it - True, False, "unavailable" (no renderer) or "refused" (a
+        # firewall stopped the browser). Evidence stored
         # before the run recorded it is read from the images themselves: a
         # pass that ran leaves a rendered box, and a crawl nobody measured
         # leaves none anywhere.
         "measured": _images_measured(evidence, pages),
+        "refused_by": evidence.get("browser_refused"),
         # The audit these numbers are, named on the block (item 205): the
         # chart "disappeared" when the picked audit changed under it.
         "tier": row["tier"], "started_at": row["started_at"],
@@ -10447,7 +10464,7 @@ def image_budget_payload(conn: sqlite3.Connection, run_id: str | None) -> dict |
 
 def _images_measured(evidence: dict, pages: list[dict]) -> bool | str:
     got = evidence.get("images_measured")
-    if got in (True, False, "unavailable"):
+    if got in (True, False, "unavailable", "refused"):
         return got
     return any((r.get("rendered") or r.get("weight_kb"))
                for p in pages for r in (p.get("image_inventory") or []))

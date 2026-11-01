@@ -270,7 +270,9 @@ def build_ua_matrix(start_url: str, pages, policy: RobotsPolicy,
         if ua is None:
             rows.append(asdict(row))
             continue
-        with Fetcher(timeout_s, user_agent=ua) as fetcher:
+        # Without the owner's pass: the question is what the edge does to this
+        # agent, and the agent does not hold it.
+        with Fetcher(timeout_s, user_agent=ua, site_pass=False) as fetcher:
             home = fetcher.fetch(start_url)
             keep = token == FINGERPRINT_AGENT
             if keep and home.status == 200:

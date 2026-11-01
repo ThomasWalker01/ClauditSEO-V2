@@ -62,14 +62,34 @@ def test_a_run_that_did_not_render_a_page_does_not_clear_its_rendered_checks():
     # Round 4 replay: axe-color-contrast and links-behind-js on /seo/technical/
     # went fixed on a run whose rendered pass sampled other pages.
     from clauditseo.persistence.runs import _rendered_paths
-    rendered = _rendered_paths([{"text_blocks": {"https://gate-six.test/a/": []}}])
+    rendered = _rendered_paths([("axe-coverage", {"text_blocks": {"https://gate-six.test/a/": []}})])
     assert rendered == frozenset({"/a/"})
     r = Reading("r", frozenset({"A11Y", "TEC"}), frozenset({"/a/", "/b/"}), frozenset(), frozenset(),
                 True, rendered=rendered)
     assert measured(r, "A11Y", "axe-color-contrast", ["https://gate-six.test/b/"])[0] == "unmeasured"
     assert measured(r, "TEC", "links-behind-js", ["https://gate-six.test/b/"])[0] == "unmeasured"
     assert measured(r, "A11Y", "axe-color-contrast", ["https://gate-six.test/a/"])[0] == "clean"
-    assert _rendered_paths([{"other": 1}]) is None
+    assert _rendered_paths([("axe-coverage", {"other": 1})]) is None
+
+
+def test_a_run_that_rendered_nothing_clears_nothing_a_render_raises():
+    # 1 Nov: a firewall refused the browser, the run raised
+    # contrast-not-assessed, and its silence marked contrast rows fixed.
+    from clauditseo.persistence.runs import _rendered_paths
+    rendered = _rendered_paths([("axe-render-failed", {"vendor": "Vercel"}),
+                                ("contrast-not-assessed", {})])
+    assert rendered == frozenset()
+    r = Reading("r", frozenset({"A11Y", "TEC"}), frozenset({"/a/"}), frozenset(), frozenset(),
+                True, rendered=rendered)
+    assert measured(r, "A11Y", "axe-color-contrast", ["https://gate-six.test/a/"])[0] == "unmeasured"
+    assert measured(r, "A11Y", "axe-coverage", [])[0] == "unmeasured"
+    assert measured(r, "A11Y", "axe-sampled", [])[0] == "unmeasured"
+    assert measured(r, "TEC", "links-behind-js", [])[0] == "unmeasured"
+    assert measured(r, "A11Y", "html-lang-missing", ["https://gate-six.test/a/"])[0] == "clean"
+    # A refusal part way through still names the pages it did render.
+    assert _rendered_paths([("contrast-not-assessed", {}),
+                            ("axe-coverage", {"text_blocks": {"https://gate-six.test/a/": []}})
+                            ]) == frozenset({"/a/"})
 
 
 def test_a_run_whose_http_probe_and_certificate_went_unread_does_not_clear_them():

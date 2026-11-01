@@ -29,6 +29,8 @@ import logging
 from urllib.parse import urlsplit
 
 from clauditseo import BOT_NAME
+from clauditseo.crawler import access
+from clauditseo.crawler.types import refuse_challenge
 
 log = logging.getLogger("clauditseo.perf")
 
@@ -462,7 +464,7 @@ def _trace_one(page, cdp, url: str, first_party_host: str, coverage: bool,
     filmstrip = None
     if frames_dir is not None and frame_stem and cdp is not None:
         filmstrip = _start_screencast(cdp)
-    page.goto(url, timeout=_RENDER_TIMEOUT_MS, wait_until="commit")
+    response = page.goto(url, timeout=_RENDER_TIMEOUT_MS, wait_until="commit")
     page.wait_for_timeout(_SETTLE_MS)
     try:
         page.wait_for_load_state("load", timeout=_RENDER_TIMEOUT_MS)
@@ -480,6 +482,7 @@ def _trace_one(page, cdp, url: str, first_party_host: str, coverage: bool,
         pass
     frames = (_stop_screencast(cdp, filmstrip, frames_dir, frame_stem)
               if filmstrip is not None else UNAVAILABLE)
+    refuse_challenge(page, url, response)
 
     raw = page.evaluate(_READ_TRACE_JS) or {}
 
@@ -799,8 +802,10 @@ def trace(urls, run_id: str | None = None, cap: int = 30,
                 user_agent=_MOBILE_UA, viewport=_MOBILE_VIEWPORT,
                 is_mobile=True, has_touch=True, device_scale_factor=2)
             first = _host(next(iter(urls), "") or "")
+            access.install(context)
             from clauditseo import axe
-            for url in list(urls)[:cap]:
+
+            def visit(url):
                 page = context.new_page()
                 cdp = _attach_cdp(context, page)
                 try:
@@ -808,11 +813,13 @@ def trace(urls, run_id: str | None = None, cap: int = 30,
                     tr = _trace_one(page, cdp, url, first, coverage=True,
                                     frames_dir=frames_dir, frame_stem=stem)
                     _fill_whitespace(context, tr)
-                    out[url] = tr
-                except Exception as error:            # one page's failure is its own
-                    log.warning("performance trace failed for %s: %s", url, error)
+                    return tr
                 finally:
                     page.close()
+            out = access.each_page(
+                list(urls)[:cap], visit,
+                lambda url, error: log.warning("performance trace failed for %s: %s",
+                                               url, error))
         finally:
             browser.close()
     return out

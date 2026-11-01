@@ -4,6 +4,7 @@ import time
 
 import httpx
 
+from . import access
 from .types import USER_AGENT, Page
 
 #: What a browser says it accepts when it navigates to a page - Chromium's
@@ -21,13 +22,15 @@ class Fetcher:
     """Thin wrapper around httpx with an identifiable user agent, redirect
     tracking, and a per-request timeout. One instance per crawl."""
 
-    def __init__(self, timeout_s: float, user_agent: str = USER_AGENT):
+    def __init__(self, timeout_s: float, user_agent: str = USER_AGENT,
+                 site_pass: bool = True):
         self.user_agent = user_agent
         self._client = httpx.Client(
             headers={"User-Agent": user_agent, "Accept": BROWSER_ACCEPT},
             timeout=timeout_s,
             follow_redirects=True,
             max_redirects=10,
+            event_hooks=access.event_hooks() if site_pass else None,
         )
 
     def fetch(self, url: str) -> Page:

@@ -342,6 +342,8 @@ def run_adaptive(
     from clauditseo.crawler.evidence import snapshot
     evidence = snapshot(deep_crawl, measured or None, traced, trace_rule)
     evidence["images_measured"] = images_state
+    from clauditseo.crawler import access
+    evidence["browser_refused"] = access.refused_by()
     runs.store_evidence(conn, run_id, evidence)
     runs.set_tier(conn, run_id, tier.value)
     runs.complete_run(conn, run_id, result)

@@ -1573,6 +1573,7 @@ function SiteRecordForm({ site, onSaved }: { site: SiteRecord; onSaved: () => vo
     <Card>
       <h3>{host(site.domain)}{site.client ? <small className="muted"> · {site.client}</small> : null}</h3>
       <GbpListingControl site={site} onSaved={onSaved} />
+      <SiteAccessControl site={site} />
       <EntitySuggestionsPanel site={site}
                               onUse={(patch) => setF((prev) => ({ ...prev, ...patch }))} />
       <div className="site-record">
@@ -1744,6 +1745,66 @@ function SiteRecordForm({ site, onSaved }: { site: SiteRecord; onSaved: () => vo
         {note && <span className="muted"> {note}</span>}
       </p>
     </Card>
+  );
+}
+
+/** The header a site's owner issued so its firewall lets the audit through.
+ *  The value goes to the server once and never comes back. */
+function SiteAccessControl({ site }: { site: SiteRecord }) {
+  const [held, setHeld] = useState<{ set: boolean; header: string | null;
+                                     masked: string | null } | null>(null);
+  const [header, setHeader] = useState("x-vercel-protection-bypass");
+  const [value, setValue] = useState("");
+  const [note, setNote] = useState<string | null>(null);
+  const read = () => api.get<NonNullable<typeof held>>(`/api/sites/${site.id}/access`)
+    .then(setHeld).catch((e) => setNote((e as ApiError).message));
+  useEffect(() => { void read(); }, [site.id]);
+  const act = async (go: () => Promise<unknown>, done: string) => {
+    setNote(null);
+    try {
+      await go();
+      setValue("");
+      setNote(done);
+      await read();
+    } catch (e) {
+      setNote((e as ApiError).message);
+    }
+  };
+  return (
+    <details>
+      <summary>Firewall access{held?.set ? ` · ${held.header} ${held.masked}` : ""}</summary>
+      <p className="muted">
+        For a site whose firewall refuses the audit. Use only a header the site's
+        owner issued. It is sent to this site alone.
+      </p>
+      <div>
+        <label className="site-field">
+          <span className="sel-lbl">Header name</span>
+          <input className="input" value={header} onChange={(e) => setHeader(e.target.value)}
+                 aria-label={`firewall header name for ${site.domain}`} />
+        </label>
+        <label className="site-field">
+          <span className="sel-lbl">Header value</span>
+          <input className="input" type="password" autoComplete="off" value={value}
+                 onChange={(e) => setValue(e.target.value)}
+                 aria-label={`firewall header value for ${site.domain}`} />
+        </label>
+      </div>
+      <SecondaryButton disabled={!value.trim()}
+            onClick={() => act(() => api.put(`/api/sites/${site.id}/access`, { header, value }),
+                               "saved")}>Save header</SecondaryButton>
+      {held?.set && (
+        <DangerButton label={`remove the firewall header for ${site.domain}`}
+                      confirm={{ title: `Remove the firewall header for ${site.domain}?`,
+                                 body: <p>Audits of this site then go to its firewall with no
+                                   pass. The owner's value is not kept and would have to be
+                                   entered again.</p>,
+                                 action: "Remove the header" }}
+                      onConfirm={() => act(() => api.del(`/api/sites/${site.id}/access`),
+                                           "removed")}>remove</DangerButton>
+      )}
+      {note && <span className="muted" role="status"> {note}</span>}
+    </details>
   );
 }
 

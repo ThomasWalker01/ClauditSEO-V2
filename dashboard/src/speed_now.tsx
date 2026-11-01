@@ -91,7 +91,7 @@ export type SpeedTemplate = {
 };
 
 export type SpeedNow = {
-  recorded: boolean; device_profile: string; traced: Count;
+  recorded: boolean; refused_by?: string | null; device_profile: string; traced: Count;
   /** Which pages the trace pass took, in its own words (`perf.sample`): one
    *  per template on T2/T3, every page of the pulse on T1. Stated beside the
    *  device profile, because a figure whose sample the reader cannot see is a
@@ -620,13 +620,22 @@ export function SpeedNowBlock({ part, pops = null, onPart, picked, onTemplate, p
     return (
       <Card className="now-card sp-card">
         <h4>What the templates have now</h4>
-        <p className="muted sp-untraced">
-          This audit recorded no performance trace, so there is nothing to read
-          back. The trace is a separate throttled browser pass — it runs where
-          it is asked for, not on every audit — and an audit taken without it has
-          no vitals, no filmstrip and no resource timing. Re-check this part to
-          take one.
-        </p>
+        {now.refused_by ? (
+          <p className="muted sp-untraced">
+            {now.refused_by} bot protection refused the audit&rsquo;s browser, so no
+            performance trace was taken: no vitals, no filmstrip and no resource
+            timing. A firewall is not a slow page, and this says nothing about
+            the site&rsquo;s speed.
+          </p>
+        ) : (
+          <p className="muted sp-untraced">
+            This audit recorded no performance trace, so there is nothing to read
+            back. The trace is a separate throttled browser pass — it runs where
+            it is asked for, not on every audit — and an audit taken without it has
+            no vitals, no filmstrip and no resource timing. Re-check this part to
+            take one.
+          </p>
+        )}
         <p className="muted sp-profile">{now.device_profile}</p>
       </Card>
     );

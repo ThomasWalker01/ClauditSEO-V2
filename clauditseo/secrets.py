@@ -181,7 +181,43 @@ def drop(name: str) -> bool:
     return True
 
 
-def _write(values: dict[str, str]) -> None:
+def _site_headers_path() -> Path:
+    """Beside the keys, and a file of its own: `load` keeps to the allowlist."""
+    return path().with_name("site_headers.json")
+
+
+def _site_headers() -> dict:
+    try:
+        raw = json.loads(_site_headers_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def site_header(site_id: str) -> tuple[str, str] | None:
+    """The header a site's owner issued for the audit to send it, if any."""
+    held = _site_headers().get(site_id)
+    if isinstance(held, dict) and held.get("name") and held.get("value"):
+        return str(held["name"]), str(held["value"])
+    return None
+
+
+def put_site_header(site_id: str, name: str, value: str) -> None:
+    current = _site_headers()
+    current[site_id] = {"name": name, "value": value}
+    _write(current, _site_headers_path())
+
+
+def drop_site_header(site_id: str) -> bool:
+    current = _site_headers()
+    if site_id not in current:
+        return False
+    del current[site_id]
+    _write(current, _site_headers_path())
+    return True
+
+
+def _write(values: dict, target: Path | None = None) -> None:
     """Create with restrictive permissions, then replace atomically.
 
     The mode is passed to `open` rather than chmod'd afterwards: creating a
@@ -189,7 +225,7 @@ def _write(values: dict[str, str]) -> None:
     keys are exposed, and it is a window that only ever opens on the write
     that adds a new secret.
     """
-    target = path()
+    target = target or path()
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_suffix(".json.tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

@@ -27,6 +27,8 @@ import logging
 from urllib.parse import urljoin
 
 from clauditseo import BOT_NAME
+from clauditseo.crawler import access
+from clauditseo.crawler.types import refuse_challenge
 
 log = logging.getLogger("clauditseo.imaging")
 
@@ -168,8 +170,9 @@ def _measure_one(page, url: str, breakpoints) -> dict:
     widest = max(breakpoints)
     page.set_viewport_size({"width": widest, "height": 900})
     page.add_init_script(_LCP_INIT_JS)
-    page.goto(url, timeout=RENDER_TIMEOUT_MS, wait_until="load")
+    response = page.goto(url, timeout=RENDER_TIMEOUT_MS, wait_until="load")
     page.wait_for_timeout(SETTLE_MS)
+    refuse_challenge(page, url, response)
     # Item 241: weigh what a visitor would load. Before this, the one
     # resource read came before any scroll, so every `loading="lazy"` image
     # below the fold had no entry and no weight - on twenty22, 286 of 366;
@@ -269,14 +272,18 @@ def measure(urls, breakpoints=DEFAULT_BREAKPOINTS, cap: int = MAX_PAGES) -> dict
         try:
             context = browser.new_context(
                 user_agent=f"{BOT_NAME}/1.0 (+headless image measurement for audit)")
-            for url in list(urls)[:cap]:
+            access.install(context)
+
+            def visit(url):
                 page = context.new_page()
                 try:
-                    out[url] = _measure_one(page, url, breakpoints)
-                except Exception as error:            # one page's failure is its own
-                    log.warning("image measurement failed for %s: %s", url, error)
+                    return _measure_one(page, url, breakpoints)
                 finally:
                     page.close()
+            out = access.each_page(
+                list(urls)[:cap], visit,
+                lambda url, error: log.warning("image measurement failed for %s: %s",
+                                               url, error))
         finally:
             browser.close()
     return out
@@ -364,7 +371,8 @@ def measure_savings(measured: dict, record: dict) -> None:
 def measure_for_run(crawl, record: dict | None, report=None) -> tuple[dict, bool | str]:
     """What a browser saw of every image the crawl fetched, and whether it
     looked: `(measurements, state)`, the state being True where the pass ran,
-    False where it failed, and "unavailable" where no renderer is installed.
+    False where it failed, "unavailable" where no renderer is installed, and
+    "refused" where a firewall stopped it before it weighed anything.
 
     The state is stored with the run, because the screen cannot tell "the
     pass measured nothing" from "the pass did not run" from the images alone,
@@ -387,4 +395,6 @@ def measure_for_run(crawl, record: dict | None, report=None) -> tuple[dict, bool
     if measured:
         say("Measuring what the heaviest images would weigh re-encoded")
         measure_savings(measured, record)
+    elif access.refused_by():
+        return {}, "refused"
     return measured, True

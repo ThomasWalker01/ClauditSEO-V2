@@ -38,3 +38,4 @@ build/
 
 # pytest litter — see the teardown fix in tests/
 .pytest_tmp/
+site_headers.json

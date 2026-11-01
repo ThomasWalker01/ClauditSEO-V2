@@ -1093,6 +1093,11 @@ class RefreshIn(BaseModel):
     section: str
 
 
+class SiteAccessIn(BaseModel):
+    header: str
+    value: str
+
+
 class AuditIn(BaseModel):
     # A11Y is in the default because a scheduled pass sends no dimensions at
     # all, so anything left out here never runs unattended. Adding it changes
@@ -2314,6 +2319,41 @@ def create_app(db_path: Path | None = None) -> FastAPI:
                 (create_id(), site_id, result.checked_at, result.entry_url,
                  result.took_ms, result.sitemap_state, _json.dumps(payload)))
         return payload
+
+    @app.get("/api/sites/{site_id}/access")
+    def site_access(site_id: str, conn=dep, operator=op_dep):
+        """Whether the owner's header is held. Its value is never sent back."""
+        if not repo.get_site(conn, site_id):
+            raise HTTPException(status_code=404, detail="site not found")
+        check_site(conn, operator, site_id)
+        from clauditseo import secrets as secret_store
+        held = secret_store.site_header(site_id)
+        return {"set": bool(held), "header": held[0] if held else None,
+                "masked": secret_store.mask(held[1]) if held else None}
+
+    @app.put("/api/sites/{site_id}/access")
+    def set_site_access(site_id: str, body: SiteAccessIn, conn=dep, operator=op_dep):
+        """The header a site's owner issued, sent to that site alone."""
+        if not repo.get_site(conn, site_id):
+            raise HTTPException(status_code=404, detail="site not found")
+        check_site(conn, operator, site_id)
+        name, value = body.header.strip(), body.value.strip()
+        if not re.fullmatch(r"[A-Za-z0-9-]{1,64}", name):
+            raise HTTPException(status_code=422,
+                                detail="a header name is letters, digits and hyphens")
+        if not value or any(c in value for c in "\r\n"):
+            raise HTTPException(status_code=422, detail="the value is one line of text")
+        from clauditseo import secrets as secret_store
+        secret_store.put_site_header(site_id, name, value)
+        return {"ok": True}
+
+    @app.delete("/api/sites/{site_id}/access")
+    def drop_site_access(site_id: str, conn=dep, operator=op_dep):
+        if not repo.get_site(conn, site_id):
+            raise HTTPException(status_code=404, detail="site not found")
+        check_site(conn, operator, site_id)
+        from clauditseo import secrets as secret_store
+        return {"ok": secret_store.drop_site_header(site_id)}
 
     @app.get("/api/sites/{site_id}/record")
     def site_record_route(site_id: str, conn=dep, operator=op_dep):
@@ -4719,6 +4759,10 @@ def _execute_run(db_path: Path, run_id: str, site_row: dict, dims: list[str],
         # BG's twenty22 acceptance run, where a stated `block` policy still
         # raised HIGH.
         site = site_of(repo.site_record(site_row))
+        from clauditseo.crawler import access
+        access.open_run(site_row["id"], site_row["domain"],
+                        lambda label: runs.add_progress(conn, run_id, label, False))
+        access.probe_browser(start_url)
         if tier_name == "auto":
             from clauditseo.adaptive import run_adaptive
             # The operator's scope goes to both paths. It was handed to
@@ -4823,6 +4867,7 @@ def _execute_run(db_path: Path, run_id: str, site_row: dict, dims: list[str],
         from clauditseo.crawler.evidence import snapshot
         evidence = snapshot(crawl_result, measured, traced, trace_rule)
         evidence["images_measured"] = images_state
+        evidence["browser_refused"] = access.refused_by()
         runs.store_evidence(conn, run_id, evidence)
         outcome = run_analyst_layer(conn, run_id, site.domain, result, crawl_result,
                                     cfg, enabled=analyst, announce=note,

@@ -24,7 +24,8 @@ from __future__ import annotations
 
 from collections import Counter
 
-from clauditseo.crawler.types import CrawlResult
+from clauditseo.crawler import access
+from clauditseo.crawler.types import BrowserChallenged, CrawlResult
 from clauditseo.engine import registry, scoring
 from clauditseo.engine.types import Finding, Severity, Site, SubScore, Tier
 
@@ -231,7 +232,22 @@ class AccessibilityModule:
             shot = (axe.screens_dir(run_id) / f"{axe.page_hash(f.url)}.png"
                     if run_id else None)
             try:
-                result = axe.run_page(f.url, screenshot_to=shot)
+                result = access.retried(lambda: axe.run_page(f.url, screenshot_to=shot))
+            except BrowserChallenged as refused:
+                # Every other page would meet the same firewall.
+                context["axe_refused_by"] = refused.vendor
+                out.append(Finding(
+                    dimension=self.code, check_id="axe-render-failed",
+                    severity=Severity.INFO,
+                    summary=f"{refused.vendor} bot protection refused the headless "
+                            "browser, so contrast and focus order were not checked.",
+                    subject=f.path, affected_urls=[f.url],
+                    evidence={"error": str(refused)[:300], "vendor": refused.vendor},
+                    recommendation="Ask the site's owner to allow the audit's browser "
+                                   "at the firewall. Until then, treat these checks "
+                                   "as unassessed rather than clean.",
+                ))
+                break
             except Exception as exc:                       # noqa: BLE001
                 out.append(Finding(
                     dimension=self.code, check_id="axe-render-failed",
@@ -542,18 +558,23 @@ class AccessibilityModule:
             return []
         if context.get("axe_ran"):
             return []
+        refused_by = context.get("axe_refused_by")
         return [Finding(
             dimension=self.code, check_id="contrast-not-assessed",
             severity=Severity.INFO, scope_statement=True,
             summary="Colour contrast, focus order and reading order were not "
-                    "assessed — this run had no renderer.",
+                    "assessed — " + (f"{refused_by} bot protection refused the browser."
+                                     if refused_by else "this run had no renderer."),
             subject="site", affected_urls=[],
             evidence={"pages_checked": len(facts),
-                      "needs": "pip install clauditseo[render], "
-                               "then playwright install chromium"},
+                      "needs": ("the site's owner allowing the audit's browser"
+                                if refused_by else "pip install clauditseo[render], "
+                                                   "then playwright install chromium")},
             recommendation="These need the page rendered, not just its HTML. "
-                           "Install the renderer to add the axe pass; until then "
-                           "treat this dimension as a floor, not a clearance.",
+                           + ("Ask the site's owner to allow the audit's browser"
+                              if refused_by else "Install the renderer to add the axe pass")
+                           + "; until then treat this dimension as a floor, not a "
+                             "clearance.",
         )]
 
     def score(self, findings: list[Finding], context: dict) -> SubScore:
