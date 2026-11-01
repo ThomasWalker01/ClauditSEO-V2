@@ -24,7 +24,8 @@ from clauditseo.engine.types import Tier
 
 from .fetch import Fetcher
 from .robots import RobotsPolicy, robots_url_for
-from .types import (TIER_BUDGETS, USER_AGENT, CrawlResult, Page, SitemapRecord, served_html,
+from .types import (TIER_BUDGETS, USER_AGENT, CrawlResult, Page, SitemapRecord,
+                    edge_challenge, served_html,
                     TierBudget, eligible)
 
 SITEMAP_HEAD_ENTRIES = 50      # T1 reads only the head of a sitemap
@@ -600,9 +601,11 @@ def crawl(
         policy = RobotsPolicy(robots_page.url, robots_page.status or None,
                               robots_page.content)
 
+        result.edge_challenge = edge_challenge(robots_page, "robots")
+
         # llms.txt (AI-surface guidance file) — one cheap metadata fetch.
         llms_url = urljoin(start_url, "/llms.txt")
-        if policy.allows(llms_url, USER_AGENT):
+        if policy.allows(llms_url, USER_AGENT) and not result.edge_challenge:
             time.sleep(budget.delay_s)
             llms_page = fetcher.fetch(llms_url)
             result.llms_txt_status = llms_page.status or None
@@ -618,8 +621,9 @@ def crawl(
         # broken one, so the two are told apart on the record's `declared` flag.
         declared = bool(policy.sitemaps)
         candidates = list(policy.sitemaps) or [urljoin(start_url, "/sitemap.xml")]
-        _read_sitemaps(fetcher, candidates, policy, result, limit,
-                       budget.delay_s, deadline, declared=declared)
+        if not result.edge_challenge:
+            _read_sitemaps(fetcher, candidates, policy, result, limit,
+                           budget.delay_s, deadline, declared=declared)
 
         # (rank, sequence, url, how it was found). heapq rather than a plain
         # FIFO so navigation links are fetched before body links wherever the
@@ -634,7 +638,9 @@ def crawl(
             seq = len(queue)
             queued: set[str] = set(seeds)
         else:
-            queue = [(0, 0, start_url, "start")]
+            # A firewall that refused robots.txt would refuse the page too:
+            # every further request is one more against a block.
+            queue = [] if result.edge_challenge else [(0, 0, start_url, "start")]
             seq = 1
             queued = {start_url}
         fetched_finals: dict[str, str] = {}   # normalised final URL -> requested
@@ -655,6 +661,13 @@ def crawl(
             time.sleep(budget.delay_s)
             page = fetcher.fetch(url)
             page.discovered_via = source
+            # The challenge is the firewall's page, not one of the site's, so
+            # it is not kept as a page, and the rest of the queue would only
+            # meet it again.
+            result.edge_challenge = edge_challenge(page, "page")
+            if result.edge_challenge:
+                result.truncated_by = "edge_challenge"
+                break
 
             # Two spellings that redirect to the same place are one page, not
             # two. Record the collapse as evidence rather than discarding it.
@@ -715,7 +728,10 @@ def crawl(
         if security_paths and only_urls is None:
             try:
                 from .wellknown import sweep
-                result.well_known = sweep(start_url)
+                # Not at a firewall already refusing the crawl: these are the
+                # paths (`/.env`, `/.git/HEAD`) a firewall scores against it.
+                result.well_known = (None if result.edge_challenge
+                                     else sweep(start_url))
             except Exception:
                 result.well_known = None
             # Domain E's public DNS lookups, on the same opt-in: a run that
@@ -739,7 +755,7 @@ def crawl(
         # (fetch nothing) each answer a narrower question the matrix must not
         # override. Deadline-bounded, and failure is not fatal to the crawl.
         if (ua_matrix and tier is not Tier.T1 and result.scope == "site"
-                and result.pages):
+                and result.pages and not result.edge_challenge):
             try:
                 from .ua_matrix import build_ua_matrix
                 result.ua_matrix = build_ua_matrix(
@@ -754,7 +770,8 @@ def crawl(
         # probes the pulse's pages - and never on a verification, which names
         # its pages for a narrower question. `"full"` probes every readable
         # page, for a site whose previous run diverged; `True` is the sample.
-        if mobile_parity and only_urls is None and eligible(result.pages):
+        if (mobile_parity and only_urls is None and eligible(result.pages)
+                and not result.edge_challenge):
             # The sample is a handful of fetches, so it gets a minute of its own
             # past a crawl that spent its whole clock: a crawl truncated by
             # `wall_clock` is common at T2, and a probe skipped on every one of

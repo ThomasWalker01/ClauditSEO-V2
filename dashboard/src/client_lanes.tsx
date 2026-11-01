@@ -208,7 +208,7 @@ export function StateSentence(props: Parameters<typeof StateSentenceBody>[0] & {
 function StateSentenceBody({ headline, run, nextStep = null, loading = false }: {
   headline: Headline | null;
   /** Item 179: the headline for the current audit has not arrived. Says the
-   *  registered word, never "No audit to describe yet", which is the answer
+   *  registered word, never "No whole-site audit to describe yet", the answer
    *  for a site with no audit and was drawn on audited ones (11-1). */
   loading?: boolean;
   run: { started_at: string; finished_at?: string | null; tier?: string;
@@ -223,7 +223,7 @@ function StateSentenceBody({ headline, run, nextStep = null, loading = false }: 
   if (loading) {
     return <span className="muted bl-sentence bl-loading" role="status">{LOADING_WORD}…</span>;
   }
-  if (!headline) return <span className="muted bl-sentence">No audit to describe yet.</span>;
+  if (!headline) return <span className="muted bl-sentence">No whole-site audit to describe yet.</span>;
   const size = headline.site_size;
   const cov = headline.coverage;
   const as = headline.assessed;

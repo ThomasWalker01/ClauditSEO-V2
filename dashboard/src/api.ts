@@ -225,6 +225,8 @@ export type Run = {
   scope?: {
     pages_fetched: number; discovered: number | null;
     robots_blocked: number; truncated_by: string | null;
+    /** A CDN's bot protection answered instead of the site. */
+    edge_challenge?: { vendor: string; title: string | null; status: number; url: string } | null;
   } | null;
   /** How much of the intended audit the composite rests on, 0-1, read back
    *  from the row the engine stored beside the score — not recomputed here.

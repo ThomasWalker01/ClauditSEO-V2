@@ -29,6 +29,7 @@ import time
 from urllib.parse import urljoin, urlsplit
 
 from clauditseo import security_headers as sh
+from clauditseo.crawler.transport import covers, host_names
 from clauditseo.crawler.types import CrawlResult
 from clauditseo.engine import registry, scoring
 from clauditseo.engine.types import Finding, Severity, Site, SubScore, Tier  # noqa: F401  (Severity re-exported for checks.py)
@@ -619,10 +620,12 @@ class SecurityModule:
                                   f"http://{t.host} is not redirected to https://.",
                                   {"http_redirect_chain": t.http_redirect_chain},
                                   "Redirect every http:// request to https:// with one 301."))
-        elif t.http_redirects_to_https and len(t.http_redirect_chain) > 1:
+        # The chain lists every URL visited, the last one included, so one
+        # redirect is two entries.
+        elif t.http_redirects_to_https and len(t.http_redirect_chain) > 2:
             out.append(self._site("http-redirect", start,
                                   f"http://{t.host} reaches https:// in "
-                                  f"{len(t.http_redirect_chain)} hops, not one.",
+                                  f"{len(t.http_redirect_chain) - 1} hops, not one.",
                                   {"http_redirect_chain": t.http_redirect_chain},
                                   "Redirect http:// straight to the final https:// URL."))
         if t.tls_floor in ("TLSv1", "TLSv1_1") and t.tls_floor_certain:
@@ -668,13 +671,11 @@ class SecurityModule:
                                   "Enable HTTP/2 at the server or CDN; most CDNs also "
                                   "offer HTTP/3 as a switch."))
         if t.cert_subject_alt_names:
-            sans = [s.lower() for s in t.cert_subject_alt_names]
-            host = t.host.lower()
-            apex = host[4:] if host.startswith("www.") else host
-            uncovered = [h for h in (apex, f"www.{apex}")
-                         if not any(s == h or (s.startswith("*.") and h.endswith(s[1:])
-                                               and h.count(".") == s.count("."))
-                                    for s in sans)]
+            # A name with its own valid certificate is covered: a host that
+            # redirects to the other serves each from a separate one.
+            uncovered = [h for h in host_names(t.host)
+                         if not covers(t.cert_subject_alt_names, h)
+                         and h not in t.cert_own_hosts]
             if uncovered:
                 out.append(self._site("cert-san", start,
                                       f"The certificate does not cover {', '.join(uncovered)}.",

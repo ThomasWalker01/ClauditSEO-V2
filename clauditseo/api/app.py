@@ -2990,17 +2990,22 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         # reads the Latest View's reference composite, and this sentence,
         # the shop's run target and the open-audit door read the same audit.
         part_only = runs.part_only_runs(conn, site_id)
-        latest = next((r for r in conn.execute(
-            f"SELECT id FROM audit_runs WHERE site_id=?"
+        readings = [r for r in conn.execute(
+            f"SELECT id, status FROM audit_runs WHERE site_id=?"
             f" AND {runs.status_in(runs.AUDITED_STATUSES)}"
             f" AND {runs.kind_is_site_reading()}"
             " ORDER BY started_at DESC, rowid DESC",
-            (site_id,)).fetchall() if r["id"] not in part_only), None)
+            (site_id,)).fetchall() if r["id"] not in part_only]
+        # A blocked run read no page, so the screen reads the newest run that
+        # did; `newest_blocked` below says the refusal happened.
+        latest = next((r for r in readings if r["status"] != "blocked"),
+                      readings[0] if readings else None)
         status = an.tool_status()
         from clauditseo.persistence import latest_view as _lvs
         # The header's plain text (item 239 step 5, amendment 8): the current
         # audit's score, tier and date, from the Latest View's composite.
         view["current_audit"] = _lvs._get(conn, site_id, "composite", "current")
+        view.update(runs.audit_standing(conn, site_id))
         newest = _lvs.analyses(conn, site_id)
         running = _in_flight_for_site(conn, site_id)
         for cat in view["categories"]:

@@ -82,6 +82,7 @@ def probe(start_url: str) -> TransportProbe:
     if parts.scheme == "https":
         _tls_facts(host, parts.port or 443, result)
         _tls_floor(host, parts.port or 443, result)
+        _sibling_certificates(host, parts.port or 443, result)
 
     # The HTTP-to-HTTPS check only means anything on the default ports. A
     # site served on an explicit non-standard port (staging, a local fixture)
@@ -192,6 +193,44 @@ def _tls_facts(host: str, port: int, result: TransportProbe) -> None:
                      result.cert_signature) = cert_key(der)
     except Exception as exc:
         result.error = f"TLS probe failed: {type(exc).__name__}: {exc}"
+
+
+def host_names(host: str) -> tuple[str, str]:
+    """The apex and www names of a host, both of which a visitor can type."""
+    host = host.lower()
+    apex = host[4:] if host.startswith("www.") else host
+    return apex, f"www.{apex}"
+
+
+def covers(subject_alt_names: list[str], host: str) -> bool:
+    """Whether a certificate's names include `host`, a wildcard matching one
+    label."""
+    sans = [s.lower() for s in subject_alt_names]
+    return any(s == host or (s.startswith("*.") and host.endswith(s[1:])
+                             and host.count(".") == s.count("."))
+               for s in sans)
+
+
+def _own_certificate(host: str, port: int) -> bool:
+    """Whether `host` answers TLS with a certificate valid for itself."""
+    try:
+        with socket.create_connection((host, port), timeout=TIMEOUT) as raw:
+            with ssl.create_default_context().wrap_socket(raw, server_hostname=host):
+                return True
+    except Exception:                             # noqa: BLE001 — not covered
+        return False
+
+
+def _sibling_certificates(host: str, port: int, result: TransportProbe) -> None:
+    """Ask the name the certificate left out. A platform serving www and the
+    apex often gives each its own certificate, so one certificate's names do
+    not answer SEC/cert-san alone. A name that fails here stays uncovered."""
+    if not result.cert_subject_alt_names:
+        return
+    result.cert_own_hosts = [
+        name for name in host_names(host)
+        if name != host.lower() and not covers(result.cert_subject_alt_names, name)
+        and _own_certificate(name, port)]
 
 
 def _http_upgrade_path(host: str, result: TransportProbe) -> None:

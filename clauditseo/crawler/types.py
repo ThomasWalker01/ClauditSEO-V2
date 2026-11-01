@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from clauditseo import BOT_NAME
 
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
@@ -131,6 +132,9 @@ class TransportProbe:
     tls_offered: dict[str, str] = field(default_factory=dict)
     cert_not_after: str | None = None
     cert_subject_alt_names: list[str] = field(default_factory=list)
+    #: The apex or www name the certificate above left out, where that name
+    #: answered with a valid certificate of its own.
+    cert_own_hosts: list[str] = field(default_factory=list)
     http_redirects_to_https: bool | None = None
     http_redirect_chain: list[str] = field(default_factory=list)
     http_version: str | None = None
@@ -167,6 +171,47 @@ class SitemapRecord:
     declared: bool = False
 
 
+#: The pages a CDN's bot protection serves in place of a site, by exact
+#: lower-cased title. An exact match, because "Just a moment" is a phrase a real
+#: page could contain and this answer stops the crawl.
+CHALLENGE_TITLES = {
+    "vercel security checkpoint": "Vercel",
+    "just a moment...": "Cloudflare",
+    "attention required! | cloudflare": "Cloudflare",
+}
+#: Response headers that name a challenge outright, whatever the status.
+CHALLENGE_HEADERS = {"x-vercel-mitigated": "Vercel", "cf-mitigated": "Cloudflare"}
+_TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
+
+
+def challenge_vendor(title: str | None, headers: dict | None = None) -> str | None:
+    """Whose bot protection this response is, or None for an ordinary one."""
+    named = CHALLENGE_TITLES.get((title or "").strip().lower())
+    if named:
+        return named
+    lowered = {str(k).lower(): v for k, v in (headers or {}).items()}
+    return next((v for k, v in CHALLENGE_HEADERS.items() if lowered.get(k)), None)
+
+
+def edge_challenge(page: "Page", at: str) -> dict | None:
+    """The firewall's answer standing where the site's should be, or None.
+
+    On 31 Oct a Vercel checkpoint answered every request of an audit with a 403
+    ten minutes after the same crawl had read 42 pages. The run filed robots.txt,
+    the sitemap and the home page as faults on the site, swept 27 sensitive paths
+    at a firewall that was already refusing it, and spent 24,639 tokens on four
+    analysts with no page to read. `at` says which request met it: "robots"
+    means nothing of the site was read at all.
+    """
+    found = _TITLE.search(page.content or "")
+    title = found.group(1).strip() if found else None
+    vendor = challenge_vendor(title, page.headers)
+    if vendor is None:
+        return None
+    return {"vendor": vendor, "title": title, "status": page.status,
+            "url": page.url, "at": at}
+
+
 def served_html(content_type: str | None, body: str | None) -> bool:
     """A response that is an HTML page, by its header or, when the header
     says nothing useful, by its first bytes. A CMS answers an unknown path
@@ -190,6 +235,9 @@ class CrawlResult:
     # /llms.txt answered 200 with an HTML page (a CMS soft 404), so there is
     # no llms.txt to read; `llms_txt` stays None.
     llms_txt_served_html: bool = False
+    # A CDN's bot protection answered instead of the site (`edge_challenge`),
+    # and the crawl stopped there.
+    edge_challenge: dict | None = None
     robots_blocked: list[str] = field(default_factory=list)  # URLs we declined to fetch
     sitemap_urls: list[str] = field(default_factory=list)    # sitemap locations declared
     sitemap_entries: list[str] = field(default_factory=list) # URLs listed in sitemaps we read

@@ -131,6 +131,12 @@ def _in_run_order(dimensions: list[str]) -> list[str]:
     return first + [d for d in dimensions if d not in RUN_FIRST]
 
 
+#: What a firewall's refusal of robots.txt would otherwise raise: each says the
+#: file is missing, and the crawl never saw whether it is.
+UNREAD_BEHIND_A_CHALLENGE = frozenset({"robots-missing", "sitemap-missing",
+                                       "llms-txt-missing"})
+
+
 def run_audit(
     site: Site,
     crawl_result: CrawlResult,
@@ -179,6 +185,9 @@ def run_audit(
             continue
         findings = _merge_by_identity(module.run(crawl_result.pages, tier,
                                                  context))
+        if (getattr(crawl_result, "edge_challenge", None) or {}).get("at") == "robots":
+            findings = [f for f in findings
+                        if f.check_id not in UNREAD_BEHIND_A_CHALLENGE]
         result.findings.extend(findings)
         raw_subscores[code] = module.score(findings, context)
 

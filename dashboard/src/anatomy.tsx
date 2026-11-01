@@ -916,6 +916,11 @@ type Anatomy = {
   /** The current audit's composite, from the Latest View (item 239 step 5). */
   current_audit?: { run_id: string; score: number | null; tier: string; at: string;
                     dimensions: string[] } | null;
+  /** The newest scored audit, said where no audit reads the whole site. */
+  narrow_audit?: { run_id: string; score: number; tier: string; at: string;
+                   pages: number } | null;
+  /** The newest audit of any scope was refused. */
+  newest_blocked?: boolean;
   /** 150 BJ's three numbers, each with its denominator. The part header states
    *  coverage once from this and nothing else on the page restates it. */
   headline?: Headline | null;
@@ -3214,10 +3219,16 @@ export function StandingHeader({ siteId, a, running = null, tab = "",
                data-audit={data ? data.current_audit?.run_id ?? "" : undefined}>
             <span className="sel-lbl">Current audit</span>
             <span className="audit-now-text">
-              {data?.current_audit
+              {[data?.current_audit
                 ? [data.current_audit.score, data.current_audit.tier, stamp(data.current_audit.at)]
                     .filter((x) => x !== null && x !== "").join(" · ")
-                : data ? "no scored audit yet" : "…"}
+                : data?.narrow_audit
+                  ? ["no whole-site audit yet", data.narrow_audit.score, data.narrow_audit.tier,
+                     `${data.narrow_audit.pages} ${data.narrow_audit.pages === 1 ? "page" : "pages"}`,
+                     stamp(data.narrow_audit.at)].join(" · ")
+                  : data ? "no scored audit yet" : "…",
+                data?.newest_blocked ? "newest audit blocked" : ""]
+                .filter(Boolean).join(" · ")}
             </span>
           </div>
           {data && (

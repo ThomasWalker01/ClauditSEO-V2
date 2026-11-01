@@ -122,6 +122,14 @@ def run_analyst_layer(
         return AnalystOutcome(ran=False, reason_not_run="T1 never invokes the analyst layer")
     if not enabled:
         return AnalystOutcome(ran=False, reason_not_run="analyst layer disabled for this run")
+    # Absence is not zero, as in `runs.terminal_status`: only a crawl that
+    # counted its readable pages and found none is known to have nothing to
+    # analyse. Asked here so every launcher gets it.
+    if (result.stats or {}).get("pages_eligible") == 0:
+        reason = "the crawl read no page, so no analyst ran and no tokens were spent"
+        if announce:
+            announce(f"Analysts skipped: {reason}")
+        return AnalystOutcome(ran=False, reason_not_run=reason)
     provider = provider or provider_from_settings(cfg)
     if provider is None:
         return AnalystOutcome(ran=False,

@@ -35,7 +35,7 @@ SRC = ROOT / "dashboard" / "src"
 
 #: Things a screen says only when it has read an empty answer.
 FALSE_EMPTY = (
-    "No audit to describe yet",
+    "No whole-site audit to describe yet",
     "at an unknown time",
     "no completed audit",
     "No completed audit yet",

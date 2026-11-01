@@ -1505,6 +1505,33 @@ export function RunDetailView({ runId, embedded = false }: { runId: string; embe
       {data.status === "blocked" && (
         <Card>
           <h3>Crawl refused <RunStatusChip status={data.status} /></h3>
+          {data.scope?.edge_challenge ? (
+            <>
+              <p>
+                {data.scope.edge_challenge.vendor}'s bot protection answered
+                instead of the site
+                {data.scope.edge_challenge.title
+                  ? ` ("${data.scope.edge_challenge.title}", HTTP ${data.scope.edge_challenge.status})`
+                  : ` (HTTP ${data.scope.edge_challenge.status})`}, so no page was
+                read and there is no page-derived score. This is the firewall
+                refusing the crawler. It says nothing about what visitors or
+                search engines get.
+              </p>
+              <p>
+                <strong>To read the site:</strong> wait, then audit again, leaving
+                a few hours between audits, because these blocks often lift on
+                their own. If it keeps happening, ask whoever runs the site to
+                allow this crawler in the {data.scope.edge_challenge.vendor}{" "}
+                firewall. To see whether search engines were refused too, check
+                Crawl stats in Search Console.
+              </p>
+              <p className="muted">
+                Any finding here about robots.txt, the sitemap or a page's status
+                is the firewall's answer, not the site's. This still counts as the
+                site's latest audit.
+              </p>
+            </>
+          ) : (<>
           <p>
             No page was fetched, so there is no page-derived score.
             {data.scope
@@ -1519,6 +1546,7 @@ export function RunDetailView({ runId, embedded = false }: { runId: string; embe
             The findings below come from robots.txt and the sitemap, and this
             still counts as the site's latest audit.
           </p>
+          </>)}
         </Card>
       )}
       {/* A narrow run's own screen states what it read before its number.

@@ -3013,16 +3013,25 @@ def watch_changes(conn: sqlite3.Connection, site_id: str) -> list[dict]:
     highest-damage single event there is, and the cheapest to detect. Computed
     from evidence already stored, so this costs nothing to check.
     """
-    rows = conn.execute(
-        "SELECT id, crawl_evidence, started_at FROM audit_runs"
-        f" WHERE site_id=? AND {status_in(AUDITED_STATUSES)}"
-        " AND crawl_evidence IS NOT NULL"
-        " AND kind='audit'"          # a 2-page verify is not a comparable crawl
-        " ORDER BY started_at DESC, rowid DESC LIMIT 2", (site_id,)).fetchall()
+    # A crawl a firewall answered read the firewall, not the control files, so
+    # it is not one of the two compared: its 403 is no change to robots.txt.
+    rows, read = [], []
+    for row in conn.execute(
+            "SELECT id, crawl_evidence, started_at FROM audit_runs"
+            f" WHERE site_id=? AND {status_in(AUDITED_STATUSES)}"
+            " AND crawl_evidence IS NOT NULL"
+            " AND kind='audit'"          # a 2-page verify is not a comparable crawl
+            " ORDER BY started_at DESC, rowid DESC", (site_id,)):
+        evidence = json.loads(row["crawl_evidence"])
+        if _edge_challenge(evidence):
+            continue
+        rows.append(row)
+        read.append(evidence)
+        if len(rows) == 2:
+            break
     if len(rows) < 2:
         return []
-    latest = json.loads(rows[0]["crawl_evidence"])
-    previous = json.loads(rows[1]["crawl_evidence"])
+    latest, previous = read
     alerts: list[dict] = []
 
     def flag(what: str, before, after, severity: str = "high") -> None:
@@ -5989,6 +5998,40 @@ def _pages_fetched(evidence: dict) -> tuple[int | None, str]:
     return (attempted if attempted is not None else len(pages)), "attempted"
 
 
+def audit_standing(conn: sqlite3.Connection, site_id: str) -> dict:
+    """What the Record's header adds to the current audit: the newest scored
+    audit where none reads the whole site (a nav scan has a score, and no
+    place in the Latest View's composite), and whether the newest audit of
+    any scope was refused."""
+    rows = conn.execute(
+        "SELECT id, status, tier, composite_score, started_at, crawled_paths FROM audit_runs"
+        f" WHERE site_id=? AND {status_in(AUDITED_STATUSES)} AND kind='audit'"
+        " ORDER BY started_at DESC, rowid DESC", (site_id,)).fetchall()
+    scored = next((r for r in rows if r["status"] in SCORED_STATUSES
+                   and r["composite_score"] is not None), None)
+    return {"newest_blocked": bool(rows) and rows[0]["status"] == "blocked",
+            "narrow_audit": scored and {
+                "run_id": scored["id"], "score": scored["composite_score"],
+                "tier": scored["tier"], "at": scored["started_at"],
+                "pages": len(json.loads(scored["crawled_paths"] or "[]"))}}
+
+
+def _edge_challenge(evidence: dict) -> dict | None:
+    """The firewall that answered this crawl, as recorded, or as its first
+    stored page shows on a run crawled before it was recorded."""
+    from clauditseo.crawler.types import challenge_vendor
+
+    if evidence.get("edge_challenge"):
+        return evidence["edge_challenge"]
+    pages = evidence.get("pages") or []
+    first = pages[0] if pages and isinstance(pages[0], dict) else {}
+    vendor = challenge_vendor(first.get("title"), first.get("headers"))
+    if vendor is None:
+        return None
+    return {"vendor": vendor, "title": first.get("title"), "status": first.get("status"),
+            "url": first.get("url"), "at": "page"}
+
+
 def _scope(evidence: dict) -> dict:
     """What the crawl reached, from the counts the crawler recorded.
 
@@ -6039,6 +6082,7 @@ def _scope(evidence: dict) -> dict:
         "robots_blocked": stats.get(
             "blocked_by_robots", len(evidence.get("robots_blocked") or [])),
         "truncated_by": evidence.get("truncated_by"),
+        "edge_challenge": _edge_challenge(evidence),
     }
 
 
