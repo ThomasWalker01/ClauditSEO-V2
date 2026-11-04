@@ -153,3 +153,16 @@ def test_a_finding_whose_images_is_a_count_does_not_break_the_site(tmp_path):
     got = {s["fingerprint"]: s for s in runs.site_states(conn, site)}
     assert got["dup"]["images"] == [], got["dup"]["images"]
     conn.close()
+
+
+def test_a_nitropack_image_is_its_file_in_the_markup_and_in_the_browser():
+    # A NitroPack page: every `src` an empty sizing SVG, the file in
+    # `nitro-lazy-src`. Sixty blank tiles, none of them the site's images.
+    from clauditseo import imaging
+    html = (f'<html><body><main><img src="{PLACEHOLDER}" class="nitro-lazy" '
+            f'nitro-lazy-src="{CHECKLIST}" alt="Checklist robot"></main></body></html>')
+    facts = extract_facts(Page(url=HOME, requested_url=HOME, status=200,
+                               content_type="text/html", content=html))
+    assert [i["lazy_src"] for i in facts.image_details if i.get("tag") == "img"] == [CHECKLIST]
+    assert '"nitro-lazy-src"' in imaging._MEASURE_JS
+    assert "__LAZY_SRC_ATTRS__" not in imaging._MEASURE_JS

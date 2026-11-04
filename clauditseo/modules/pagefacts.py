@@ -18,8 +18,11 @@ _VOID_CAPTURE = {"title", "h1", "h2", "h3", "h4", "h5", "h6", "script"}
 
 
 #: The attributes script lazy loaders keep the real file in, in the order the
-#: common ones use them: WP Rocket, lazysizes and most themes, jQuery Lazy.
-LAZY_SRC_ATTRS = ("data-lazy-src", "data-src", "data-original", "data-lazy")
+#: common ones use them: WP Rocket, lazysizes and most themes, jQuery Lazy,
+#: NitroPack. NitroPack's empty `data:` SVG in `src` was read as the image, so
+#: a page of real photographs listed sixty blank, unweighed tiles.
+LAZY_SRC_ATTRS = ("data-lazy-src", "data-src", "data-original", "data-lazy",
+                  "nitro-lazy-src")
 
 
 def _lazy_src(attrs: dict) -> str | None:

@@ -23,12 +23,14 @@ that carry weight are read once from the single load.
 
 from __future__ import annotations
 
+import json
 import logging
 from urllib.parse import urljoin
 
 from clauditseo import BOT_NAME
 from clauditseo.crawler import access
 from clauditseo.crawler.types import refuse_challenge
+from clauditseo.modules.pagefacts import LAZY_SRC_ATTRS
 
 log = logging.getLogger("clauditseo.imaging")
 
@@ -73,7 +75,7 @@ _MEASURE_JS = """
   // crawler's markup record carries as `lazy_src` - so the two meet on the
   // file, before the swap and after it.
   const lazyOf = (el) => {
-    for (const name of ["data-lazy-src", "data-src", "data-original", "data-lazy"]) {
+    for (const name of __LAZY_SRC_ATTRS__) {
       const v = (el.getAttribute(name) || "").trim();
       if (v && !v.startsWith("data:")) return v;
     }
@@ -110,7 +112,7 @@ _MEASURE_JS = """
   }
   return seen;
 }
-"""
+""".replace("__LAZY_SRC_ATTRS__", json.dumps(list(LAZY_SRC_ATTRS)))
 
 _RESOURCES_JS = """
 () => Object.fromEntries(
