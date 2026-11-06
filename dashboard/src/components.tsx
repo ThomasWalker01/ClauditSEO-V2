@@ -1,4 +1,4 @@
-import { SecondaryButton } from "./buttons";
+import { LinkButton, SecondaryButton } from "./buttons";
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { Finding, FindingState, RunStatus, Severity, TrendPoint,
          hasScore, isCoverageNote, isSiteReading } from "./api";
@@ -33,6 +33,32 @@ export function SpendMark() {
   );
 }
 
+/** A page's whole address, to copy or open (operator request, 6 Nov 2026).
+ *  The screens name a page by its path, which is what an operator recognises
+ *  and not what a browser can take: the full URL went nowhere but a tooltip.
+ *  `open` is off where the path beside it is already the link. */
+export function PageUrlTools({ url, open = true }: { url: string; open?: boolean }) {
+  const [state, setState] = useState<"idle" | "ok" | "fail">("idle");
+  return (
+    <span className="page-url-tools">
+      <SecondaryButton label={`Copy the address ${url}`}
+                       onClick={async (e) => {
+                         e.stopPropagation();
+                         setState((await copyText(url)) ? "ok" : "fail");
+                         setTimeout(() => setState("idle"), 1500);
+                       }}>
+        {state === "ok" ? "copied ✓" : state === "fail" ? "copy failed" : "copy URL"}
+      </SecondaryButton>
+      {open && (
+        <LinkButton href={url} target="_blank" rel="noopener noreferrer"
+                    label={`Open ${url} in a new tab`}>
+          open ↗
+        </LinkButton>
+      )}
+    </span>
+  );
+}
+
 export function UrlLinks({ urls, max = 3 }: { urls: string[]; max?: number }) {
   if (!urls?.length) return null;
   const shown = urls.slice(0, max);
@@ -45,9 +71,12 @@ export function UrlLinks({ urls, max = 3 }: { urls: string[]; max?: number }) {
           label = parsed.pathname + parsed.search || "/";
         } catch { /* keep raw */ }
         return (
-          <a key={u} href={u} target="_blank" rel="noopener noreferrer" title={u}>
-            {label.length > 60 ? label.slice(0, 57) + "…" : label}
-          </a>
+          <span key={u} className="url-link">
+            <a href={u} target="_blank" rel="noopener noreferrer" title={u}>
+              {label.length > 60 ? label.slice(0, 57) + "…" : label}
+            </a>
+            <PageUrlTools url={u} open={false} />
+          </span>
         );
       })}
       {urls.length > max && <span className="muted"> +{urls.length - max} more</span>}
@@ -517,6 +546,7 @@ export function GroupedFindings({ findings, onOpenPage }:
                 {g.urls.map((u) => (
                   <li key={u}>
                     <a href={u} target="_blank" rel="noopener noreferrer">{pathOf(u)}</a>
+                    <PageUrlTools url={u} open={false} />
                     {onOpenPage && (
                       <SecondaryButton onClick={() => onOpenPage(u)}>
                         inspect page

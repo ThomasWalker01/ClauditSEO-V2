@@ -54,7 +54,7 @@ import { ClientLanes, IntegrityLine, ModeArith, PartSwitcher, PrimaryAction, sta
 import { Count, Counted, CoverageLine, Headline, Populations,
          Prevalence, makeCount, pathKey, prevalence } from "./population";
 import { Alerts, Card, ErrorNote, Loading, ScoreBadge, ScoreBandKey, SpendMark, money,
-         UrlLinks, pathOf } from "./components";
+         PageUrlTools, UrlLinks, pathOf } from "./components";
 import { PageAdvice, SchemaAuditPanel } from "./advice";
 import { Analysis, Lanes, useAnalyses } from "./analyses";
 import { FixCol, FixState, FixTick, MarkBar, useFixLoop, useSeed,
@@ -3264,6 +3264,7 @@ export function StandingHeader({ siteId, a, running = null, tab = "",
         </div>
         {(page || picking) && (
         <div className="anat-filter">
+          <div className="page-pick-row">
           {/* A native datalist rather than a select. On a 100-page
               site the select was a scroll to find one path, and typing
               in it only jumped to the first letter. This filters as you
@@ -3305,6 +3306,9 @@ export function StandingHeader({ siteId, a, running = null, tab = "",
                      else if (!text.trim()) setPage("");
                    }} />
           </label>
+          {/* The page's whole address, beside the path that names it. */}
+          {page && <PageUrlTools url={page} />}
+          </div>
         </div>
         )}
         {/* The page list, whether or not the filter is drawn (item 174): it

@@ -527,6 +527,11 @@ p.band-key { font-size: 0.85rem; margin: 0 0 0.4rem; }
    control is now a `Pill` with an action/nav tone (item 140). */
 
 .url-links a { margin-right: 0.5rem; font-size: 0.85rem; word-break: break-all; }
+/* A page's address to copy or open, beside its path (6 Nov 2026). */
+.url-link { display: inline-flex; align-items: center; gap: .3rem; margin-right: .6rem; }
+.url-link a { margin-right: 0; }
+.page-url-tools { display: inline-flex; align-items: center; gap: .3rem; }
+.page-pick-row { display: flex; align-items: center; gap: .55rem; flex-wrap: wrap; }
 
 .headline { display: flex; gap: 1.5rem; align-items: flex-start; flex-wrap: wrap;
             margin: 1rem 0; }
